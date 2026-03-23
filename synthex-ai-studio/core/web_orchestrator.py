@@ -253,7 +253,7 @@ PRD 摘要（API 部分）：
 3. 建立 API 整合測試（所有端點的 happy path 和 error path）
 4. 建立基本的 E2E 測試（主要用戶流程）
 5. 執行 npm_run('test') 確認所有測試通過
-6. 如果有測試失敗，分析原因並修復代碼或測試
+6. 如果有測試失敗，分析原因並修復程式碼或測試
 7. 輸出測試覆蓋率摘要
 
 工作目錄：{self.workdir}
@@ -328,7 +328,7 @@ PRD 摘要（API 部分）：
 原始需求：{description}
 
 步驟：
-1. get_project_info 了解當前代碼結構
+1. get_project_info 了解當前程式碼結構
 2. 實作功能（前後端）
 3. lint_and_typecheck 確認無 type error
 4. 執行相關測試
@@ -346,7 +346,7 @@ PRD 摘要（API 部分）：
 
 步驟：
 1. get_project_info 了解專案
-2. search_files 搜尋相關代碼
+2. search_files 搜尋相關程式碼
 3. 分析根本原因
 4. 修復問題
 5. lint_and_typecheck 確認修復後無新問題
@@ -583,7 +583,7 @@ PRD 驗收標準：
         security = self._run("SHIELD", f"""
 執行 /ship 流水線的 Phase 10。
 
-請對 {self.workdir} 的代碼做完整安全審查：
+請對 {self.workdir} 的程式碼做完整安全審查：
 - 逐一確認你的安全檢查清單
 - 發現問題立即修復，不是只列出來
 - 輸出安全審查報告（按你的 Phase 10 格式）
@@ -638,20 +638,20 @@ PRD 驗收標準：
         return results
 
     def review(self) -> str:
-        """全面代碼審查"""
-        _phase(0, "全面代碼審查")
+        """全面程式碼審查"""
+        _phase(0, "全面程式碼審查")
         probe_result = self._run("PROBE", f"""
 請對這個專案進行全面的品質審查：
 
 1. get_project_info 了解專案結構
 2. lint_and_typecheck 執行靜態分析
 3. npm_run('test') 執行所有測試
-4. 審查主要組件的代碼品質
+4. 審查主要組件的程式碼品質
 5. 列出所有發現的問題（按嚴重程度分類）
 6. 提供具體的改進建議和修復方案
 """)
         shield_result = self._chat("SHIELD", f"""
-基於以下代碼審查結果，補充安全性觀點：
+基於以下程式碼審查結果，補充安全性觀點：
 
 {probe_result[:1000]}
 

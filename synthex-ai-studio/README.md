@@ -105,7 +105,7 @@ Synthex CLI 自動串接多個角色，Claude Code 讓你有更完整的 context
 | `ship <需求>` | **一氣呵成**。11 Phase 自動流水線，從範疇確認到 git commit |
 | `feature <描述>` | 在現有專案新增一個功能 |
 | `fixbug <描述>` | 診斷並修復錯誤 |
-| `codereview` | PROBE + SHIELD 全面代碼審查 |
+| `codereview` | PROBE + SHIELD 全面程式碼審查 |
 
 ### 對話與規劃
 
@@ -265,7 +265,7 @@ Phase 11 — ARIA  — 交付總結
 
 ### 對話模式（ask / agent / chat / project）
 
-Claude 給你分析、建議、規格、代碼片段，**你自己決定要不要執行**。
+Claude 給你分析、建議、規格、程式碼片段，**你自己決定要不要執行**。
 
 ```bash
 # 適合：規劃、諮詢、技術評估、架構設計、PRD 撰寫
@@ -512,7 +512,7 @@ Agent 使用的模型為 `claude-opus-4-5`。如需更換（例如用 `claude-so
 
 `/ship` 的輸出是「可以 demo 的起點」，不是「直接上 production 的成品」。
 
-| 方式 | 代碼能跑起來 | 需要人力修復 | 適合場景 |
+| 方式 | 程式碼能跑起來 | 需要人力修復 | 適合場景 |
 |------|------------|------------|---------|
 | `/discover` + `/ship` | 約 40-60% | 半天到一天 | 快速產出骨架，再人工精修 |
 | Claude Code + CLAUDE.md | 約 60-70% | 2-4 小時 | 你全程在場，即時糾正 |

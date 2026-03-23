@@ -330,11 +330,11 @@ def cmd_fix(args):
 
 
 def cmd_review_project(args):
-    """全面代碼審查（PROBE + SHIELD）"""
+    """全面程式碼審查（PROBE + SHIELD）"""
     from core.web_orchestrator import WebOrchestrator
     workdir = get_workdir(getattr(args, "workdir", None))
 
-    print(f"\n{YELLOW}{BOLD}  🔍 全面代碼審查{RESET}")
+    print(f"\n{YELLOW}{BOLD}  🔍 全面程式碼審查{RESET}")
     orc = WebOrchestrator(workdir=workdir, auto_confirm=True)
     orc.review()
 
@@ -388,7 +388,7 @@ def main():
 {GREEN}webdev{RESET}  <需求描述>       完整建站：PRD→架構→實作→測試→部署
 {GREEN}feature{RESET} <功能描述>       在現有專案新增功能（自動實作）
 {GREEN}fixbug{RESET}  <錯誤描述>       診斷並修復 bug
-{GREEN}codereview{RESET}               全面代碼審查（PROBE + SHIELD）
+{GREEN}codereview{RESET}               全面程式碼審查（PROBE + SHIELD）
 
 {BOLD}範例{RESET}
   {DIM}python synthex.py webdev "電商平台，支援商品瀏覽、購物車、Stripe 結帳" --name my-shop

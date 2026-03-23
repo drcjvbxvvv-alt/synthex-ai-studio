@@ -84,7 +84,7 @@ Step 1  需求模糊？
 
 Step 2  確認需求，執行 /ship
         python synthex.py ship "完整需求描述"
-        → 產出代碼骨架 + PRD + 架構文件
+        → 產出程式碼骨架 + PRD + 架構文件
 
 Step 3  開啟 Claude Code 精修
         cd ~/projects/my-app && claude
