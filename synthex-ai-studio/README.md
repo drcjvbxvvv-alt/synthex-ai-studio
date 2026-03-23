@@ -200,7 +200,7 @@ python synthex.py ship "電商平台：
 - 結帳（Stripe，支援信用卡）
 - 訂單管理（用戶可查看訂單狀態）
 - 後台管理（上架商品、查看訂單）
-技術：Next.js 14 + TypeScript + Tailwind + PostgreSQL + Prisma"
+技術：Next.js 16 + TypeScript + Tailwind + PostgreSQL + Prisma"
 ```
 
 **11 Phase 自動流水線：**

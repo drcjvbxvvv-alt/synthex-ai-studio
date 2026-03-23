@@ -883,12 +883,12 @@ ARIA 必須產出 `docs/DELIVERY.md`：
 ### 技術棧
 
 ```
-前端：Next.js 14 App Router + TypeScript（固定，不更換）
+前端：Next.js 16 App Router + TypeScript（固定，不更換）
 其他選型：由 NEXUS 在 Phase 6 根據需求決定，說明選擇理由
 ```
 
 **NEXUS 在 Phase 6 決定技術選型時，必須遵守：**
-- 前端框架固定為 Next.js 14，不得建議替換
+- 前端框架固定為 Next.js 16，不得建議替換
 - 其他選型（資料庫、後端框架、第三方服務）需說明：
   1. 為什麼選這個而不是常見替代方案
   2. 月費預估（如有）
@@ -930,7 +930,7 @@ npm run test         # 執行測試
 ### 禁止事項
 
 ```
-- 不替換 Next.js 14，不建議換成其他前端框架
+- 不替換 Next.js 16，不建議換成其他前端框架
 - 不在 BYTE 的程式碼裡寫死顏色數值（一律用 tokens.css 變數）
 - 不把 API Key 寫進程式碼或 git
 - 不留 // TODO 或未完成的實作

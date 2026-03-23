@@ -9,6 +9,36 @@
 
 ---
 
+## Next.js 16 重要變更（環境準備前必知）
+
+在 Phase 8 建立環境前，確認以下 Next.js 16 的破壞性變更都已處理：
+
+```
+1. middleware.ts → proxy.ts
+   舊：export function middleware(req) { ... }
+   新：export function proxy(req) { ... }
+   檔案從 middleware.ts 改名為 proxy.ts
+
+2. params / searchParams 必須 await
+   舊：export default function Page({ params }) { const { id } = params }
+   新：export default async function Page({ params }) {
+         const { id } = await params
+       }
+
+3. package.json scripts 移除 --turbopack 旗標（現在是預設）
+   舊："dev": "next dev --turbopack"
+   新："dev": "next dev"
+
+4. Node.js 最低版本：22
+   確認本地和 CI 環境都是 Node.js 22+
+
+5. 升級指令（現有專案）
+   npx @next/codemod@canary upgrade latest
+   或手動：npm install next@latest react@19 react-dom@19
+```
+
+---
+
 ## Phase 8 環境準備完整流程
 
 ```
@@ -43,7 +73,7 @@
 
 ## 標準設定檔範本
 
-### tsconfig.json（Next.js 14 + TypeScript strict）
+### tsconfig.json（Next.js 16 + TypeScript strict）
 
 ```json
 {
@@ -182,7 +212,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -212,14 +242,14 @@ jobs:
 
 ```dockerfile
 # ── Stage 1: 依賴安裝 ──────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci --only=production
 
 # ── Stage 2: 建置 ──────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -229,7 +259,7 @@ ENV NEXT_TELEMETRY_DISABLED 1
 RUN npm run build
 
 # ── Stage 3: 執行（最小映像）───────────────────────────
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV production

@@ -11,6 +11,46 @@
 
 ---
 
+## Next.js 16 重要語法（實作前必知）
+
+```typescript
+// ❌ Next.js 14 舊語法（16 已移除同步存取）
+export default function Page({ params }: { params: { id: string } }) {
+  const { id } = params  // 同步存取，在 16 中會報錯
+}
+
+// ✅ Next.js 16 正確語法（params 必須 await）
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
+  const { id } = await params
+  return <div>{id}</div>
+}
+
+// ✅ searchParams 同樣需要 await
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>
+}) {
+  const { q } = await searchParams
+}
+
+// ✅ proxy.ts（取代舊的 middleware.ts）
+// 檔案名稱：src/proxy.ts（不再是 middleware.ts）
+export function proxy(req: Request) {
+  // 在 Node.js runtime 執行，不支援 Edge runtime
+}
+
+// ✅ Turbopack 現在是預設，package.json 不需要旗標
+// "dev": "next dev"          ← 正確（自動使用 Turbopack）
+// "dev": "next dev --turbopack"  ← 多餘但不影響
+```
+
+---
+
 ## 實作前必須確認的事
 
 在寫第一行程式碼前，先確認：
