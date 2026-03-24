@@ -41,6 +41,10 @@
 | PROBE | `agents/PROBE/SKILL.md` | Phase 11 測試策略 |
 | TRACE | `agents/TRACE/SKILL.md` | Phase 11 測試執行 + 瀏覽器 QA |
 | SHIELD| `agents/SHIELD/SKILL.md`| Phase 12 安全審查 |
+| BOLT  | `agents/BOLT/SKILL.md`  | 韌體實作（MCU/RTOS/Bootloader）|
+| VOLT  | `agents/VOLT/SKILL.md`  | 嵌入式 Linux BSP / Device Driver |
+| WIRE  | `agents/WIRE/SKILL.md`  | 硬體整合驗證 / Board Bring-up |
+| ATOM  | `agents/ATOM/SKILL.md`  | 系統程式 / eBPF / 效能分析 |
 
 **啟動流程：**
 ```
@@ -979,32 +983,36 @@ npm run test         # 執行測試
 
 ## 全體 24 位 Agent
 
-| 部門     | Agent  | 職位             | /ship 中的角色 |
-| -------- | ------ | ---------------- | -------------- |
-| 高層     | ARIA   | 執行長 CEO       | Phase 1、13    |
-| 高層     | NEXUS  | 技術長 CTO       | Phase 6        |
-| 高層     | LUMI   | 產品長 CPO       | Phase 3        |
-| 高層     | SIGMA  | 財務長 CFO       | Phase 7        |
-| 工程     | BYTE   | 前端技術主管     | Phase 9        |
-| 工程     | STACK  | 後端技術主管     | Phase 10       |
-| 工程     | FLUX   | 全端工程師       | 彈性支援       |
-| 工程     | KERN   | 系統工程師       | /perf          |
-| 工程     | RIFT   | 行動端工程師     | 行動端擴充     |
-| 產品     | SPARK  | UX 設計主管      | **Phase 4**    |
-| 產品     | PRISM  | UI 設計師        | **Phase 5**    |
-| 產品     | ECHO   | 商業分析師       | Phase 2        |
-| 產品     | VISTA  | 產品經理         | Sprint 管理    |
-| AI       | NOVA   | ML 主管          | /ai            |
-| AI       | QUANT  | 資料科學家       | 數據分析       |
-| AI       | ATLAS  | 資料工程師       | 資料管道       |
-| 基礎架構 | FORGE  | DevOps 主管      | Phase 8        |
-| 基礎架構 | SHIELD | 資安工程師       | Phase 12       |
-| 基礎架構 | RELAY  | 雲端架構師       | /deploy        |
-| QA       | PROBE  | QA 主管          | Phase 11       |
-| QA       | TRACE  | 自動化測試工程師 | Phase 11       |
-| 商務     | PULSE  | 行銷主管         | 上線後行銷     |
-| 商務     | BRIDGE | 業務主管         | 提案撰寫       |
-| 商務     | MEMO   | 法務合規主管     | 合規審查       |
+| 部門 | Agent | 職位 |
+|------|-------|------|
+| 高層 | ARIA | 執行長 CEO |
+| 高層 | NEXUS | 技術長 CTO |
+| 高層 | LUMI | 產品長 CPO |
+| 高層 | SIGMA | 財務長 CFO |
+| 工程 | BYTE | 前端技術主管 |
+| 工程 | STACK | 後端技術主管 |
+| 工程 | FLUX | 全端工程師 |
+| 工程 | KERN | 系統工程師 |
+| 工程 | RIFT | 行動端工程師 |
+| 產品 | SPARK | UX 設計主管 |
+| 產品 | PRISM | UI 設計師 |
+| 產品 | ECHO | 商業分析師 |
+| 產品 | VISTA | 產品經理 |
+| AI | NOVA | ML 主管 |
+| AI | QUANT | 資料科學家 |
+| AI | ATLAS | 資料工程師 |
+| 基礎架構 | FORGE | DevOps 主管 |
+| 基礎架構 | SHIELD | 資安工程師 |
+| 基礎架構 | RELAY | 雲端架構師 |
+| QA | PROBE | QA 主管 |
+| QA | TRACE | 自動化測試工程師 |
+| 商務 | PULSE | 行銷主管 |
+| 商務 | BRIDGE | 業務主管 |
+| 商務 | MEMO | 法務合規主管 |
+| **系統工程** | **BOLT** | **韌體技術主管** |
+| **系統工程** | **VOLT** | **嵌入式系統工程師** |
+| **系統工程** | **WIRE** | **硬體軟體整合工程師** |
+| **系統工程** | **ATOM** | **系統程式工程師** |
 
 ---
 
