@@ -333,10 +333,208 @@ def cmd_review_project(args):
     """全面程式碼審查（PROBE + SHIELD）"""
     from core.web_orchestrator import WebOrchestrator
     workdir = get_workdir(getattr(args, "workdir", None))
-
     print(f"\n{YELLOW}{BOLD}  🔍 全面程式碼審查{RESET}")
     orc = WebOrchestrator(workdir=workdir, auto_confirm=True)
     orc.review()
+
+
+def cmd_retro(args):
+    """
+    /retro — 回顧統計
+    分析 git log，輸出這段時間的程式碼產出、提交分布、測試比例
+    """
+    from agents.all_agents import get_agent
+    workdir = get_workdir(getattr(args, "workdir", None))
+    since   = getattr(args, "since", None) or "7 days ago"
+
+    print(f"\n{CYAN}{BOLD}  📊 /retro — 回顧統計{RESET}")
+    print(f"{DIM}  時間範圍：{since} · 目錄：{workdir}{RESET}\n")
+
+    import subprocess
+    from pathlib import Path
+
+    # 收集 git 統計
+    def git(cmd):
+        r = subprocess.run(cmd, shell=True, cwd=workdir,
+                           capture_output=True, text=True, timeout=15)
+        return r.stdout.strip()
+
+    commits     = git(f'git log --since="{since}" --oneline')
+    commit_list = [l for l in commits.splitlines() if l]
+    stat        = git(f'git log --since="{since}" --numstat --pretty=format:""')
+
+    added = deleted = test_added = 0
+    for line in stat.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3:
+            try:
+                a, d = int(parts[0]), int(parts[1])
+                added   += a
+                deleted += d
+                fname = parts[2]
+                if any(x in fname for x in ["test", "spec", "__test__", ".test.", ".spec."]):
+                    test_added += a
+            except ValueError:
+                pass
+
+    net_loc       = added - deleted
+    test_pct      = round(test_added / added * 100) if added > 0 else 0
+    commit_count  = len(commit_list)
+
+    # 統計數據
+    stats_str = f"""
+Git 統計（過去 {since}）：
+  提交數：     {commit_count}
+  新增行數：   {added:,}
+  刪除行數：   {deleted:,}
+  淨增行數：   {net_loc:,}
+  測試程式碼：   {test_added:,} 行（佔 {test_pct}%）
+  每天平均：   約 {added // 7:,} 行新增（以 7 天計算）
+
+最近提交：
+{chr(10).join(commit_list[:10])}
+"""
+    print(stats_str)
+
+    # 讓 ARIA 做質化回顧
+    agent = get_agent("ARIA", workdir=workdir)
+    agent.chat(f"""
+請根據以下 Git 統計做一個簡短的回顧分析：
+
+{stats_str}
+
+請評估：
+1. 產出量是否健康（程式碼量、提交頻率）
+2. 測試比例（{test_pct}%）是否足夠
+3. 根據提交訊息，這段時間的工作重心是什麼
+4. 建議下一週應該聚焦什麼
+
+保持簡短，不超過 10 行。
+""")
+
+
+def cmd_qa_browser(args):
+    """
+    qa-browser — 真實瀏覽器 QA
+    開啟 Chromium，截圖每個頁面，檢查 console 錯誤和 network 失敗
+    比 TRACE 的程式碼分析更真實：看到的就是用戶看到的
+    """
+    from core.browser_qa import BrowserToolExecutor, BrowserQA, SCREENSHOT_DIR
+    from agents.all_agents import get_agent
+
+    workdir  = get_workdir(getattr(args, "workdir", None))
+    base_url = " ".join(args.url) if hasattr(args, "url") and args.url else "http://localhost:3000"
+    headless = not getattr(args, "headed", False)
+
+    routes_arg = getattr(args, "routes", None)
+    if routes_arg:
+        routes = [r.strip() for r in " ".join(routes_arg).split(",")]
+    else:
+        routes = ["/", "/login", "/dashboard", "/about"]
+
+    print(f"\n{CYAN}{BOLD}  🌐 Browser QA — 真實瀏覽器驗收{RESET}")
+    print(f"{DIM}  URL：{base_url}")
+    print(f"  路由：{', '.join(routes)}")
+    print(f"  截圖儲存：{SCREENSHOT_DIR}")
+    print(f"  模式：{'有頭（可見）' if not headless else '無頭（背景）'}{RESET}\n")
+
+    executor = BrowserToolExecutor(headless=headless)
+    result   = executor.execute("browser_audit", {"base_url": base_url, "routes": routes})
+
+    import json
+    report = json.loads(result)
+    summary = report.get("summary", {})
+
+    print(f"\n{BOLD}審計摘要{RESET}")
+    print(f"  檢查路由：{summary.get('routes_checked', 0)}")
+    print(f"  {GREEN}無錯誤：{summary.get('routes_clean', 0)}{RESET}")
+    total_err = summary.get("total_errors", 0)
+    if total_err:
+        print(f"  {RED}有錯誤：{total_err} 個{RESET}")
+        for e in summary.get("all_errors", [])[:10]:
+            print(f"    {DIM}• {e}{RESET}")
+
+    # 讓 PROBE 分析結果
+    if total_err > 0:
+        print(f"\n{CYAN}▶ PROBE 分析錯誤...{RESET}")
+        agent = get_agent("PROBE", workdir=workdir)
+        agent.chat(f"""
+瀏覽器 QA 發現以下錯誤：
+
+{json.dumps(summary.get('all_errors', []), ensure_ascii=False, indent=2)}
+
+完整路由報告：
+{json.dumps({k: {
+    'console_errors': v.get('console_errors', []),
+    'network_errors': v.get('network_errors', [])
+} for k, v in report.get('routes', {}).items()}, ensure_ascii=False, indent=2)}
+
+請分析這些錯誤，判斷嚴重程度，並給出具體的修復建議。
+""")
+
+
+def cmd_investigate(args):
+    """
+    investigate — 在真實運行的 app 上互動式調查問題
+    描述問題，PROBE 會用真實瀏覽器重現它，截圖，然後給出診斷
+    """
+    from core.browser_qa import BrowserToolExecutor
+    from agents.all_agents import get_agent
+
+    workdir     = get_workdir(getattr(args, "workdir", None))
+    description = " ".join(args.description)
+    base_url    = getattr(args, "url", None) or "http://localhost:3000"
+    headless    = not getattr(args, "headed", False)
+
+    print(f"\n{RED}{BOLD}  🔎 /investigate — 問題調查{RESET}")
+    print(f"{DIM}  問題：{description[:60]}")
+    print(f"  URL：{base_url}{RESET}\n")
+
+    # 先讓 PROBE 設計重現步驟
+    probe = get_agent("PROBE", workdir=workdir)
+    steps_plan = probe.chat(f"""
+用戶回報以下問題：{description}
+
+app URL：{base_url}
+
+請設計一個在瀏覽器中重現這個問題的步驟計畫。
+輸出格式：用 JSON 描述步驟，例如：
+[
+  {{"action": "screenshot", "label": "初始狀態"}},
+  {{"action": "click", "selector": "#login-btn", "label": "點擊登入"}},
+  {{"action": "fill", "selector": "#email", "value": "test@example.com", "label": "填入 email"}},
+  {{"action": "assert_text", "value": "錯誤訊息", "label": "確認錯誤出現"}}
+]
+
+只輸出 JSON 陣列，不要其他文字。
+""")
+
+    # 嘗試解析步驟
+    import json, re
+    try:
+        match = re.search(r'\[.*\]', steps_plan, re.DOTALL)
+        steps = json.loads(match.group()) if match else []
+    except Exception:
+        steps = [{"action": "screenshot", "label": "問題重現截圖"}]
+
+    if steps:
+        print(f"\n{CYAN}▶ 用瀏覽器重現問題（{len(steps)} 個步驟）...{RESET}")
+        executor = BrowserToolExecutor(headless=headless)
+        result   = executor.execute("browser_flow", {"url": base_url, "steps": steps})
+        flow_result = json.loads(result)
+
+        # PROBE 分析瀏覽器結果給出診斷
+        probe.chat(f"""
+瀏覽器重現結果：
+{json.dumps(flow_result, ensure_ascii=False, indent=2)}
+
+原始問題描述：{description}
+
+請根據以上結果：
+1. 確認問題是否重現
+2. 分析根本原因
+3. 給出具體的修復方案
+""")
 
 
 # re-wire main() to include new commands
@@ -371,7 +569,7 @@ def main():
     p=sub.add_parser("clear");   p.add_argument("name")
     p=sub.add_parser("workdir"); p.add_argument("path")
 
-    # 新增的網頁開發命令
+    # 網頁開發命令
     p=mkp("discover"); p.add_argument("idea", nargs="+")
     p=mkp("ship");     p.add_argument("requirement", nargs="+")
     p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
@@ -379,22 +577,42 @@ def main():
     p=mkp("fixbug");   p.add_argument("description", nargs="+")
     mkp("codereview")
 
+    # 新增弱項補強命令
+    p=mkp("retro");       p.add_argument("--since", default="7 days ago")
+    p=mkp("qa-browser");  p.add_argument("url", nargs="?", default=None)
+                          ; p.add_argument("--routes", nargs="+")
+                          ; p.add_argument("--headed", action="store_true",
+                                           help="顯示瀏覽器視窗（非無頭模式）")
+    p=mkp("investigate"); p.add_argument("description", nargs="+")
+                          ; p.add_argument("--url", default="http://localhost:3000")
+                          ; p.add_argument("--headed", action="store_true")
+
     args = parser.parse_args()
     if args.command is None or args.command == "help":
         cmd_help()
-        # 額外顯示新命令
-        print(f"""{CYAN}── 網頁開發專用 ──────────────────────────────────────────{RESET}
+        print(f"""{CYAN}── 弱項補強（新增）─────────────────────────────────────{RESET}
 
-{GREEN}webdev{RESET}  <需求描述>       完整建站：PRD→架構→實作→測試→部署
-{GREEN}feature{RESET} <功能描述>       在現有專案新增功能（自動實作）
-{GREEN}fixbug{RESET}  <錯誤描述>       診斷並修復 bug
-{GREEN}codereview{RESET}               全面程式碼審查（PROBE + SHIELD）
+{GREEN}retro{RESET}                    回顧統計：git 產出、提交分布、測試比例
+  --since "14 days ago"  統計時間範圍（預設 7 天）
 
-{BOLD}範例{RESET}
-  {DIM}python synthex.py webdev "電商平台，支援商品瀏覽、購物車、Stripe 結帳" --name my-shop
-  python synthex.py feature "新增用戶個人頁面，可編輯頭像和名稱"
-  python synthex.py fixbug "登入後 redirect 到 /dashboard 出現 404"
-  python synthex.py codereview{RESET}
+{GREEN}qa-browser{RESET} [URL]         真實瀏覽器 QA：截圖、console 錯誤、network 失敗
+  --routes /,/login      指定要檢查的路由（逗號分隔）
+  --headed               顯示瀏覽器視窗（debug 用）
+
+{GREEN}investigate{RESET} <問題描述>   用真實瀏覽器重現問題，PROBE 診斷並給修復方案
+  --url http://...       目標 URL（預設 localhost:3000）
+  --headed               顯示瀏覽器視窗
+
+{CYAN}── 網頁開發 ──────────────────────────────────────────────{RESET}
+
+{GREEN}discover{RESET} <想法>           需求模糊時深挖，產出 /ship 指令
+{GREEN}ship{RESET}     <需求>           完整 13 Phase 流水線
+{GREEN}feature{RESET}  <描述>           新增功能
+{GREEN}fixbug{RESET}   <描述>           修復 bug
+{GREEN}codereview{RESET}                PROBE + SHIELD 全面審查
+
+{BOLD}Browser QA 需要安裝：{RESET}
+  {DIM}pip install playwright && playwright install chromium{RESET}
 """)
         return
 
@@ -405,9 +623,10 @@ def main():
         "do":cmd_do,"run":cmd_run,"build":cmd_build,"shell":cmd_shell,
         "dept":cmd_dept,"project":cmd_project,"review":cmd_review,
         "list":cmd_list,"clear":cmd_clear,"workdir":cmd_workdir,
-        # new
-        "discover":cmd_discover,"ship":cmd_ship,"webdev":cmd_webdev,"feature":cmd_feature,
-        "fixbug":cmd_fix,"codereview":cmd_review_project,
+        "discover":cmd_discover,"ship":cmd_ship,"webdev":cmd_webdev,
+        "feature":cmd_feature,"fixbug":cmd_fix,"codereview":cmd_review_project,
+        # 弱項補強
+        "retro":cmd_retro,"qa-browser":cmd_qa_browser,"investigate":cmd_investigate,
     }
     fn = cmds.get(args.command)
     if fn:
@@ -418,3 +637,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

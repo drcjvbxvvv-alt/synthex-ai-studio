@@ -28,7 +28,7 @@
 
 ## 角色啟動規則
 
-**以下 8 個高頻角色有獨立的 SKILL.md，被呼叫前必須先讀取：**
+**以下 9 個高頻角色有獨立的 SKILL.md，被呼叫前必須先讀取：**
 
 | 角色 | SKILL.md 路徑 | 負責的 Phase |
 |------|-------------|------------|
@@ -39,6 +39,7 @@
 | BYTE  | `agents/BYTE/SKILL.md`  | Phase 9 前端實作 |
 | STACK | `agents/STACK/SKILL.md` | Phase 10 後端實作 |
 | PROBE | `agents/PROBE/SKILL.md` | Phase 11 測試策略 |
+| TRACE | `agents/TRACE/SKILL.md` | Phase 11 測試執行 + 瀏覽器 QA |
 | SHIELD| `agents/SHIELD/SKILL.md`| Phase 12 安全審查 |
 
 **啟動流程：**
@@ -50,7 +51,30 @@
 ```
 
 沒有讀取 SKILL.md 就直接行動，視為違反工作準則。
-其他 16 位角色的能力定義在本文件的「全體 24 位 Agent」表格中。
+
+---
+
+## 工作流分工
+
+```
+Python CLI（synthex.py）    規劃層，需要多角色深度分析時使用
+────────────────────────    ──────────────────────────────────
+/discover                   需求深挖（6 個角色，60 分鐘）
+/ship                       完整流水線（13 Phase，適合新專案）
+/retro                      回顧統計（git 產出 + ARIA 質化分析）
+qa-browser                  真實瀏覽器 QA（截圖 + console 錯誤）
+investigate                 用瀏覽器重現並調查問題
+
+
+Claude Code（CLAUDE.md）    執行層，日常開發在這裡
+────────────────────────    ──────────────────────────────────
+/ship + 角色呼叫             實作、修改、重構
+@BYTE、@STACK 等            直接在專案裡操作檔案
+/review、/security          程式碼審查、安全審計
+/fix、/test                 修 bug、補測試
+```
+
+**原則：需要深度規劃、多角色討論 → Python CLI；需要在程式碼裡實際操作 → Claude Code。**
 
 ---
 
