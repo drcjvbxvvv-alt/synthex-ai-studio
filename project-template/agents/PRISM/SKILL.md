@@ -60,56 +60,60 @@
 確認主色後，輸出 `src/styles/tokens.css`。以下是完整的必要欄位，每個欄位都不能省略：
 
 ```css
-/* ─── [產品名稱] DESIGN TOKENS ───────────────────────── */
-/* 由 PRISM 生成。BYTE 只能引用這裡的變數，不能寫死數值。 */
+/* ─── [產品名稱] DESIGN TOKENS ───────────────────────────────────── */
+/* 由 PRISM 生成。BYTE 只能引用這裡的變數，不能寫死數值。            */
+/* 預設色板：Linear.app 風格（簡潔、低飽和度、高對比度）              */
+/* PRISM 可根據品牌需求替換主色，但結構和其他 token 保持一致           */
 
 :root {
-  /* ── 品牌主色（9 階）────────────────────────────────── */
-  --color-primary-50:  [最淡];
-  --color-primary-100: [...];
-  --color-primary-200: [...];
-  --color-primary-300: [...];
-  --color-primary-400: [...];
-  --color-primary-500: [...]; /* 主色，按鈕背景 */
-  --color-primary-600: [...]; /* hover 狀態 */
-  --color-primary-700: [...]; /* active/pressed */
-  --color-primary-800: [...];
-  --color-primary-900: [最深];
+  /* ── 品牌主色（9 階）預設：靛藍（Linear 風格）──────── */
+  --color-primary-50:  #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1; /* 主色，按鈕背景 */
+  --color-primary-600: #4f46e5; /* hover 狀態 */
+  --color-primary-700: #4338ca; /* active/pressed */
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
 
-  /* ── 語意色彩 ───────────────────────────────────────── */
-  --color-success:    [...]; /* 成功、完成 */
-  --color-success-bg: [...]; /* 成功狀態背景 */
-  --color-warning:    [...]; /* 警告、注意 */
-  --color-warning-bg: [...];
-  --color-error:      [...]; /* 錯誤、危險 */
-  --color-error-bg:   [...];
-  --color-info:       [...]; /* 資訊、說明 */
-  --color-info-bg:    [...];
+  /* ── 語意色彩 ─────────────────────────────────────── */
+  --color-success:    #22c55e; /* 成功、完成 */
+  --color-success-bg: #f0fdf4;
+  --color-warning:    #f59e0b; /* 警告、注意 */
+  --color-warning-bg: #fffbeb;
+  --color-error:      #ef4444; /* 錯誤、危險 */
+  --color-error-bg:   #fef2f2;
+  --color-info:       #6366f1; /* 資訊 = 主色 */
+  --color-info-bg:    #eef2ff;
 
-  /* ── 中性色系（10 階）──────────────────────────────── */
+  /* ── 中性色系（10 階，Linear 風格：偏冷灰）─────────── */
   --color-neutral-0:   #ffffff;
-  --color-neutral-50:  [...];
-  --color-neutral-100: [...];
-  --color-neutral-200: [...];
-  --color-neutral-300: [...];
-  --color-neutral-400: [...];
-  --color-neutral-500: [...];
-  --color-neutral-600: [...];
-  --color-neutral-700: [...];
-  --color-neutral-800: [...];
-  --color-neutral-900: [...];
+  --color-neutral-50:  #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #475569;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1e293b;
+  --color-neutral-900: #0f172a;
 
-  /* ── 語意化背景與文字 ───────────────────────────────── */
-  --color-bg-page:      [...]; /* 頁面底色 */
-  --color-bg-surface:   [...]; /* 卡片、面板 */
-  --color-bg-elevated:  [...]; /* 懸浮元素（dropdown、modal）*/
-  --color-text-primary:   [...]; /* 主要文字 */
-  --color-text-secondary: [...]; /* 次要文字、說明 */
-  --color-text-disabled:  [...]; /* 不可用狀態 */
-  --color-text-inverse:   [...]; /* 深色背景上的文字 */
-  --color-border:       [...]; /* 預設邊框 */
-  --color-border-focus: [...]; /* 焦點環 */
-  --color-border-error: [...]; /* 錯誤邊框 */
+  /* ── 語意化背景與文字 ─────────────────────────────── */
+  --color-bg-page:        var(--color-neutral-50);
+  --color-bg-surface:     var(--color-neutral-0);
+  --color-bg-elevated:    var(--color-neutral-0);
+  --color-bg-subtle:      var(--color-neutral-100);  /* 輕微強調區塊 */
+  --color-text-primary:   var(--color-neutral-900);
+  --color-text-secondary: var(--color-neutral-500);
+  --color-text-disabled:  var(--color-neutral-400);
+  --color-text-inverse:   var(--color-neutral-0);   /* 深色背景上的文字 */
+  --color-border:         var(--color-neutral-200);
+  --color-border-strong:  var(--color-neutral-300);
+  --color-border-focus:   var(--color-primary-500);
+  --color-border-error:   var(--color-error);
 
   /* ── 字體家族 ───────────────────────────────────────── */
   --font-sans: [...], system-ui, sans-serif;

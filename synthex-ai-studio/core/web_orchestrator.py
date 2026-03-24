@@ -366,20 +366,34 @@ P2 要求：
             results["phase6_env"] = env_result
             ckpt.mark_done(6)
 
-        # ── Phase 7：BYTE 前端實作 ────────────────────────────
-        if resume and ckpt.is_done(7):
-            _ok("Phase 7 已完成，跳過")
+        # ── Phase 7 + 8：BYTE 前端 + STACK 後端（並行執行）─────
+        both_done = (resume and ckpt.is_done(7) and ckpt.is_done(8))
+        if both_done:
+            _ok("Phase 7 + 8 已完成，跳過")
+            frontend = ctx.read("FRONTEND_IMPL")
+            backend  = ctx.read("BACKEND_IMPL")
         else:
-            _phase(7, "BYTE — 前端實作")
-            # P0 修復：讀完整 PRD + 完整架構文件
-            frontend = self._run("BYTE", f"""
+            import concurrent.futures, threading
+
+            prd_content  = ctx.read("PRD")
+            arch_content = ctx.read("ARCHITECTURE")
+
+            byte_task  = None
+            stack_task = None
+
+            def _run_byte():
+                if resume and ckpt.is_done(7):
+                    _ok("Phase 7 已完成，跳過")
+                    return ctx.read("FRONTEND_IMPL")
+                _phase(7, "BYTE — 前端實作（並行）")
+                result = self._run("BYTE", f"""
 執行 /ship 流水線的 Phase 7。
 
 完整 PRD（含所有頁面和路由）：
-{ctx.read("PRD")}
+{prd_content}
 
 完整技術架構（含目錄結構和元件架構）：
-{ctx.read("ARCHITECTURE")}
+{arch_content}
 
 硬性規定：
 - 不留任何 // TODO 或 placeholder
@@ -390,24 +404,23 @@ P2 要求：
 
 實作順序：型別定義 → API 客戶端 → 組件 → 頁面 → 路由
 """)
-            ctx.write("FRONTEND_IMPL", frontend, "前端實作報告")
-            results["phase7_frontend"] = frontend
-            ckpt.mark_done(7)
+                ctx.write("FRONTEND_IMPL", result, "前端實作報告")
+                ckpt.mark_done(7)
+                return result
 
-        # ── Phase 8：STACK 後端實作 ───────────────────────────
-        if resume and ckpt.is_done(8):
-            _ok("Phase 8 已完成，跳過")
-        else:
-            _phase(8, "STACK — 後端實作")
-            # P0 修復：讀完整 PRD + 完整架構（含 API 設計和 Schema）
-            backend = self._run("STACK", f"""
+            def _run_stack():
+                if resume and ckpt.is_done(8):
+                    _ok("Phase 8 已完成，跳過")
+                    return ctx.read("BACKEND_IMPL")
+                _phase(8, "STACK — 後端實作（並行）")
+                result = self._run("STACK", f"""
 執行 /ship 流水線的 Phase 8。
 
 完整 PRD（含所有 API 端點規格）：
-{ctx.read("PRD")}
+{prd_content}
 
 完整技術架構（含資料庫 Schema 和 API 設計）：
-{ctx.read("ARCHITECTURE")}
+{arch_content}
 
 硬性規定：
 - 每個 API 端點有完整錯誤處理
@@ -418,9 +431,19 @@ P2 要求：
 
 實作順序：資料模型 → Repository → Service → API 路由 → 中間件
 """)
-            ctx.write("BACKEND_IMPL", backend, "後端實作報告")
-            results["phase8_backend"] = backend
-            ckpt.mark_done(8)
+                ctx.write("BACKEND_IMPL", result, "後端實作報告")
+                ckpt.mark_done(8)
+                return result
+
+            print(f"\n{CYAN}{BOLD}  ⚡ Phase 7 + 8 並行執行（預計節省 30-50% 時間）{RESET}")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                f7 = pool.submit(_run_byte)
+                f8 = pool.submit(_run_stack)
+                frontend = f7.result()
+                backend  = f8.result()
+
+            results["phase7_frontend"] = frontend
+            results["phase8_backend"]  = backend
 
         # ── Phase 9：PROBE 策略 + TRACE 執行 ─────────────────
         if resume and ckpt.is_done(9):
@@ -531,6 +554,15 @@ P2 要求：
         # 清除 checkpoint（成功完成）
         if ckpt.state_file.exists():
             ckpt.state_file.unlink()
+
+        # Token 成本報告
+        try:
+            from core.base_agent import get_session_budget
+            budget = get_session_budget()
+            print(budget.summary())
+            print(budget.per_agent_summary())
+        except Exception:
+            pass
 
         print(f"\n{GREEN}{BOLD}{'═'*62}")
         print(f"  ✅  /ship 完成！耗時 {elapsed} 秒")

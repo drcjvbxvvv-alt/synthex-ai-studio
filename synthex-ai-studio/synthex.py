@@ -275,9 +275,14 @@ def cmd_discover(args):
 def cmd_ship(args):
     """/ship — 從決策到實作一氣呵成（11 Phase 完整流水線）"""
     from core.web_orchestrator import WebOrchestrator
+    from core.base_agent import init_session_budget
     requirement = " ".join(args.requirement)
-    workdir = get_workdir(getattr(args, "workdir", None))
-    auto = getattr(args, "yes", False)
+    workdir     = get_workdir(getattr(args, "workdir", None))
+    auto        = getattr(args, "yes", False)
+    budget      = getattr(args, "budget", 5.0)
+    no_resume   = getattr(args, "no_resume", False)
+    init_session_budget(budget_usd=budget)
+    print(f"{DIM}  💰 預算上限：${budget:.1f} USD{RESET}")
 
     print(f"\n{PURPLE}{BOLD}  🚀 /ship — 從決策到實作一氣呵成{RESET}")
     print(f"{DIM}  11 Phase：範疇確認 → PRD → 產品驗證 → 架構 → 可行性")
@@ -572,6 +577,10 @@ def main():
     # 網頁開發命令
     p=mkp("discover"); p.add_argument("idea", nargs="+")
     p=mkp("ship");     p.add_argument("requirement", nargs="+")
+                          ; p.add_argument("--budget", type=float, default=5.0,
+                                           help="API 費用預算上限 USD（預設 $5.0）")
+                          ; p.add_argument("--no-resume", action="store_true",
+                                           help="不使用斷點續跑，從頭開始")
     p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
     p=mkp("feature");  p.add_argument("description", nargs="+")
     p=mkp("fixbug");   p.add_argument("description", nargs="+")
@@ -841,6 +850,10 @@ def main():
     # 規劃流水線
     p=mkp("discover"); p.add_argument("idea", nargs="+")
     p=mkp("ship");     p.add_argument("requirement", nargs="+")
+                          ; p.add_argument("--budget", type=float, default=5.0,
+                                           help="API 費用預算上限 USD（預設 $5.0）")
+                          ; p.add_argument("--no-resume", action="store_true",
+                                           help="不使用斷點續跑，從頭開始")
     p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
     p=mkp("feature");  p.add_argument("description", nargs="+")
     p=mkp("fixbug");   p.add_argument("description", nargs="+")

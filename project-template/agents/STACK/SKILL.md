@@ -329,3 +329,211 @@ Phase 10 結束前：
 實作端點：[列表]
 新增檔案：[列表]
 ```
+
+---
+
+## P1：資料庫深度操作
+
+### Zero-downtime Migration（不停機改 Schema）
+
+直接 ALTER TABLE 加 NOT NULL 欄位或刪除欄位，在有大量流量的生產環境會鎖表。**所有破壞性的 Schema 變更都必須分步驟進行。**
+
+```
+場景：在 users 表加入 role 欄位（NOT NULL）
+
+❌ 錯誤做法（直接加 NOT NULL，鎖表）：
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';
+
+✅ 正確做法（三步驟）：
+
+Step 1：加入可為 NULL 的欄位（立刻部署，不鎖表）
+  ALTER TABLE users ADD COLUMN role TEXT;
+  ── 此時新程式碼不依賴這個欄位，就可以部署
+
+Step 2：回填現有資料（背景執行，分批更新避免鎖表）
+  UPDATE users SET role = 'user'
+  WHERE role IS NULL AND id IN (
+    SELECT id FROM users WHERE role IS NULL LIMIT 1000
+  );
+  ── 重複執行直到全部更新完成
+
+Step 3：加入 NOT NULL 約束（確認所有資料都填好後）
+  ALTER TABLE users ALTER COLUMN role SET NOT NULL;
+  ALTER TABLE users ALTER COLUMN role SET DEFAULT 'user';
+```
+
+```typescript
+// Prisma Migration 的正確做法
+
+// migration_001_add_role_nullable.sql（先部署）
+-- AddColumn
+ALTER TABLE "users" ADD COLUMN "role" TEXT;
+
+// migration_002_backfill_role.sql（回填後執行）
+-- BackfillRole
+UPDATE "users" SET "role" = 'user' WHERE "role" IS NULL;
+
+// migration_003_add_role_notnull.sql（全部填完後）
+-- MakeRoleRequired
+ALTER TABLE "users" ALTER COLUMN "role" SET NOT NULL;
+ALTER TABLE "users" ALTER COLUMN "role" SET DEFAULT 'user';
+```
+
+### Index 策略
+
+```sql
+-- ✅ 何時需要 Index
+-- 1. WHERE 子句中頻繁查詢的欄位
+CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
+-- CONCURRENTLY：建立時不鎖表（生產環境必用）
+
+-- 2. 外鍵（Prisma 會自動建立，但要確認）
+CREATE INDEX CONCURRENTLY idx_posts_user_id ON posts(user_id);
+
+-- 3. 複合 Index（欄位順序很重要：選擇性高的欄位放前面）
+-- 查詢：WHERE org_id = ? AND status = ? ORDER BY created_at DESC
+CREATE INDEX CONCURRENTLY idx_tasks_org_status_created
+  ON tasks(org_id, status, created_at DESC);
+-- 注意：這個 Index 對 org_id alone 有效，但對 status alone 無效
+
+-- 4. Partial Index（只 Index 部分資料，更小更快）
+CREATE INDEX CONCURRENTLY idx_users_unverified
+  ON users(email) WHERE verified = false;
+-- 只 Index 未驗證的用戶，比完整 Index 小很多
+
+-- ❌ 不應該加 Index 的情況
+-- - 經常被 UPDATE 的欄位（Index 維護有成本）
+-- - 布林欄位（選擇性太低，Index 幾乎沒用）
+-- - 小表（< 1000 行，全表掃描更快）
+```
+
+### 慢查詢分析
+
+```sql
+-- 找出最慢的查詢（需要啟用 pg_stat_statements）
+-- postgresql.conf: shared_preload_libraries = 'pg_stat_statements'
+
+SELECT
+  LEFT(query, 100)        AS query_preview,
+  calls,
+  total_exec_time::int    AS total_ms,
+  mean_exec_time::int     AS avg_ms,
+  stddev_exec_time::int   AS stddev_ms,
+  rows
+FROM pg_stat_statements
+WHERE mean_exec_time > 100    -- 平均超過 100ms 的查詢
+ORDER BY mean_exec_time DESC
+LIMIT 20;
+
+-- EXPLAIN ANALYZE（分析特定查詢）
+EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+SELECT u.*, COUNT(o.id) AS order_count
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+WHERE u.created_at > NOW() - INTERVAL '30 days'
+GROUP BY u.id;
+
+-- 解讀重點：
+-- Seq Scan → 全表掃描（可能需要 Index）
+-- Index Scan → 使用 Index（好）
+-- Hash Join vs Nested Loop → 大表用 Hash Join 通常更快
+-- rows=1000 vs actual rows=50000 → 統計資料過舊，執行 ANALYZE
+-- Buffers: shared hit=X read=Y → read 高代表 cache miss，考慮加 RAM
+```
+
+### 資料庫連線池管理
+
+```typescript
+// src/lib/db.ts — 連線池正確設定
+
+import { PrismaClient } from "@prisma/client"
+
+// 連線池大小計算：
+// 最大連線數 = (2 × CPU 核心數) + 有效磁碟主軸數
+// Serverless 環境：每個 Function instance 最多 1-5 個連線
+// 建議：DATABASE_URL 加上 ?connection_limit=5&pool_timeout=10
+
+const db = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL + "?connection_limit=5&pool_timeout=10",
+    },
+  },
+  log: [
+    { level: "query", emit: "event" },   // 記錄所有查詢
+    { level: "error", emit: "stdout" },
+    { level: "warn",  emit: "stdout" },
+  ],
+})
+
+// 開發環境：記錄超過 1 秒的慢查詢
+if (process.env.NODE_ENV === "development") {
+  db.$on("query", (e) => {
+    if (e.duration > 1000) {
+      console.warn(`[SLOW QUERY] ${e.duration}ms: ${e.query}`)
+    }
+  })
+}
+
+// 連線洩漏偵測（測試環境）
+if (process.env.NODE_ENV === "test") {
+  afterAll(async () => {
+    await db.$disconnect()
+  })
+}
+
+export { db }
+
+// Prisma + Serverless 的額外注意：
+// 使用 @prisma/adapter-neon（Neon 的無伺服器驅動）
+// 或 Prisma Accelerate（全球連線池代理）
+// import { PrismaClient } from "@prisma/client"
+// import { withAccelerate } from "@prisma/extension-accelerate"
+// const db = new PrismaClient().$extends(withAccelerate())
+```
+
+### 事務和並發控制
+
+```typescript
+// ✅ 複雜業務邏輯使用事務
+async function transferCredit(fromId: string, toId: string, amount: number) {
+  return db.$transaction(async (tx) => {
+    // 使用 SELECT FOR UPDATE 防止並發問題（悲觀鎖）
+    const from = await tx.$queryRaw<User[]>`
+      SELECT * FROM users WHERE id = ${fromId} FOR UPDATE
+    `
+    if (!from[0] || from[0].credits < amount) {
+      throw new Error("餘額不足")
+    }
+
+    await tx.user.update({
+      where: { id: fromId },
+      data:  { credits: { decrement: amount } },
+    })
+    await tx.user.update({
+      where: { id: toId },
+      data:  { credits: { increment: amount } },
+    })
+    await tx.creditTransfer.create({
+      data: { fromId, toId, amount, createdAt: new Date() },
+    })
+  }, {
+    maxWait: 5000,   // 等待事務鎖最多 5 秒
+    timeout: 10000,  // 事務執行最多 10 秒
+    isolationLevel: "Serializable",  // 最高隔離級別（防止幻讀）
+  })
+}
+
+// ✅ 冪等性（防止重複操作）
+async function createOrder(idempotencyKey: string, orderData: CreateOrderInput) {
+  // 先查是否已有相同 idempotencyKey 的訂單
+  const existing = await db.order.findUnique({
+    where: { idempotencyKey },
+  })
+  if (existing) return existing   // 回傳已存在的結果，不重複建立
+
+  return db.order.create({
+    data: { ...orderData, idempotencyKey },
+  })
+}
+```

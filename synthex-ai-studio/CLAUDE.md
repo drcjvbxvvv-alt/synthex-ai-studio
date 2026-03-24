@@ -41,6 +41,9 @@
 | PROBE | `agents/PROBE/SKILL.md` | Phase 11 測試策略 |
 | TRACE | `agents/TRACE/SKILL.md` | Phase 11 測試執行 + 瀏覽器 QA |
 | SHIELD| `agents/SHIELD/SKILL.md`| Phase 12 安全審查 |
+| ECHO  | `agents/ECHO/SKILL.md`  | Phase 2 PRD 撰寫（GIVEN-WHEN-THEN AC 格式）|
+| NOVA  | `agents/NOVA/SKILL.md`  | AI 功能設計（LLM 整合、RAG、Prompt Injection 防護）|
+| RELAY | `agents/RELAY/SKILL.md` | 雲端部署（Vercel、Neon、FinOps）|
 | BOLT  | `agents/BOLT/SKILL.md`  | 韌體實作（MCU/RTOS/Bootloader）|
 | VOLT  | `agents/VOLT/SKILL.md`  | 嵌入式 Linux BSP / Device Driver |
 | WIRE  | `agents/WIRE/SKILL.md`  | 硬體整合驗證 / Board Bring-up |
