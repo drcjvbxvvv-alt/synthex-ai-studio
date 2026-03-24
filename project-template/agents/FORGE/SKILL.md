@@ -653,3 +653,163 @@ if (isFeatureEnabled("new_dashboard", session.user.id)) {
 }
 return <OldDashboard />
 ```
+
+---
+
+## P1：監控驅動開發（SLO/SLI/Error Budget）
+
+### 定義你的 SLO（Service Level Objectives）
+
+上線前必須定義，不是上線後出問題才想到：
+
+```yaml
+# docs/slo.yml — SLO 定義文件
+service: my-app
+version: "1.0"
+
+slos:
+  # API 可用性
+  - name:        api_availability
+    description: API 端點的成功率
+    sli:
+      metric:    http_requests_total
+      filter:    status_code < 500
+    target:      99.5%   # 每月允許 ~3.6 小時停機
+    window:      30d
+
+  # API 延遲
+  - name:        api_latency
+    description: 95% 的 API 請求在 500ms 內回應
+    sli:
+      metric:    http_request_duration_p95
+    target:      500ms
+    window:      7d
+
+  # 錯誤率
+  - name:        error_rate
+    description: API 錯誤率低於 0.1%
+    sli:
+      metric:    error_rate
+    target:      "<0.1%"
+    window:      24h
+```
+
+### Error Budget 追蹤
+
+```
+Error Budget = 1 - SLO 目標
+
+例：99.5% SLO = 0.5% Error Budget
+每月允許：
+  0.5% × 30天 × 24小時 = 3.6 小時停機
+  或 0.5% × 100萬請求 = 5,000 個錯誤請求
+
+當 Error Budget 消耗到 50% → 停止新功能開發，專注穩定性
+當 Error Budget 消耗到 100% → 凍結所有變更，全力修復
+```
+
+### Grafana 告警設定（AlertManager）
+
+```yaml
+# grafana/alerts/api-alerts.yml
+groups:
+  - name: api_alerts
+    rules:
+      # P1 告警：API 錯誤率超過 1%（5 分鐘內）
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m])
+          / rate(http_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 錯誤率超過 1%"
+          description: "當前錯誤率：{{ $value | humanizePercentage }}"
+          runbook: "https://docs.yourapp.com/runbooks/high-error-rate"
+
+      # P2 告警：P95 延遲超過 1s
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API P95 延遲超過 1 秒"
+```
+
+### Runbook 模板
+
+每個告警都必須有對應的 Runbook（第一次碰到就知道怎麼處理）：
+
+```markdown
+# Runbook：HighErrorRate
+
+## 告警觸發條件
+API 錯誤率在 5 分鐘內超過 1%
+
+## 影響範圍
+[哪些用戶受影響、影響什麼功能]
+
+## 診斷步驟
+
+1. 確認是哪個端點出問題
+   ```
+   # 在 Grafana 查詢
+   rate(http_requests_total{status=~"5.."}[5m]) by (path)
+   ```
+
+2. 查看 Sentry 的最新 Error
+   → 登入 Sentry → 按時間排序 → 看最近 5 分鐘的 Error
+
+3. 查看應用日誌
+   ```bash
+   vercel logs --limit=100 | grep ERROR
+   ```
+
+## 常見原因和解法
+
+| 原因 | 症狀 | 解法 |
+|------|------|------|
+| 資料庫連線超時 | timeout 錯誤 | 重啟 DB 連線池 |
+| 記憶體不足 | OOM Error | 增加記憶體或重啟 |
+| 第三方 API 失敗 | External API Error | 確認第三方狀態頁 |
+
+## 升級流程
+15 分鐘內無法解決 → 通知 [聯絡人]
+
+## 事後複盤
+解決後 24 小時內完成 Postmortem
+```
+
+### Postmortem 模板
+
+```markdown
+# Postmortem：[事件名稱]
+
+**日期**：[日期]
+**嚴重程度**：P1/P2/P3
+**影響時間**：[開始] → [結束]（共 [X] 分鐘）
+**影響範圍**：[X]% 用戶受影響，[X] 個功能不可用
+
+## 根本原因
+[一句話說明真正的原因]
+
+## 時間線
+| 時間 | 事件 |
+|------|------|
+| HH:MM | 告警觸發 |
+| HH:MM | 工程師開始調查 |
+| HH:MM | 確認根本原因 |
+| HH:MM | 開始修復 |
+| HH:MM | 服務恢復 |
+
+## 立即行動（已完成）
+- [什麼問題] → [怎麼修復]
+
+## 預防措施（待完成）
+- [ ] [具體行動] 負責人：[誰] 截止：[日期]
+
+## 教訓
+[從這次事件中學到了什麼]
+```

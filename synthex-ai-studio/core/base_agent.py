@@ -30,6 +30,24 @@ PRICING = {
 }
 DEFAULT_BUDGET_USD = 5.0   # 預設每次 /ship 的 budget 上限
 
+# ── P0-1：Extended Thinking 設定 ──────────────────────────────
+# 哪些 Agent 在執行深度推理任務時啟用 Extended Thinking
+# Extended Thinking 讓模型在回答前進行內部推理，提升複雜決策品質
+EXTENDED_THINKING_AGENTS = {
+    "NEXUS",   # Phase 4 技術架構（複雜技術決策）
+    "SIGMA",   # Phase 5 可行性評估（多維度分析）
+    "ARIA",    # Phase 1 任務分析（需求澄清）
+    "NOVA",    # AI 架構設計（高複雜度）
+    "ATOM",    # 系統效能分析
+}
+
+# Extended Thinking 的 budget_tokens（思考用的 token 上限）
+THINKING_BUDGET = {
+    "deep":    10000,  # 深度分析（架構設計、可行性評估）
+    "normal":   5000,  # 一般推理
+    "quick":    2000,  # 快速判斷
+}
+
 
 # ══════════════════════════════════════════════════════════════
 #  P0-1：Token 成本追蹤器
@@ -332,16 +350,32 @@ class BaseAgent:
         print(self._header("對話"))
 
         response_text = ""
+        # P0-1：Extended Thinking（對深度推理 Agent 啟用）
+        use_thinking = self.name in EXTENDED_THINKING_AGENTS
+        thinking_budget = THINKING_BUDGET["deep"] if use_thinking else 0
+
         try:
             def _call():
-                return self.client.messages.create(
+                params = dict(
                     model=self.model,
-                    max_tokens=4096,
+                    max_tokens=4096 + (thinking_budget if use_thinking else 0),
                     system=self._build_system_prompt(with_tools=False),
                     messages=self.conversation_history,
                 )
+                if use_thinking:
+                    params["thinking"] = {
+                        "type":          "enabled",
+                        "budget_tokens": thinking_budget,
+                    }
+                    # Extended Thinking 需要 claude-sonnet-4-5 以上
+                    if params["model"] == "claude-haiku-4-5":
+                        params["model"] = "claude-sonnet-4-5"
+                return self.client.messages.create(**params)
 
             resp = _api_call_with_retry(_call, agent_name=self.name)
+
+            if use_thinking:
+                self._print_system(f"🧠 Extended Thinking 啟用（budget: {thinking_budget} tokens）")
 
             # Token 追蹤
             if hasattr(resp, "usage"):
@@ -352,6 +386,11 @@ class BaseAgent:
                 )
 
             for block in resp.content:
+                # Extended Thinking 的思考塊（不顯示給用戶，只記錄統計）
+                if hasattr(block, "type") and block.type == "thinking":
+                    thinking_len = len(getattr(block, "thinking", ""))
+                    self._print_system(f"💭 思考過程：{thinking_len} 字元")
+                    continue
                 if hasattr(block, "text"):
                     response_text += block.text
 

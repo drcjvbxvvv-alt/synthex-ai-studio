@@ -4,7 +4,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Built with Claude](https://img.shields.io/badge/Built_with-Claude_3.5-7C3AED.svg)](https://anthropic.com/)
 
 ## 📖 專案摘要 (Abstract)
 

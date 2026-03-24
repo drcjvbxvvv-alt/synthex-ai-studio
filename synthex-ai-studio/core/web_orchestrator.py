@@ -73,6 +73,156 @@ class DocContext:
 
 
 # ══════════════════════════════════════════════════════════════
+#  P0-2：Self-Critique Loop（自我評估品質閉環）
+#  讓關鍵 Phase 的輸出在進入下一步前先通過品質評估
+# ══════════════════════════════════════════════════════════════
+
+class SelfCritique:
+    """
+    自我評估迴圈：
+    1. 主要 Agent 完成輸出
+    2. 評估 Agent 以「挑剔的評審」角色審查輸出
+    3. 如果評分不夠，主要 Agent 根據反饋改進
+    4. 最多迭代 MAX_CRITIQUE_ROUNDS 次
+
+    適用場景：PRD、技術架構、安全審查等關鍵 Phase
+    """
+
+    MAX_ROUNDS = 2   # 最多改 2 輪，避免無限循環
+
+    # 各 Phase 的評估者和標準
+    CRITIQUE_CONFIG = {
+        "PRD": {
+            "reviewer":  "LUMI",
+            "criteria":  """評估這份 PRD 的品質（1-10 分）：
+1. AC 的具體性（每個 P0 功能是否有 GIVEN-WHEN-THEN 格式的 AC）
+2. 邊界條件覆蓋（空狀態、錯誤狀態、並發是否考慮到）
+3. 範疇清晰度（不在範疇的功能是否明確列出）
+4. 用戶故事品質（是否有真實的用戶價值而非技術描述）
+
+輸出格式：
+SCORE: [1-10]
+PASS: [true/false]  （分數 >= 7 才通過）
+ISSUES:
+- [具體問題]
+IMPROVEMENTS:
+- [具體改進建議]""",
+            "pass_threshold": 7,
+        },
+        "ARCHITECTURE": {
+            "reviewer":  "NEXUS",
+            "criteria":  """評估這份技術架構的品質（1-10 分）：
+1. 分層清晰度（路由層/Service層/Repository層是否分離）
+2. API 版本化（是否包含 /api/v1/ 結構）
+3. 資料庫設計（Schema 是否有主鍵、時間戳、Index 考量）
+4. 風險覆蓋（技術風險是否有緩解方案）
+5. ADR 完整性（重要決策是否有對應的 ADR）
+
+輸出格式：
+SCORE: [1-10]
+PASS: [true/false]  （分數 >= 7 才通過）
+ISSUES:
+- [具體問題]
+IMPROVEMENTS:
+- [具體改進建議]""",
+            "pass_threshold": 7,
+        },
+        "SECURITY": {
+            "reviewer":  "SHIELD",
+            "criteria":  """評估這份安全審查的完整性（1-10 分）：
+1. 輸入驗證覆蓋（所有 API 端點是否確認有驗證）
+2. 越權存取測試（是否確認了資源擁有者檢查）
+3. 敏感資料保護（密碼雜湊、回應過濾是否確認）
+4. 依賴漏洞（npm audit 是否執行）
+5. Secret 掃描（gitleaks 是否執行）
+
+輸出格式：
+SCORE: [1-10]
+PASS: [true/false]  （分數 >= 8 才通過）
+ISSUES:
+- [具體問題]
+IMPROVEMENTS:
+- [具體改進建議]""",
+            "pass_threshold": 8,
+        },
+    }
+
+    def __init__(self, orchestrator):
+        self.orc = orchestrator
+
+    def evaluate(self, doc_name: str, content: str) -> dict:
+        """
+        對指定文件執行自我評估。
+        回傳 {"passed": bool, "score": int, "feedback": str}
+        """
+        config = self.CRITIQUE_CONFIG.get(doc_name)
+        if not config:
+            return {"passed": True, "score": 10, "feedback": "（無評估設定，直接通過）"}
+
+        reviewer   = config["reviewer"]
+        criteria   = config["criteria"]
+        threshold  = config["pass_threshold"]
+
+        print(f"
+  {CYAN}🔍 Self-Critique：{reviewer} 評審 {doc_name}...{RESET}")
+
+        feedback = self.orc._chat(reviewer, f"""
+你正在進行程式碼審查角色扮演：以嚴格的技術評審者身份評估以下文件。
+
+待評估文件（{doc_name}）：
+{content}
+
+評估標準：
+{criteria}
+
+請直接輸出評分結果（嚴格按照格式，不要加其他說明）。
+""")
+
+        # 解析評分
+        import re
+        score_match = re.search(r'SCORE:\s*(\d+)', feedback)
+        pass_match  = re.search(r'PASS:\s*(true|false)', feedback, re.IGNORECASE)
+        score = int(score_match.group(1)) if score_match else 5
+        passed = score >= threshold
+
+        color = GREEN if passed else YELLOW
+        print(f"  {color}評分：{score}/10  {'✅ 通過' if passed else '⚠ 需改善'}{RESET}")
+
+        return {"passed": passed, "score": score, "feedback": feedback}
+
+    def critique_loop(self, doc_name: str, ctx: 'DocContext',
+                      generate_fn, improve_prompt_fn) -> str:
+        """
+        執行評估→改善迴圈。
+
+        generate_fn():      產生初始內容的函數
+        improve_prompt_fn(feedback): 根據反饋產生改善 prompt 的函數
+        回傳最終通過評估的內容
+        """
+        content = generate_fn()
+        ctx.write(doc_name, content, doc_name)
+
+        for round_n in range(self.MAX_ROUNDS):
+            result = self.evaluate(doc_name, content)
+            if result["passed"]:
+                if round_n > 0:
+                    _ok(f"{doc_name} 在第 {round_n+1} 輪通過評估（分數：{result['score']}/10）")
+                break
+
+            _warn(f"{doc_name} 評分 {result['score']}/10，第 {round_n+1} 輪改善中...")
+            improve_prompt = improve_prompt_fn(result["feedback"])
+            content = generate_fn() if not improve_prompt else                       self.orc._chat(
+                          self.CRITIQUE_CONFIG[doc_name].get("main_agent", "ECHO"),
+                          improve_prompt
+                      )
+            ctx.write(doc_name, content, f"{doc_name}（改善版 {round_n+1}）")
+        else:
+            _warn(f"{doc_name} 達到最大改善輪數，以目前版本繼續")
+
+        return content
+
+
+# ══════════════════════════════════════════════════════════════
 #  P1-1 修復：Phase 斷點續跑 + 快取
 # ══════════════════════════════════════════════════════════════
 
@@ -204,10 +354,11 @@ class WebOrchestrator:
         P0 修復：所有 Phase 間的資料傳遞改為讀取完整文件
         P1 修復：支援斷點續跑（resume=True 時跳過已完成的 Phase）
         """
-        start   = datetime.now()
-        ctx     = DocContext(self.workdir)
-        ckpt    = PhaseCheckpoint(self.workdir, requirement)
-        results = {}
+        start    = datetime.now()
+        ctx      = DocContext(self.workdir)
+        ckpt     = PhaseCheckpoint(self.workdir, requirement)
+        critique = SelfCritique(self)   # P0-2 Self-Critique Loop
+        results  = {}
 
         resume_msg = ckpt.resume_info()
 
@@ -257,7 +408,22 @@ ARIA 的範疇確認：
 請嚴格按照你的 Phase 2 格式產出完整 PRD。
 每個欄位都必須填寫，驗收標準（AC）要具體可驗證。
 """)
-            ctx.write("PRD", prd, "Product Requirements Document")
+            # P0-2：Self-Critique — LUMI 評審 PRD 品質
+            prd = critique.critique_loop(
+                "PRD", ctx,
+                generate_fn=lambda: prd,
+                improve_prompt_fn=lambda fb: f"""
+LUMI 對 PRD 的評審反饋：
+{fb}
+
+請根據以上反饋改善 PRD，特別注意：
+1. 所有 P0 功能的 AC 改為 GIVEN-WHEN-THEN 格式
+2. 補上邊界條件（空狀態、錯誤狀態）
+3. 補上遺漏的「不在範疇」說明
+
+輸出完整的修訂版 PRD。
+"""
+            )
             results["phase2_prd"] = prd
             ckpt.mark_done(2)
 
@@ -313,7 +479,22 @@ P2 要求：
 - 為每個重要技術決策建立 ADR 條目（格式：docs/adr/ADR-NNN-title.md）
 - ADR 格式：背景 / 決策 / 理由 / 後果
 """)
-            ctx.write("ARCHITECTURE", arch, "技術架構")
+            # P0-2：Self-Critique — NEXUS 複審架構品質
+            eval_result = critique.evaluate("ARCHITECTURE", arch)
+            if not eval_result["passed"] and eval_result["score"] < 6:
+                _warn(f"架構評分 {eval_result['score']}/10，讓 NEXUS 改善...")
+                arch = self._chat("NEXUS", f"""
+你的架構文件評審反饋（分數：{eval_result['score']}/10）：
+{eval_result['feedback']}
+
+請根據反饋改善架構文件，特別注意：
+1. 確保三層分離（路由/Service/Repository）在目錄結構中明確
+2. 確保所有重要技術決策有 ADR 連結
+3. 確保技術風險矩陣完整
+
+輸出完整的改善版架構文件。
+""")
+                ctx.write("ARCHITECTURE", arch, "技術架構（改善版）")
             results["phase4_arch"] = arch
             ckpt.mark_done(4)
 
