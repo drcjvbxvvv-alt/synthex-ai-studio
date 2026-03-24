@@ -1,4 +1,4 @@
-# 🚀 SYNTHEX AI STUDIO: Architecting a 24-Agent Autonomous Software Company
+# 🚀 SYNTHEX AI STUDIO: Architecting a 28-Agent Autonomous Tech Enterprise
 
 > **A Research-Grade Framework for Multi-Agent Software Engineering and Workflow Orchestration**
 
@@ -7,15 +7,15 @@
 
 ## 📖 專案摘要 (Abstract)
 
-隨著大型語言模型（LLMs）的演進，AI 輔助開發正從「單點程式碼補全（Copilot）」轉向「全生命週期代理（Autonomous Agents）」。**SYNTHEX AI STUDIO** 並非單純的開發工具，而是一個高度結構化的**虛擬軟體公司微型宇宙**。
+隨著大型語言模型（LLMs）的演進，AI 輔助開發正從「單點程式碼補全（Copilot）」轉向「全生命週期代理（Autonomous Agents）」。**SYNTHEX AI STUDIO** 並非單純的開發工具，而是一個高度結構化的**虛擬科技企業微型宇宙**。
 
-本框架內建 7 個部門、共 24 位具備特定專業技能的 AI Agents。我們旨在驗證：「**LLM 如何在長生命週期中保持工程紀律？**」透過『檔案系統作為共享記憶體』、『冪等性的斷點狀態機』以及『關注點分離的多執行緒平行生成』，本專案從底層架構上解決了 AI 輔助開發中常見的上下文遺忘、流水線脆弱與單一模型幻覺等致命問題。
+本框架內建 7 大跨職能部門、共 28 位具備深度專業領域知識的 AI Agents。我們旨在驗證：「**LLM 如何在長生命週期中保持工程紀律？**」透過『檔案系統作為共享記憶體』、『冪等性的斷點狀態機』、『關注點分離的多執行緒平行生成』，以及全新的『動態驗證引擎』，本專案從底層架構上解決了 AI 輔助開發中常見的上下文遺忘、流水線脆弱與單一模型幻覺等致命問題。
 
 ---
 
 ## 🔬 核心底層突破：我們解決了什麼問題？ (Core Architectural Solutions)
 
-要讓 AI 從「寫單一函式」進化到「架構 SaaS 平台」，必須克服傳統 AI 開發流程的幾大痛點。以下是 SYNTHEX 的具體解決方案與底層實作：
+要讓 AI 從「寫單一函式」進化到「架構 SaaS 平台與軟硬體系統」，必須克服傳統 AI 開發流程的幾大痛點。以下是 SYNTHEX 的具體解決方案與底層實作：
 
 ### 1. 治癒 LLM 的「長脈絡遺忘」 (Context Amnesia)
 
@@ -45,6 +45,13 @@
   - **源碼實作**：在 `core/orchestrator.py` 的專案規劃模組中，系統強制平行呼叫 `NEXUS`（技術風險評估）、`LUMI`（PMF 評估）、`SIGMA`（財務 ROI 評估）與 `FORGE`（DevOps 規劃）。隨後交由 `ARIA`（CEO 角色）進行收斂與 Go/No-Go 的最終裁決。
   - **價值**：落實軟體工程的「關注點分離（Separation of Concerns）」，利用 AI 進行「自我對抗」式審查，大幅提升系統架構的落地可行性與安全性。
 
+### 5. 導入動態驗證與環境感知 (Dynamic Verification & Context Awareness)
+
+- **痛點**：AI 在介入現有專案時容易「瞎子摸象」，且純靜態生成的程式碼缺乏真實環境的反饋，難以確保落地品質。
+- **SYNTHEX 解法：主動掃描與瀏覽器自動化測試**
+  - **源碼實作**：引入 `core/project_scanner.py` 主動解析專案結構與相依套件，並透過 `core/browser_qa.py` 掛載真實瀏覽器進行 UI/UX 驗證。搭配 `core/deploy_pipeline.py` 實現端到端部署。
+  - **價值**：賦予系統「視覺」與「環境感知」能力，補足了從靜態生成到動態驗證的最後一哩路。
+
 ---
 
 ## 🎯 應用場景：何時該使用 SYNTHEX？ (When to use)
@@ -52,7 +59,7 @@
 SYNTHEX 的威力展現於專案的**混沌期與奠基期**：
 
 - 🧠 **需求模糊探索 (`/discover`)**：當你只有一個概念，6 個高階主管 Agent 會透過連環叩問，深度挖掘市場定位、技術複雜度，最終輸出一份直接可執行的架構規格與 MVP 藍圖。
-- 🏗️ **底層架構生成 (`/ship`)**：11 階段的無人工干預流水線，從環境準備、前端 (React/Next.js)、後端 API、自動化測試策略 (QA) 到資安審查 (OWASP)，一次性建立嚴謹的專案骨架。
+- 🏗️ **底層架構生成 (`/ship`)**：自動流水線不僅涵蓋前後端，更能擴展至 IoT 韌體與資料工程，一次性建立具備 CI/CD 與自動化測試的企業級專案骨架。
 
 ---
 
@@ -60,7 +67,7 @@ SYNTHEX 的威力展現於專案的**混沌期與奠基期**：
 
 專案分為「CLI 工具本體」與「專案設定模板」兩大部分：
 
-```text
+````text
 synthex-release/
 │
 ├── README.md                        ← 你正在讀的這個
@@ -81,24 +88,30 @@ synthex-release/
 │   │   └── web_tools.py             ← 網頁開發工具（npm、git）
 │   ├── agents/
 │   │   ├── __init__.py
-│   │   └── all_agents.py            ← 全部 24 位 Agent 定義
+│   │   └── all_agents.py            ← 全部 28 位 Agent 定義
 │   └── memory/                      ← Agent 記憶（執行後自動產生）
 │
 └── project-template/                ← 複製到每個專案根目錄
     ├── CLAUDE.md                    ← 給 Claude Code 的公司作業系統
-    └── agents/                      ← 各角色的完整技能手冊 (SKILL.md)
+    └── agents/                      ← 28 位角色的完整技能手冊 (SKILL.md)
         ├── ARIA/                    ← CEO / 策略與任務確認
+        ├── ATLAS/                   ← 基礎設施 / 跨區域網路與 CDN
         ├── ATOM/                    ← 系統程式工程師 / Linux Kernel、C/Rust、高效能 IPC
         ├── BOLT/                    ← 韌體技術主管 / MCU、RTOS、C/C++ 裸機開發
+        ├── BRIDGE/                  ← 後端 / 第三方 API 與微服務串接
         ├── BYTE/                    ← 前端實作標準
         ├── ECHO/                    ← 商業分析師 / PRD 規格
+        ├── FLUX/                    ← 資料工程 / ETL 與串流架構
         ├── FORGE/                   ← 設定檔範本、CI/CD
         ├── KERN/                    ← 系統效能與底層調優
         ├── LUMI/                    ← 產品長 / 產品驗證
+        ├── MEMO/                    ← 知識管理 / Tech Writer 與 API 文件
         ├── NEXUS/                   ← 技術選型、架構文件格式
         ├── NOVA/                    ← ML 主管 / AI 架構設計
         ├── PRISM/                   ← 設計系統、tokens.css 規範
         ├── PROBE/                   ← 測試策略框架
+        ├── PULSE/                   ← SRE / 系統監控與可觀測性
+        ├── QUANT/                   ← 資料科學 / 演算法與量化模型
         ├── RELAY/                   ← 雲端架構師
         ├── RIFT/                    ← 行動端工程師
         ├── SHIELD/                  ← 安全審查清單
@@ -106,9 +119,9 @@ synthex-release/
         ├── SPARK/                   ← UX 方法論、線框格式
         ├── STACK/                   ← 後端實作標準
         ├── TRACE/                   ← 自動化測試執行
+        ├── VISTA/                   ← 前端 / XR、3D 與進階視覺特效
         ├── VOLT/                    ← 嵌入式系統工程師 / Linux BSP、Device Driver、Yocto
         └── WIRE/                    ← 軟硬體整合工程師 / 協議分析 (SPI/I2C)、Board Bring-up
-```
 
 ---
 
@@ -135,7 +148,7 @@ python synthex.py discover "我想做一個..."
 
 # 需求清楚時，一氣呵成
 python synthex.py ship "電商平台：商品瀏覽、購物車、Stripe 結帳..."
-```
+````
 
 ### 第二部分：`project-template/` — 複製到每個專案
 
