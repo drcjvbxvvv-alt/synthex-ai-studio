@@ -42,6 +42,11 @@
 | TRACE | `agents/TRACE/SKILL.md` | Phase 11 測試執行 + 瀏覽器 QA |
 | SHIELD| `agents/SHIELD/SKILL.md`| Phase 12 安全審查 |
 | ECHO  | `agents/ECHO/SKILL.md`  | Phase 2 PRD 撰寫（GIVEN-WHEN-THEN AC 格式）|
+| LUMI  | `agents/LUMI/SKILL.md`  | Phase 3 產品驗證（JTBD、RICE 框架）|
+| ARIA  | `agents/ARIA/SKILL.md`  | Phase 1 任務確認 + Phase 12 交付總結 |
+| SIGMA | `agents/SIGMA/SKILL.md` | Phase 5 可行性評估（成本、風險矩陣）|
+| KERN  | `agents/KERN/SKILL.md`  | /perf 效能分析（Flamegraph、慢查詢）|
+| RIFT  | `agents/RIFT/SKILL.md`  | 行動端（React Native + Expo）|
 | NOVA  | `agents/NOVA/SKILL.md`  | AI 功能設計（LLM 整合、RAG、Prompt Injection 防護）|
 | RELAY | `agents/RELAY/SKILL.md` | 雲端部署（Vercel、Neon、FinOps）|
 | BOLT  | `agents/BOLT/SKILL.md`  | 韌體實作（MCU/RTOS/Bootloader）|
@@ -94,17 +99,18 @@ Claude Code（CLAUDE.md）    執行層，日常開發在這裡
 Phase  1  ARIA   → 任務確認與範疇
 Phase  2  ECHO   → 需求分析與 PRD
 Phase  3  LUMI   → 產品驗證
-Phase  4  SPARK  → UX 設計
-Phase  5  PRISM  → UI 設計系統（輸出真實程式碼）
-Phase  6  NEXUS  → 技術架構（以設計為基礎）
-Phase  7  SIGMA  → 可行性評估
-Phase  8  FORGE  → 環境準備
-Phase  9  BYTE   → 前端實作（依設計 Token 開發）
-Phase 10  STACK  → 後端實作
-Phase 11  PROBE + TRACE → 測試
-Phase 12  SHIELD → 安全審查
-Phase 13  ARIA   → 交付總結
+Phase  4  NEXUS  → 技術架構設計
+Phase  5  SIGMA  → 可行性評估
+Phase  6  FORGE  → 環境準備（含 Sentry/PostHog）
+Phase  7  SPARK  → UX 設計（用戶旅程、線框）
+Phase  8  PRISM  → UI 設計系統（tokens.css、components.css）
+Phase  9  BYTE + STACK → 前後端並行實作
+Phase 10  PROBE + TRACE → 測試（單元、整合、E2E、負載、契約）
+Phase 11  SHIELD → 安全審查（SAST、Secret 掃描、OWASP）
+Phase 12  ARIA   → 交付總結（docs/DELIVERY.md + git commit）
 ```
+
+> **CLI 和 Claude Code 完全同步**：`python synthex.py ship` 和在 Claude Code 裡輸入 `/ship` 執行的是完全相同的 12 Phase 流程。
 
 ---
 

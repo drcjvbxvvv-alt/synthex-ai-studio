@@ -366,8 +366,58 @@ P2 要求：
             results["phase6_env"] = env_result
             ckpt.mark_done(6)
 
-        # ── Phase 7 + 8：BYTE 前端 + STACK 後端（並行執行）─────
-        both_done = (resume and ckpt.is_done(7) and ckpt.is_done(8))
+        # ── Phase 7：SPARK UX 設計 ────────────────────────────
+        if resume and ckpt.is_done(7):
+            _ok("Phase 7 已完成，跳過")
+        else:
+            _phase(7, "SPARK — UX 設計")
+            ux = self._chat("SPARK", f"""
+執行 /ship 流水線的 Phase 7。
+
+完整 PRD（含所有功能和用戶故事）：
+{ctx.read("PRD")}
+
+完整技術架構（含頁面路由設計）：
+{ctx.read("ARCHITECTURE")}
+
+請產出 docs/UX.md，包含：
+1. 每個 P0 功能的用戶旅程地圖（含痛點和情緒）
+2. 資訊架構（網站地圖 + 導航設計）
+3. 每個主要頁面的 ASCII 線框（桌機 + 手機）
+4. 關鍵互動規格（loading/error/empty 三種狀態）
+5. 無障礙考量（WCAG 2.1 AA）
+
+嚴格按照你的 SKILL.md 的格式輸出。
+""")
+            ctx.write("UX", ux, "UX 設計文件")
+            ckpt.mark_done(7)
+
+        # ── Phase 8：PRISM UI 設計系統 ─────────────────────────
+        if resume and ckpt.is_done(8):
+            _ok("Phase 8 已完成，跳過")
+        else:
+            _phase(8, "PRISM — UI 設計系統")
+            ui = self._run("PRISM", f"""
+執行 /ship 流水線的 Phase 8。
+
+品牌個性（從 UX 文件推導）：
+{ctx.read_section("UX", 800)}
+
+CLAUDE.md 設計風格指引：Linear.app 簡潔風
+
+依照你的 SKILL.md 執行：
+1. 根據品牌個性決定主色方案（先輸出 A/B 兩個選項說明）
+2. 產出完整 src/styles/tokens.css（所有欄位填入真實色碼）
+3. 產出完整 src/styles/components.css（所有元件含所有狀態）
+4. 產出 docs/DESIGN-SYSTEM.md
+
+BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
+""")
+            ctx.write("UI_SYSTEM", ui, "UI 設計系統報告")
+            ckpt.mark_done(8)
+
+        # ── Phase 9 + 10：BYTE 前端 + STACK 後端（並行執行）─────
+        both_done = (resume and ckpt.is_done(9) and ckpt.is_done(10))
         if both_done:
             _ok("Phase 7 + 8 已完成，跳過")
             frontend = ctx.read("FRONTEND_IMPL")
@@ -382,10 +432,10 @@ P2 要求：
             stack_task = None
 
             def _run_byte():
-                if resume and ckpt.is_done(7):
-                    _ok("Phase 7 已完成，跳過")
+                if resume and ckpt.is_done(9):
+                    _ok("Phase 9 已完成，跳過")
                     return ctx.read("FRONTEND_IMPL")
-                _phase(7, "BYTE — 前端實作（並行）")
+                _phase(9, "BYTE — 前端實作（並行）")
                 result = self._run("BYTE", f"""
 執行 /ship 流水線的 Phase 7。
 
@@ -405,14 +455,14 @@ P2 要求：
 實作順序：型別定義 → API 客戶端 → 組件 → 頁面 → 路由
 """)
                 ctx.write("FRONTEND_IMPL", result, "前端實作報告")
-                ckpt.mark_done(7)
+                ckpt.mark_done(9)
                 return result
 
             def _run_stack():
-                if resume and ckpt.is_done(8):
-                    _ok("Phase 8 已完成，跳過")
+                if resume and ckpt.is_done(10):
+                    _ok("Phase 10 已完成，跳過")
                     return ctx.read("BACKEND_IMPL")
-                _phase(8, "STACK — 後端實作（並行）")
+                _phase(10, "STACK — 後端實作（並行）")
                 result = self._run("STACK", f"""
 執行 /ship 流水線的 Phase 8。
 
@@ -432,7 +482,7 @@ P2 要求：
 實作順序：資料模型 → Repository → Service → API 路由 → 中間件
 """)
                 ctx.write("BACKEND_IMPL", result, "後端實作報告")
-                ckpt.mark_done(8)
+                ckpt.mark_done(10)
                 return result
 
             print(f"\n{CYAN}{BOLD}  ⚡ Phase 7 + 8 並行執行（預計節省 30-50% 時間）{RESET}")
@@ -445,8 +495,8 @@ P2 要求：
             results["phase7_frontend"] = frontend
             results["phase8_backend"]  = backend
 
-        # ── Phase 9：PROBE 策略 + TRACE 執行 ─────────────────
-        if resume and ckpt.is_done(9):
+        # ── Phase 11：PROBE 策略 + TRACE 執行 ───────────────────
+        if resume and ckpt.is_done(11):
             _ok("Phase 9 已完成，跳過")
         else:
             _phase(9, "PROBE + TRACE — 完整測試")
@@ -493,13 +543,13 @@ P2 要求：
 """)
             ctx.write("TEST_RESULTS", test_result, "測試結果")
             results["phase9_tests"] = test_result
-            ckpt.mark_done(9)
+            ckpt.mark_done(11)
 
-        # ── Phase 10：SHIELD 安全審查（含自動化掃描）─────────
-        if resume and ckpt.is_done(10):
-            _ok("Phase 10 已完成，跳過")
+        # ── Phase 12：SHIELD 安全審查（含自動化掃描）─────────
+        if resume and ckpt.is_done(12):
+            _ok("Phase 12 已完成，跳過")
         else:
-            _phase(10, "SHIELD — 安全審查與修復")
+            _phase(12, "SHIELD — 安全審查與修復")
             security = self._run("SHIELD", f"""
 執行 /ship 流水線的 Phase 10。
 
@@ -521,9 +571,9 @@ P2 要求：
 """)
             ctx.write("SECURITY", security, "安全審查報告")
             results["phase10_security"] = security
-            ckpt.mark_done(10)
+            ckpt.mark_done(12)
 
-        # ── Phase 11：ARIA 交付總結 ───────────────────────────
+        # ── Phase 12：ARIA 交付總結 ───────────────────────────
         _phase(11, "ARIA — 交付總結")
         elapsed = (datetime.now() - start).seconds
 
@@ -549,7 +599,7 @@ P2 要求：
 """)
         ctx.write("DELIVERY", delivery, "交付摘要")
         results["phase11_delivery"] = delivery
-        ckpt.mark_done(11)
+        ckpt.mark_done(12)
 
         # 清除 checkpoint（成功完成）
         if ckpt.state_file.exists():
@@ -730,14 +780,24 @@ P2 要求：
         results["resources"] = resources
 
         _phase(6, "ARIA — 整合需求書")
+        # P0-2 修復：讀完整文件，不截斷
         final = self._chat("ARIA", f"""
-整合所有分析，產出完整需求書和可直接執行的 /ship 指令。
+整合以下五份完整分析報告，產出最終需求書和可直接執行的 /ship 指令。
 
-用戶分析：{ctx.read_section("DISCOVER_USER", 400)}
-業務定位：{ctx.read_section("DISCOVER_BIZ", 400)}
-功能分析：{ctx.read_section("DISCOVER_FEATURES", 400)}
-技術評估：{ctx.read_section("DISCOVER_TECH", 400)}
-資源規劃：{ctx.read_section("DISCOVER_RESOURCES", 300)}
+=== 用戶分析（完整）===
+{ctx.read("DISCOVER_USER")}
+
+=== 業務定位（完整）===
+{ctx.read("DISCOVER_BIZ")}
+
+=== 功能分析（完整）===
+{ctx.read("DISCOVER_FEATURES")}
+
+=== 技術評估（完整）===
+{ctx.read("DISCOVER_TECH")}
+
+=== 資源規劃（完整）===
+{ctx.read("DISCOVER_RESOURCES")}
 
 輸出：
 1. 產品需求書（一句話定義、目標用戶、MVP 功能、技術決策、成功指標）

@@ -453,3 +453,203 @@ NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
 - 每個新專案的 Phase 8 **必須**安裝 Sentry 和 PostHog
 - 沒有可觀測性工具的專案，不允許進入 Phase 9（視為環境未就緒）
 - 確認方式：`grep -r "sentry\|posthog" package.json`
+
+---
+
+## P1：Staging 環境和煙霧測試
+
+### 三環境架構
+
+```
+development  → 本地開發
+    ↓
+staging      → PR 合併後自動部署，功能完整測試
+    ↓
+production   → 手動觸發，煙霧測試通過後才發布
+```
+
+### GitHub Actions 完整 CI/CD Pipeline
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1：CI 驗證（每次 push/PR）─────────────────────────
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: "npm" }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test -- --run
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_TEST }}
+      - run: npm run build
+
+  # ── Job 2：部署到 Staging（只在 main branch）──────────────
+  deploy-staging:
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: "npm" }
+      - run: npm ci
+      - name: Deploy to Staging
+        run: npx vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --scope=${{ secrets.VERCEL_ORG_ID }}
+        env:
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_STAGING }}
+
+      # ── 煙霧測試（部署後立刻執行）────────────────────────
+      - name: 煙霧測試
+        run: |
+          STAGING_URL="${{ steps.deploy.outputs.url }}"
+          npx playwright test tests/smoke/ \
+            --project=chromium \
+            -e BASE_URL=$STAGING_URL
+        env:
+          TEST_USER_EMAIL:    ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+
+  # ── Job 3：部署到 Production（手動觸發）───────────────────
+  deploy-production:
+    needs: deploy-staging
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production     # 需要手動審批
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Production
+        run: npx vercel --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_PROD }}
+
+      - name: 生產環境煙霧測試
+        run: |
+          npx playwright test tests/smoke/ \
+            -e BASE_URL=https://your-app.vercel.app
+
+      # ── 自動 Rollback（煙霧測試失敗時）──────────────────
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "煙霧測試失敗，觸發 rollback..."
+          npx vercel rollback --token=${{ secrets.VERCEL_TOKEN }}
+```
+
+### 煙霧測試（Smoke Tests）
+
+煙霧測試是部署後 2 分鐘內執行的快速驗收，只測試關鍵路徑：
+
+```typescript
+// tests/smoke/critical-paths.spec.ts
+import { test, expect } from "@playwright/test"
+
+const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000"
+
+test.describe("煙霧測試 — 關鍵路徑", () => {
+  test("首頁正常載入", async ({ page }) => {
+    const res = await page.goto(BASE_URL)
+    expect(res?.status()).toBe(200)
+    await expect(page).toHaveTitle(/你的應用名稱/)
+  })
+
+  test("Health Check API", async ({ request }) => {
+    const res = await request.get(`${BASE_URL}/api/health`)
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+    expect(body.status).toBe("ok")
+    expect(body.db).toBe("connected")
+  })
+
+  test("登入流程", async ({ page }) => {
+    await page.goto(`${BASE_URL}/login`)
+    await page.fill("[name='email']",    process.env.TEST_USER_EMAIL!)
+    await page.fill("[name='password']", process.env.TEST_USER_PASSWORD!)
+    await page.click("button[type='submit']")
+    await expect(page).toHaveURL(/dashboard/, { timeout: 10000 })
+  })
+
+  test("核心 API 可用", async ({ request }) => {
+    // 測試最重要的 1-2 個 API
+    const res = await request.get(`${BASE_URL}/api/v1/health`)
+    expect(res.status()).toBeLessThan(500)  // 不接受 5xx
+  })
+})
+```
+
+### Health Check API
+
+```typescript
+// app/api/health/route.ts — 每個應用都必須有這個端點
+import { NextResponse } from "next/server"
+import { db } from "@/lib/db"
+
+export async function GET() {
+  const start = Date.now()
+
+  // 確認資料庫連線
+  let dbStatus = "ok"
+  try {
+    await db.$queryRaw`SELECT 1`
+  } catch {
+    dbStatus = "error"
+  }
+
+  return NextResponse.json({
+    status:  dbStatus === "ok" ? "ok" : "degraded",
+    db:      dbStatus,
+    version: process.env.npm_package_version,
+    latency: Date.now() - start,
+    ts:      new Date().toISOString(),
+  }, {
+    status: dbStatus === "ok" ? 200 : 503,
+  })
+}
+```
+
+### Feature Flag（漸進式發布）
+
+```typescript
+// src/lib/feature-flags.ts
+// 使用環境變數實現最簡單的 Feature Flag
+// 生產環境可替換為 LaunchDarkly 或 GrowthBook
+
+type FeatureFlag =
+  | "new_dashboard"
+  | "ai_analysis"
+  | "beta_export"
+
+export function isFeatureEnabled(flag: FeatureFlag, userId?: string): boolean {
+  // 環境變數控制（部署層面的 flag）
+  const envFlag = process.env[`FEATURE_${flag.toUpperCase()}`]
+  if (envFlag === "true")  return true
+  if (envFlag === "false") return false
+
+  // 基於用戶 ID 的 Canary（10% 用戶）
+  if (userId) {
+    const hash = userId.split("").reduce((a, c) => a + c.charCodeAt(0), 0)
+    return (hash % 100) < 10  // 10% 的用戶
+  }
+
+  return false
+}
+
+// 使用
+if (isFeatureEnabled("new_dashboard", session.user.id)) {
+  return <NewDashboard />
+}
+return <OldDashboard />
+```

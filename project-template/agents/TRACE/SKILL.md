@@ -408,3 +408,208 @@ describe("Backend API Provider Verification", () => {
     sleep 5
     npx jest tests/contract/*.provider.test.ts
 ```
+
+---
+
+## P1：測試環境資料管理
+
+### 測試資料庫隔離策略
+
+每個測試必須有確定性（Deterministic）的初始狀態，不能依賴測試執行順序。
+
+```typescript
+// vitest.config.ts — 設定測試資料庫
+import { defineConfig } from "vitest/config"
+
+export default defineConfig({
+  test: {
+    globalSetup:    "./tests/setup/global.ts",
+    setupFiles:     ["./tests/setup/db.ts"],
+    pool:           "threads",
+    poolOptions:    { threads: { singleThread: true } },
+  },
+})
+
+// tests/setup/global.ts — 測試開始前執行一次
+export async function setup() {
+  process.env.DATABASE_URL = process.env.DATABASE_URL_TEST
+    ?? "postgresql://postgres:password@localhost:5432/test_db"
+  // 執行 migration（確保 schema 最新）
+  const { execSync } = await import("child_process")
+  execSync("npx prisma migrate deploy", { env: process.env })
+}
+
+// tests/setup/db.ts — 每個測試檔案前後執行
+import { db } from "@/lib/db"
+import { beforeEach, afterEach } from "vitest"
+
+// 策略 A：每個測試前清空，跑 seed（簡單但慢）
+beforeEach(async () => {
+  await db.$executeRaw`TRUNCATE TABLE users, orders RESTART IDENTITY CASCADE`
+  await seedTestData()
+})
+
+// 策略 B：用 Transaction 包住每個測試（快，推薦）
+let tx: Awaited<ReturnType<typeof db.$transaction>>
+beforeEach(async () => {
+  // 開始事務（測試在事務內執行）
+  tx = db.$transaction(async (transaction) => {
+    // 測試中的 db 操作都在這個事務內
+    return transaction
+  })
+})
+afterEach(async () => {
+  // 回滾（清除所有測試資料）
+  await db.$executeRaw`ROLLBACK`
+})
+```
+
+### Factory 模式（產生測試物件）
+
+```typescript
+// tests/factories/user.factory.ts
+import { faker } from "@faker-js/faker"
+import { db } from "@/lib/db"
+import type { User } from "@prisma/client"
+
+// 預設值：合理的假資料
+const defaultUser = () => ({
+  email:    faker.internet.email(),
+  name:     faker.person.fullName(),
+  role:     "user" as const,
+  verified: true,
+  createdAt:new Date(),
+})
+
+// 建立用戶（存入 DB）
+export async function createUser(overrides: Partial<User> = {}): Promise<User> {
+  return db.user.create({
+    data: { ...defaultUser(), ...overrides },
+  })
+}
+
+// 建立管理員
+export const createAdmin = (overrides: Partial<User> = {}) =>
+  createUser({ role: "admin", ...overrides })
+
+// 批次建立
+export async function createUsers(count: number, overrides: Partial<User> = {}) {
+  return Promise.all(Array.from({ length: count }, () => createUser(overrides)))
+}
+
+// tests/factories/order.factory.ts
+export async function createOrder(
+  userId: string,
+  overrides: Partial<Order> = {}
+): Promise<Order> {
+  return db.order.create({
+    data: {
+      userId,
+      total:  faker.number.float({ min: 10, max: 1000, precision: 0.01 }),
+      status: "pending",
+      ...overrides,
+    },
+  })
+}
+```
+
+### Seed 資料（E2E 測試用）
+
+```typescript
+// prisma/seed.ts — 開發和測試環境的種子資料
+import { PrismaClient } from "@prisma/client"
+import bcrypt from "bcryptjs"
+
+const db = new PrismaClient()
+
+async function main() {
+  // 清空現有資料（開發環境）
+  await db.order.deleteMany()
+  await db.user.deleteMany()
+
+  // 建立測試用帳號（E2E 測試依賴這些固定帳號）
+  const password = await bcrypt.hash("Test1234!", 12)
+
+  const admin = await db.user.upsert({
+    where:  { email: "admin@test.com" },
+    update: {},
+    create: {
+      email: "admin@test.com",
+      name:  "Test Admin",
+      password,
+      role:  "admin",
+    },
+  })
+
+  const user = await db.user.upsert({
+    where:  { email: "user@test.com" },
+    update: {},
+    create: {
+      email: "user@test.com",
+      name:  "Test User",
+      password,
+      role:  "user",
+    },
+  })
+
+  // 建立測試訂單
+  await db.order.create({
+    data: {
+      userId: user.id,
+      total:  99.99,
+      status: "completed",
+    },
+  })
+
+  console.log(`Seed 完成：
+    管理員：admin@test.com / Test1234!
+    一般用戶：user@test.com / Test1234!
+  `)
+}
+
+main()
+  .catch(console.error)
+  .finally(() => db.$disconnect())
+```
+
+```bash
+# package.json 加入
+"db:seed": "ts-node prisma/seed.ts"
+
+# E2E 測試前執行
+npm run db:seed
+npx playwright test
+```
+
+### 在 Playwright E2E 測試中使用 Seed 資料
+
+```typescript
+// tests/e2e/login.spec.ts
+import { test, expect } from "@playwright/test"
+
+// 這些帳號由 prisma/seed.ts 建立
+const TEST_USER  = { email: "user@test.com",  password: "Test1234!" }
+const TEST_ADMIN = { email: "admin@test.com", password: "Test1234!" }
+
+test("一般用戶登入流程", async ({ page }) => {
+  await page.goto("/login")
+  await page.fill("[name='email']",    TEST_USER.email)
+  await page.fill("[name='password']", TEST_USER.password)
+  await page.click("button[type='submit']")
+  await expect(page).toHaveURL("/dashboard")
+})
+
+test("管理員可以存取後台", async ({ page }) => {
+  await page.goto("/login")
+  await page.fill("[name='email']",    TEST_ADMIN.email)
+  await page.fill("[name='password']", TEST_ADMIN.password)
+  await page.click("button[type='submit']")
+  await page.goto("/admin")
+  await expect(page).toHaveURL("/admin")  // 不應該被 redirect
+})
+
+test("一般用戶無法存取後台", async ({ page }) => {
+  // 登入後嘗試存取 /admin
+  // ... 應該被 redirect 到 403 或 /dashboard
+})
+```

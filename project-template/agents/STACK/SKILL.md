@@ -537,3 +537,357 @@ async function createOrder(idempotencyKey: string, orderData: CreateOrderInput) 
   })
 }
 ```
+
+---
+
+## P1：RBAC 和多租戶架構
+
+### 角色型存取控制（RBAC）
+
+```typescript
+// src/lib/permissions.ts — 集中管理所有權限，不散落在各 API
+
+// 1. 定義角色和權限矩陣
+export type Role       = "admin" | "manager" | "user" | "viewer"
+export type Resource   = "users" | "orders" | "products" | "reports"
+export type Action     = "create" | "read" | "update" | "delete" | "export"
+
+type PermissionMatrix = Record<Role, Partial<Record<Resource, Action[]>>>
+
+const PERMISSIONS: PermissionMatrix = {
+  admin: {
+    users:    ["create", "read", "update", "delete"],
+    orders:   ["create", "read", "update", "delete", "export"],
+    products: ["create", "read", "update", "delete"],
+    reports:  ["read", "export"],
+  },
+  manager: {
+    users:    ["read", "update"],
+    orders:   ["read", "update", "export"],
+    products: ["read", "update"],
+    reports:  ["read"],
+  },
+  user: {
+    orders:   ["create", "read"],   // 只能看自己的訂單（在 API 層過濾）
+    products: ["read"],
+  },
+  viewer: {
+    products: ["read"],
+    reports:  ["read"],
+  },
+}
+
+// 2. 檢查權限的函數
+export function can(
+  role: Role,
+  resource: Resource,
+  action: Action
+): boolean {
+  return PERMISSIONS[role]?.[resource]?.includes(action) ?? false
+}
+
+// 3. 在 API 中使用
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: "未登入" }, { status: 401 })
+
+  if (!can(session.user.role as Role, "orders", "create")) {
+    return NextResponse.json({ error: "無權限建立訂單" }, { status: 403 })
+  }
+
+  // 繼續處理...
+}
+
+// 4. 在前端使用（隱藏無權限的 UI）
+// src/hooks/usePermission.ts
+export function usePermission(resource: Resource, action: Action): boolean {
+  const { data: session } = useSession()
+  if (!session) return false
+  return can(session.user.role as Role, resource, action)
+}
+
+// 在組件中
+const canDelete = usePermission("orders", "delete")
+// {canDelete && <DeleteButton />}
+```
+
+### Prisma Schema 的 RBAC 設計
+
+```prisma
+// prisma/schema.prisma
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  role      Role     @default(user)
+  orgId     String?  // 多租戶：所屬組織
+  org       Org?     @relation(fields: [orgId], references: [id])
+  // ...
+}
+
+model Org {
+  id      String @id @default(cuid())
+  name    String
+  slug    String @unique
+  users   User[]
+  orders  Order[]
+  // 每個組織的資料完全隔離
+}
+
+model Order {
+  id     String @id @default(cuid())
+  userId String
+  orgId  String  // 多租戶：資料屬於哪個組織
+  user   User   @relation(fields: [userId], references: [id])
+  org    Org    @relation(fields: [orgId], references: [id])
+  // ...
+}
+
+enum Role {
+  admin
+  manager
+  user
+  viewer
+}
+```
+
+### Row Level Security（PostgreSQL 原生多租戶隔離）
+
+```sql
+-- 在 PostgreSQL 層強制多租戶隔離
+-- 即使程式碼有 bug，資料庫也不允許跨組織查詢
+
+-- 啟用 RLS
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+
+-- 建立 Policy：用戶只能看自己組織的資料
+CREATE POLICY org_isolation ON orders
+  USING (org_id = current_setting('app.current_org_id')::uuid);
+
+CREATE POLICY org_isolation ON products
+  USING (org_id = current_setting('app.current_org_id')::uuid);
+
+-- 在每個查詢前設定當前組織（Prisma middleware）
+```
+
+```typescript
+// src/lib/db.ts — 在每個查詢前注入 org_id
+import { PrismaClient } from "@prisma/client"
+
+export function createOrgScopedDb(orgId: string) {
+  const db = new PrismaClient()
+
+  // Middleware：每個查詢前設定 RLS context
+  return db.$extends({
+    query: {
+      async $allOperations({ operation, model, args, query }) {
+        // 設定 PostgreSQL 的 session 變數
+        await db.$executeRaw`
+          SELECT set_config('app.current_org_id', ${orgId}, true)
+        `
+        return query(args)
+      },
+    },
+  })
+}
+
+// 在 API 中使用
+export async function GET(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user.orgId) return NextResponse.json({ error: "未登入" }, { status: 401 })
+
+  // 這個 db 只能看到 session.user.orgId 的資料
+  const db = createOrgScopedDb(session.user.orgId)
+  const orders = await db.order.findMany()  // RLS 自動過濾
+  return NextResponse.json(orders)
+}
+```
+
+---
+
+## P2：API 文件自動化（OpenAPI）
+
+```typescript
+// 使用 zod-to-openapi 從 Zod schema 自動生成 OpenAPI 文件
+
+// 安裝
+// npm install @asteasolutions/zod-to-openapi
+
+// src/lib/openapi.ts
+import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi"
+import { z } from "zod"
+
+export const registry = new OpenAPIRegistry()
+
+// 定義 schema（同時用於 API 驗證和文件）
+const UserSchema = registry.register(
+  "User",
+  z.object({
+    id:        z.string().uuid(),
+    email:     z.string().email(),
+    name:      z.string(),
+    role:      z.enum(["admin", "user"]),
+    createdAt: z.string().datetime(),
+  })
+)
+
+// 定義 API 路徑
+registry.registerPath({
+  method: "get",
+  path:   "/api/v1/users/{id}",
+  summary: "取得用戶資料",
+  tags:   ["Users"],
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.string().uuid() }),
+  },
+  responses: {
+    200: {
+      description: "成功",
+      content: { "application/json": { schema: UserSchema } },
+    },
+    401: { description: "未登入" },
+    404: { description: "找不到用戶" },
+  },
+})
+
+// 產生 OpenAPI JSON
+// app/api/docs/route.ts
+export async function GET() {
+  const generator = new OpenApiGeneratorV3(registry.definitions)
+  const document  = generator.generateDocument({
+    openapi: "3.0.0",
+    info: { title: "My API", version: "1.0.0" },
+    servers: [{ url: "/api/v1" }],
+  })
+  return NextResponse.json(document)
+}
+
+// Swagger UI（在 /api/docs 頁面顯示）
+// app/api-docs/page.tsx
+"use client"
+import SwaggerUI from "swagger-ui-react"
+import "swagger-ui-react/swagger-ui.css"
+
+export default function ApiDocs() {
+  return <SwaggerUI url="/api/docs" />
+}
+```
+
+---
+
+## P2：即時功能架構
+
+### Supabase Realtime（推薦，整合最簡單）
+
+```typescript
+// src/lib/realtime.ts
+import { createClient } from "@supabase/supabase-js"
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+
+// 訂閱資料庫變更（Postgres Change）
+export function subscribeToOrders(
+  orgId: string,
+  onUpdate: (order: Order) => void
+) {
+  const channel = supabase
+    .channel("orders")
+    .on(
+      "postgres_changes",
+      {
+        event:  "*",        // INSERT, UPDATE, DELETE
+        schema: "public",
+        table:  "orders",
+        filter: `org_id=eq.${orgId}`,
+      },
+      (payload) => onUpdate(payload.new as Order)
+    )
+    .subscribe()
+
+  // 回傳 cleanup 函數
+  return () => supabase.removeChannel(channel)
+}
+
+// 在 React 中使用
+function OrderList({ orgId }: { orgId: string }) {
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    const unsubscribe = subscribeToOrders(orgId, (updatedOrder) => {
+      // 更新 React Query 的快取
+      queryClient.setQueryData(["orders", orgId], (old: Order[] = []) =>
+        old.map(o => o.id === updatedOrder.id ? updatedOrder : o)
+      )
+    })
+    return unsubscribe   // cleanup
+  }, [orgId])
+
+  const { data: orders } = useQuery({
+    queryKey: ["orders", orgId],
+    queryFn:  () => fetchOrders(orgId),
+  })
+
+  return <OrderTable orders={orders ?? []} />
+}
+```
+
+### Server-Sent Events（單向推播，更簡單）
+
+```typescript
+// app/api/events/route.ts — SSE endpoint
+export async function GET(req: Request) {
+  const encoder = new TextEncoder()
+
+  const stream = new ReadableStream({
+    start(controller) {
+      // 心跳（防止連線超時）
+      const heartbeat = setInterval(() => {
+        controller.enqueue(encoder.encode(": heartbeat\n\n"))
+      }, 30_000)
+
+      // 訂閱資料庫事件
+      const unsubscribe = subscribeToChanges((event) => {
+        const data = `data: ${JSON.stringify(event)}\n\n`
+        controller.enqueue(encoder.encode(data))
+      })
+
+      req.signal.addEventListener("abort", () => {
+        clearInterval(heartbeat)
+        unsubscribe()
+        controller.close()
+      })
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type":  "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection":    "keep-alive",
+    },
+  })
+}
+
+// 前端使用
+function useSSE<T>(url: string, onMessage: (data: T) => void) {
+  useEffect(() => {
+    const es = new EventSource(url)
+
+    es.onmessage = (e) => {
+      try { onMessage(JSON.parse(e.data)) }
+      catch { /* ignore heartbeat */ }
+    }
+
+    es.onerror = () => {
+      // 自動重連（EventSource 內建）
+      console.warn("SSE 連線中斷，嘗試重連...")
+    }
+
+    return () => es.close()
+  }, [url])
+}
+```
