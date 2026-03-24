@@ -67,7 +67,7 @@ SYNTHEX 的威力展現於專案的**混沌期與奠基期**：
 
 專案分為「CLI 工具本體」與「專案設定模板」兩大部分：
 
-````text
+```text
 synthex-release/
 │
 ├── README.md                        ← 你正在讀的這個
@@ -122,6 +122,7 @@ synthex-release/
         ├── VISTA/                   ← 前端 / XR、3D 與進階視覺特效
         ├── VOLT/                    ← 嵌入式系統工程師 / Linux BSP、Device Driver、Yocto
         └── WIRE/                    ← 軟硬體整合工程師 / 協議分析 (SPI/I2C)、Board Bring-up
+```
 
 ---
 
@@ -148,7 +149,7 @@ python synthex.py discover "我想做一個..."
 
 # 需求清楚時，一氣呵成
 python synthex.py ship "電商平台：商品瀏覽、購物車、Stripe 結帳..."
-````
+```
 
 ### 第二部分：`project-template/` — 複製到每個專案
 
