@@ -228,3 +228,135 @@ Phase 10（STACK 後端）：
 - 目錄結構必須先建好（FORGE 負責）
 - 元件架構讓 BYTE 知道從哪裡開始
 - API 設計讓 STACK 知道要實作什麼
+
+---
+
+## 擴充性架構約束（弱項四解決方案）
+
+NEXUS 在設計架構時必須強制遵守以下模式。這些不是建議，是約束。
+
+### 強制分層架構
+
+```
+src/
+├── app/                    # 路由層（Next.js App Router）
+│   └── api/               # API 路由（只做輸入驗證 + 呼叫 service）
+├── services/              # 業務邏輯層（核心規則在這裡）
+│   ├── user.service.ts    # 一個 domain 一個 service 檔案
+│   └── order.service.ts
+├── repositories/          # 資料存取層（所有 DB 操作在這裡）
+│   ├── user.repository.ts
+│   └── order.repository.ts
+├── lib/
+│   ├── db.ts              # 資料庫連線（單一入口）
+│   ├── errors.ts          # 統一錯誤類別
+│   └── logger.ts          # 統一 logging
+└── types/
+    └── index.ts           # 所有 TypeScript 型別
+```
+
+**禁止：**
+```typescript
+// ❌ 在 API 路由裡直接寫 DB 操作
+export async function POST(req: Request) {
+  const user = await db.user.create({ data: ... })  // 直接 DB 呼叫
+}
+
+// ❌ 在組件裡直接呼叫 API（除了 Server Component fetch）
+function Component() {
+  useEffect(() => {
+    fetch('/api/users').then(...)  // 應該透過 service hook
+  }, [])
+}
+```
+
+**必須：**
+```typescript
+// ✅ API 路由只做驗證 + 呼叫 service
+export async function POST(req: Request) {
+  const body = await req.json()
+  const validated = CreateUserSchema.safeParse(body)
+  if (!validated.success) return error(400, validated.error)
+  const user = await UserService.create(validated.data)
+  return NextResponse.json(user, { status: 201 })
+}
+
+// ✅ Service 包含業務邏輯
+export class UserService {
+  static async create(data: CreateUserInput) {
+    // 業務規則在這裡
+    const existing = await UserRepository.findByEmail(data.email)
+    if (existing) throw new ConflictError("Email 已存在")
+    return UserRepository.create(data)
+  }
+}
+
+// ✅ Repository 只做資料存取
+export class UserRepository {
+  static async findByEmail(email: string) {
+    return db.user.findUnique({ where: { email }, select: { id: true, email: true } })
+  }
+  static async create(data: CreateUserInput) {
+    return db.user.create({ data })
+  }
+}
+```
+
+### 統一錯誤處理
+
+```typescript
+// src/lib/errors.ts
+export class AppError extends Error {
+  constructor(public message: string, public statusCode: number, public code: string) {
+    super(message)
+  }
+}
+export class NotFoundError  extends AppError {
+  constructor(m = "找不到資源") { super(m, 404, "NOT_FOUND") }
+}
+export class ConflictError  extends AppError {
+  constructor(m = "資源衝突")   { super(m, 409, "CONFLICT") }
+}
+export class ForbiddenError extends AppError {
+  constructor(m = "無權限")     { super(m, 403, "FORBIDDEN") }
+}
+
+// src/lib/api-response.ts
+export function handleApiError(error: unknown) {
+  if (error instanceof AppError) {
+    return NextResponse.json({ error: error.message, code: error.code },
+                             { status: error.statusCode })
+  }
+  console.error("[API Error]", error)
+  return NextResponse.json({ error: "伺服器錯誤" }, { status: 500 })
+}
+```
+
+### API 版本控制（從第一天開始）
+
+```
+src/app/api/
+└── v1/              # 永遠加版本號
+    ├── users/
+    └── orders/
+```
+
+```typescript
+// 第一版就這樣設計，未來 v2 不會破壞現有客戶端
+// GET /api/v1/users
+// POST /api/v1/users
+```
+
+### NEXUS 的架構審查清單
+
+在輸出 ARCHITECTURE.md 前，確認：
+
+```
+□ 有明確的三層分離：路由層 / Service 層 / Repository 層
+□ 統一錯誤類別定義在 src/lib/errors.ts
+□ 所有 DB 操作只在 Repository 層出現
+□ API 路由命名包含版本號（/api/v1/...）
+□ 統一的 API 回應格式（success/error wrapper）
+□ 沒有在任何 Repository 裡有業務邏輯
+□ Service 層的方法都是 static 或 class-based，便於 mock 測試
+```

@@ -357,3 +357,99 @@ volumes:
 ⚠️ 需要手動處理：
   [如有，列出具體說明]
 ```
+
+---
+
+## 可觀測性標準設定（弱項三解決方案）
+
+每個上線的專案**必須**在 Phase 8 就安裝以下工具，不是上線後才想到。
+
+### Sentry（錯誤追蹤）
+
+```bash
+npm install @sentry/nextjs
+npx @sentry/wizard@latest -i nextjs
+```
+
+`sentry.client.config.ts`：
+```typescript
+import * as Sentry from "@sentry/nextjs"
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  tracesSampleRate: 1.0,           // 生產環境改為 0.1
+  environment: process.env.NODE_ENV,
+  // 忽略非關鍵錯誤
+  ignoreErrors: [
+    "ResizeObserver loop limit exceeded",
+    "Non-Error promise rejection captured",
+  ],
+})
+```
+
+`sentry.server.config.ts`：
+```typescript
+import * as Sentry from "@sentry/nextjs"
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  tracesSampleRate: 0.1,
+  // 記錄每個 API 錯誤
+  beforeSend(event) {
+    if (event.level === "error") {
+      console.error("[Sentry]", event.message)
+    }
+    return event
+  },
+})
+```
+
+### PostHog（使用分析）
+
+```bash
+npm install posthog-js posthog-node
+```
+
+`src/lib/posthog.ts`：
+```typescript
+import PostHog from "posthog-js"
+
+export function initPostHog() {
+  if (typeof window === "undefined") return
+  PostHog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
+    api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://app.posthog.com",
+    capture_pageview: true,
+    capture_pageleave: true,
+    autocapture: true,
+  })
+}
+
+// 追蹤自訂事件
+export const track = (event: string, properties?: Record<string, unknown>) => {
+  if (typeof window !== "undefined") {
+    PostHog.capture(event, properties)
+  }
+}
+```
+
+`src/app/layout.tsx` 加入：
+```typescript
+import { PHProvider } from "@/components/PostHogProvider"
+// 在 <body> 外層包裹 <PHProvider>
+```
+
+### 環境變數
+
+```bash
+# .env.local.example 加入：
+NEXT_PUBLIC_SENTRY_DSN=          # 從 sentry.io 取得
+SENTRY_AUTH_TOKEN=               # 用於 source map 上傳
+NEXT_PUBLIC_POSTHOG_KEY=         # 從 posthog.com 取得
+NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
+```
+
+### FORGE 的硬性規定
+
+- 每個新專案的 Phase 8 **必須**安裝 Sentry 和 PostHog
+- 沒有可觀測性工具的專案，不允許進入 Phase 9（視為環境未就緒）
+- 確認方式：`grep -r "sentry\|posthog" package.json`

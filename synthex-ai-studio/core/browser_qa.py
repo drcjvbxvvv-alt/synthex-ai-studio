@@ -393,3 +393,232 @@ class BrowserToolExecutor:
 
             except Exception as e:
                 return f"[瀏覽器錯誤] {tool_name}: {e}"
+
+
+# ══════════════════════════════════════════════════════════════
+#  弱項五：跨裝置測試 + Core Web Vitals（補強）
+# ══════════════════════════════════════════════════════════════
+
+DEVICE_PROFILES = {
+    "desktop":  {"width": 1280, "height": 720,  "device_scale_factor": 1, "is_mobile": False},
+    "tablet":   {"width": 768,  "height": 1024, "device_scale_factor": 2, "is_mobile": True},
+    "mobile":   {"width": 375,  "height": 812,  "device_scale_factor": 3, "is_mobile": True,
+                 "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"},
+}
+
+# 補充工具定義
+BROWSER_TOOL_DEFS.extend([
+    {
+        "name": "browser_cross_device",
+        "description": "在桌機、平板、手機三種裝置上截圖同一頁面，找出響應式問題。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url":     {"type": "string",  "description": "要測試的 URL"},
+                "devices": {"type": "array",   "items": {"type": "string"},
+                            "description": "裝置清單：desktop、tablet、mobile（預設全部）"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "browser_web_vitals",
+        "description": "量測頁面的 Core Web Vitals：LCP（載入）、CLS（版位偏移）、TTI（互動就緒）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url":   {"type": "string",  "description": "要量測的 URL"},
+                "runs":  {"type": "integer", "description": "執行次數取平均（預設 3）"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "browser_regression",
+        "description": "對比兩個版本的截圖，偵測 UI 回歸問題（視覺差異）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url":      {"type": "string", "description": "要測試的 URL"},
+                "baseline": {"type": "string", "description": "基準截圖路徑（上一版本）"},
+            },
+            "required": ["url"],
+        },
+    },
+])
+
+
+class ExtendedBrowserQA(BrowserQA):
+    """擴充版 Browser QA — 跨裝置 + Core Web Vitals + 回歸測試"""
+
+    def cross_device(self, url: str, devices: list = None) -> dict:
+        """在多種裝置上截圖，找出響應式問題"""
+        devices   = devices or ["desktop", "tablet", "mobile"]
+        results   = {}
+        browser   = self._get_browser()
+
+        for device_name in devices:
+            profile  = DEVICE_PROFILES.get(device_name, DEVICE_PROFILES["desktop"])
+            viewport = {"width": profile["width"], "height": profile["height"]}
+            ctx_args = {"viewport": viewport, "device_scale_factor": profile.get("device_scale_factor", 1),
+                        "is_mobile": profile.get("is_mobile", False)}
+            if "user_agent" in profile:
+                ctx_args["user_agent"] = profile["user_agent"]
+
+            ctx  = browser.new_context(**ctx_args)
+            page = ctx.new_page()
+            errs = []
+            page.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
+
+            try:
+                page.goto(url, wait_until="networkidle", timeout=15000)
+                page.wait_for_timeout(1500)
+                path = self._save_screenshot(page, f"cross_device_{device_name}")
+                results[device_name] = {
+                    "status":    "ok",
+                    "screenshot": path,
+                    "viewport":  viewport,
+                    "errors":    errs,
+                }
+                icon = f"{GREEN}✔{RESET}" if not errs else f"{YELLOW}⚠{RESET}"
+                print(f"  {icon} {device_name} ({profile['width']}×{profile['height']}) — {path.split('/')[-1]}")
+            except Exception as e:
+                results[device_name] = {"status": "error", "error": str(e)}
+            finally:
+                ctx.close()
+
+        return {"url": url, "devices": results}
+
+    def web_vitals(self, url: str, runs: int = 3) -> dict:
+        """量測 Core Web Vitals（LCP、CLS、TTI 近似值）"""
+        browser = self._get_browser()
+        all_lcp = []
+        all_cls = []
+        all_tti = []
+
+        # 注入量測腳本
+        vitals_script = """
+        () => new Promise((resolve) => {
+            const result = { lcp: null, cls: 0, tti: null };
+            const t0 = performance.now();
+
+            // LCP
+            new PerformanceObserver((list) => {
+                const entries = list.getEntries();
+                if (entries.length > 0) {
+                    result.lcp = entries[entries.length - 1].startTime;
+                }
+            }).observe({ type: 'largest-contentful-paint', buffered: true });
+
+            // CLS
+            new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) {
+                    if (!entry.hadRecentInput) result.cls += entry.value;
+                }
+            }).observe({ type: 'layout-shift', buffered: true });
+
+            setTimeout(() => {
+                result.tti = performance.now() - t0;
+                resolve(result);
+            }, 3000);
+        })
+        """
+
+        for i in range(runs):
+            ctx  = browser.new_context(viewport={"width": 1280, "height": 720})
+            page = ctx.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                metrics = page.evaluate(vitals_script)
+                if metrics.get("lcp"): all_lcp.append(metrics["lcp"])
+                all_cls.append(metrics.get("cls", 0))
+                all_tti.append(metrics.get("tti", 0))
+            except Exception:
+                pass
+            finally:
+                ctx.close()
+
+        avg_lcp = round(sum(all_lcp) / len(all_lcp)) if all_lcp else None
+        avg_cls = round(sum(all_cls) / len(all_cls), 3) if all_cls else 0
+        avg_tti = round(sum(all_tti) / len(all_tti)) if all_tti else None
+
+        # 評分（Google 標準）
+        lcp_score = "好 ✅" if avg_lcp and avg_lcp < 2500 else ("需改善 ⚠" if avg_lcp and avg_lcp < 4000 else "差 ❌")
+        cls_score = "好 ✅" if avg_cls < 0.1 else ("需改善 ⚠" if avg_cls < 0.25 else "差 ❌")
+
+        result = {
+            "url":  url, "runs": runs,
+            "lcp":  {"value_ms": avg_lcp, "rating": lcp_score, "threshold": {"good": 2500, "poor": 4000}},
+            "cls":  {"value":    avg_cls,  "rating": cls_score, "threshold": {"good": 0.1,  "poor": 0.25}},
+            "tti":  {"value_ms": avg_tti},
+        }
+
+        print(f"\n  Core Web Vitals — {url}")
+        print(f"  LCP：{avg_lcp}ms  {lcp_score}")
+        print(f"  CLS：{avg_cls}    {cls_score}")
+        print(f"  TTI：{avg_tti}ms  （互動就緒時間）")
+
+        return result
+
+    def regression(self, url: str, baseline: str) -> dict:
+        """截圖對比，偵測視覺回歸"""
+        import hashlib
+        browser = self._get_browser()
+        ctx     = browser.new_context(viewport={"width": 1280, "height": 720})
+        page    = ctx.new_page()
+
+        try:
+            page.goto(url, wait_until="networkidle", timeout=15000)
+            page.wait_for_timeout(1500)
+            current_path = self._save_screenshot(page, "regression_current")
+        finally:
+            ctx.close()
+
+        baseline_path = Path(baseline)
+        if not baseline_path.exists():
+            return {"status": "no_baseline", "current": current_path,
+                    "message": f"基準截圖不存在：{baseline}，已建立當前版本作為新基準"}
+
+        # 用 hash 簡單對比（生產環境應用 pixel diff 工具）
+        def file_hash(p):
+            return hashlib.md5(Path(p).read_bytes()).hexdigest()
+
+        h_baseline = file_hash(baseline_path)
+        h_current  = file_hash(current_path)
+        changed    = h_baseline != h_current
+
+        status = "changed" if changed else "identical"
+        print(f"  {'⚠ 視覺有變化' if changed else '✔ 無視覺差異'} — {url}")
+
+        return {
+            "status":   status,
+            "changed":  changed,
+            "baseline": str(baseline_path),
+            "current":  current_path,
+        }
+
+
+# 更新分派器以支援新工具
+class EnhancedBrowserToolExecutor(BrowserToolExecutor):
+    def execute(self, tool_name: str, tool_input: dict) -> str:
+        if not _check_playwright():
+            install_playwright()
+
+        with ExtendedBrowserQA(headless=self.headless) as qa:
+            try:
+                method_map = {
+                    "browser_screenshot":    qa.screenshot,
+                    "browser_flow":          qa.flow,
+                    "browser_audit":         qa.audit,
+                    "browser_check_console": qa.check_console,
+                    "browser_cross_device":  qa.cross_device,
+                    "browser_web_vitals":    qa.web_vitals,
+                    "browser_regression":    qa.regression,
+                }
+                fn = method_map.get(tool_name)
+                if fn:
+                    result = fn(**tool_input)
+                    return json.dumps(result, ensure_ascii=False, indent=2)
+                return f"[錯誤] 未知工具: {tool_name}"
+            except Exception as e:
+                return f"[瀏覽器錯誤] {tool_name}: {e}"
