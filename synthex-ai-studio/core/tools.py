@@ -521,3 +521,322 @@ class ToolExecutor:
                     pass
 
         return "\n".join(info)
+
+
+# ══════════════════════════════════════════════════════════════
+#  P0-2：Secret 掃描工具
+#  P1-2：系統工程工具（韌體編譯、OpenOCD、效能分析）
+# ══════════════════════════════════════════════════════════════
+
+SECURITY_TOOL_DEFS = [
+    {
+        "name": "secret_scan",
+        "description": "掃描專案中的 secret 洩漏（API key、密碼、token 誤提交到 git）。使用 gitleaks。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path":   {"type": "string",  "description": "掃描路徑（預設當前目錄）"},
+                "staged": {"type": "boolean", "description": "只掃描 staged 的變更（pre-commit 用）"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "sast_scan",
+        "description": "靜態應用安全測試（SAST），用 Semgrep 掃描程式碼中的安全問題。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path":   {"type": "string", "description": "掃描路徑"},
+                "config": {"type": "string", "description": "規則集：auto、p/javascript、p/typescript、p/python（預設 auto）"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "dependency_audit",
+        "description": "掃描依賴套件的已知漏洞（npm audit 或 pip-audit）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path":     {"type": "string", "description": "專案路徑"},
+                "fix":      {"type": "boolean","description": "嘗試自動修復（預設 false）"},
+                "severity": {"type": "string", "description": "只顯示此嚴重等級以上：low/moderate/high/critical"},
+            },
+            "required": [],
+        },
+    },
+]
+
+SYSTEMS_TOOL_DEFS = [
+    {
+        "name": "firmware_build",
+        "description": "編譯韌體專案（支援 CMake/Make/PlatformIO/Zephyr West/ESP-IDF）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "build_system": {"type": "string",
+                                 "enum": ["cmake", "make", "platformio", "west", "espidf", "cargo"],
+                                 "description": "建置系統"},
+                "target":       {"type": "string",  "description": "建置目標（cmake：target name；west：board name）"},
+                "cwd":          {"type": "string",  "description": "專案目錄"},
+                "clean":        {"type": "boolean", "description": "先 clean 再建置（預設 false）"},
+                "jobs":         {"type": "integer", "description": "並行編譯數（預設 CPU 核心數）"},
+            },
+            "required": ["build_system"],
+        },
+    },
+    {
+        "name": "firmware_flash",
+        "description": "燒錄韌體到目標設備（OpenOCD 或 JLink 或 esptool）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tool":      {"type": "string", "enum": ["openocd", "jlink", "esptool", "west", "pyocd"],
+                              "description": "燒錄工具"},
+                "binary":    {"type": "string", "description": "韌體二進位檔路徑（.bin/.hex/.elf）"},
+                "target":    {"type": "string", "description": "目標晶片（OpenOCD 設定，例如 stm32f4x）"},
+                "interface": {"type": "string", "description": "除錯介面（stlink、jlink、cmsis-dap）"},
+                "port":      {"type": "string", "description": "串口（esptool 用，例如 /dev/ttyUSB0）"},
+                "baud":      {"type": "integer","description": "燒錄速率（esptool 用）"},
+            },
+            "required": ["tool", "binary"],
+        },
+    },
+    {
+        "name": "serial_monitor",
+        "description": "開啟串口監視器，讀取韌體輸出（限時讀取，不持續佔用）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "port":    {"type": "string",  "description": "串口路徑（/dev/ttyUSB0、/dev/cu.usbserial 等）"},
+                "baud":    {"type": "integer", "description": "鮑率（預設 115200）"},
+                "timeout": {"type": "integer", "description": "讀取秒數（預設 5）"},
+            },
+            "required": ["port"],
+        },
+    },
+    {
+        "name": "perf_profile",
+        "description": "對 Linux 程序執行效能分析（perf record + flamegraph）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid":      {"type": "integer", "description": "目標 PID（-1 表示系統全局）"},
+                "command":  {"type": "string",  "description": "或直接執行命令（例如 './my_program arg1'）"},
+                "duration": {"type": "integer", "description": "採樣秒數（預設 10）"},
+                "output":   {"type": "string",  "description": "輸出目錄（預設 /tmp/perf_output）"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "memory_check",
+        "description": "執行 Valgrind 記憶體錯誤檢查（記憶體洩漏、越界存取）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要檢查的命令（例如 './my_program'）"},
+                "cwd":     {"type": "string",  "description": "執行目錄"},
+                "tool":    {"type": "string",  "description": "valgrind tool：memcheck、massif、callgrind（預設 memcheck）"},
+            },
+            "required": ["command"],
+        },
+    },
+]
+
+
+class SecurityToolExecutor:
+    """P0-2：安全掃描工具執行器"""
+
+    def __init__(self, workdir: str, auto_confirm: bool = False):
+        self.workdir      = workdir
+        self.auto_confirm = auto_confirm
+
+    def execute(self, tool_name: str, tool_input: dict) -> str:
+        import subprocess
+        from pathlib import Path
+
+        cwd = tool_input.get("path", self.workdir) or self.workdir
+
+        if tool_name == "secret_scan":
+            return self._secret_scan(cwd, tool_input.get("staged", False))
+        elif tool_name == "sast_scan":
+            return self._sast_scan(cwd, tool_input.get("config", "auto"))
+        elif tool_name == "dependency_audit":
+            return self._dep_audit(cwd, tool_input.get("fix", False),
+                                   tool_input.get("severity", "moderate"))
+        return f"[錯誤] 未知工具：{tool_name}"
+
+    def _run(self, cmd: str, cwd: str, timeout: int = 60) -> str:
+        import subprocess
+        print(f"  \033[96m$ {cmd}\033[0m")
+        try:
+            r = subprocess.run(cmd, shell=True, cwd=cwd,
+                               capture_output=True, text=True, timeout=timeout)
+            out = (r.stdout + r.stderr).strip()
+            return f"{out}\n[exit {r.returncode}]"
+        except subprocess.TimeoutExpired:
+            return f"[超時]"
+        except Exception as e:
+            return f"[錯誤] {e}"
+
+    def _secret_scan(self, cwd: str, staged: bool) -> str:
+        # 確認 gitleaks 可用
+        check = self._run("which gitleaks", cwd, 3)
+        if "exit 1" in check or "not found" in check.lower():
+            # 嘗試安裝
+            print("  \033[93m⚠ gitleaks 未安裝，嘗試安裝...\033[0m")
+            self._run("brew install gitleaks 2>/dev/null || "
+                      "curl -s https://raw.githubusercontent.com/gitleaks/gitleaks/main/scripts/install.sh | sh",
+                      cwd, 30)
+
+        flags = "--staged" if staged else "--no-git"
+        result = self._run(f"gitleaks detect --source=. {flags} --verbose", cwd, 30)
+        return f"[Secret 掃描]\n{result}"
+
+    def _sast_scan(self, cwd: str, config: str) -> str:
+        check = self._run("which semgrep", cwd, 3)
+        if "exit 1" in check or "not found" in check.lower():
+            self._run("pip install semgrep --break-system-packages -q", cwd, 60)
+
+        result = self._run(
+            f"semgrep --config={config} src/ --json --quiet 2>/dev/null | "
+            "python3 -c \"import json,sys; d=json.load(sys.stdin); "
+            "results=d.get('results',[]); "
+            "print(f'發現 {len(results)} 個問題'); "
+            "[print(f\\\"  [{r['extra']['severity']}] {r['path']}:{r['start']['line']} - {r['extra']['message']}\\\") for r in results[:20]]\"",
+            cwd, 60
+        )
+        return f"[SAST 掃描 ({config})]\n{result}"
+
+    def _dep_audit(self, cwd: str, fix: bool, severity: str) -> str:
+        from pathlib import Path
+        if (Path(cwd) / "package.json").exists():
+            fix_flag = "--fix" if fix else ""
+            result = self._run(f"npm audit {fix_flag} --audit-level={severity}", cwd, 30)
+            return f"[依賴漏洞掃描 (npm)]\n{result}"
+        elif (Path(cwd) / "requirements.txt").exists():
+            check = self._run("which pip-audit", cwd, 3)
+            if "exit 1" in check:
+                self._run("pip install pip-audit --break-system-packages -q", cwd, 30)
+            result = self._run("pip-audit", cwd, 30)
+            return f"[依賴漏洞掃描 (pip)]\n{result}"
+        return "[依賴漏洞掃描] 找不到 package.json 或 requirements.txt"
+
+
+class SystemsToolExecutor:
+    """P1-2：系統工程工具執行器"""
+
+    def __init__(self, workdir: str):
+        self.workdir = workdir
+
+    def execute(self, tool_name: str, tool_input: dict) -> str:
+        import subprocess, os
+        from pathlib import Path
+
+        if tool_name == "firmware_build":
+            return self._build(**tool_input)
+        elif tool_name == "firmware_flash":
+            return self._flash(**tool_input)
+        elif tool_name == "serial_monitor":
+            return self._serial(**tool_input)
+        elif tool_name == "perf_profile":
+            return self._perf(**tool_input)
+        elif tool_name == "memory_check":
+            return self._memcheck(**tool_input)
+        return f"[錯誤] 未知工具：{tool_name}"
+
+    def _run(self, cmd: str, cwd: str = None, timeout: int = 300) -> str:
+        import subprocess
+        work = cwd or self.workdir
+        print(f"  \033[96m$ {cmd}\033[0m  \033[2m(在 {work})\033[0m")
+        try:
+            r = subprocess.run(cmd, shell=True, cwd=work,
+                               capture_output=True, text=True, timeout=timeout)
+            out = (r.stdout + r.stderr).strip()
+            for line in out.splitlines()[-20:]:
+                print(f"  \033[2m{line}\033[0m")
+            icon = "\033[92m✔\033[0m" if r.returncode == 0 else f"\033[93m⚠ exit {r.returncode}\033[0m"
+            print(f"  {icon}")
+            return f"{out}\n[exit {r.returncode}]"
+        except subprocess.TimeoutExpired:
+            return f"[超時 >{timeout}s]"
+        except Exception as e:
+            return f"[錯誤] {e}"
+
+    def _build(self, build_system: str, target: str = "", cwd: str = None,
+               clean: bool = False, jobs: int = None) -> str:
+        import os
+        work  = cwd or self.workdir
+        cores = jobs or os.cpu_count() or 4
+
+        cmds = {
+            "cmake":      f"{'cmake --build build --target clean && ' if clean else ''}cmake -B build -S . && cmake --build build -j{cores} {'--target ' + target if target else ''}",
+            "make":       f"{'make clean && ' if clean else ''}make {target} -j{cores}",
+            "platformio": f"pio run {'--target clean && pio run ' if clean else ''}{'-e ' + target if target else ''}",
+            "west":       f"west build {'-p always ' if clean else ''}{'-b ' + target if target else ''}",
+            "espidf":     f"{'idf.py fullclean && ' if clean else ''}idf.py {'build' if not target else target}",
+            "cargo":      f"cargo build {'--release' if target == 'release' else ''} --target {target if target and '/' in target else 'thumbv7em-none-eabihf'}",
+        }
+        cmd = cmds.get(build_system, f"make {target}")
+        return f"[韌體建置 ({build_system})]\n{self._run(cmd, work, 600)}"
+
+    def _flash(self, tool: str, binary: str, target: str = "",
+               interface: str = "stlink", port: str = "", baud: int = 460800) -> str:
+        cmds = {
+            "openocd": f"openocd -f interface/{interface}.cfg -f target/{target}.cfg "
+                       f"-c 'program {binary} verify reset exit'",
+            "jlink":   f"JLinkExe -commandfile /tmp/jlink_flash.jlink",
+            "esptool": f"esptool.py --chip auto --port {port} --baud {baud} write_flash 0x0 {binary}",
+            "west":    f"west flash --bin-file {binary}",
+            "pyocd":   f"pyocd flash -t {target} {binary}",
+        }
+        cmd = cmds.get(tool, f"# 不支援的工具：{tool}")
+        return f"[韌體燒錄 ({tool})]\n{self._run(cmd, self.workdir, 120)}"
+
+    def _serial(self, port: str, baud: int = 115200, timeout: int = 5) -> str:
+        cmd = f"timeout {timeout} python3 -c \"\nimport serial, sys, time\nser = serial.Serial('{port}', {baud}, timeout=1)\nstart = time.time()\nlines = []\nwhile time.time() - start < {timeout}:\n    line = ser.readline().decode('utf-8', errors='replace').strip()\n    if line:\n        lines.append(line)\n        print(line)\nser.close()\n\""
+        return f"[串口監視 {port}@{baud}]\n{self._run(cmd, self.workdir, timeout + 3)}"
+
+    def _perf(self, pid: int = -1, command: str = "", duration: int = 10,
+              output: str = "/tmp/perf_output") -> str:
+        import subprocess
+        from pathlib import Path
+        Path(output).mkdir(parents=True, exist_ok=True)
+
+        if command:
+            cmd = f"perf record -g -F 999 -o {output}/perf.data -- {command}"
+        elif pid > 0:
+            cmd = f"perf record -g -F 999 -p {pid} -o {output}/perf.data sleep {duration}"
+        else:
+            cmd = f"perf record -g -F 999 -a -o {output}/perf.data sleep {duration}"
+
+        build_result = self._run(cmd, self.workdir, duration + 30)
+
+        # 產生 flamegraph
+        flamegraph_cmd = (
+            f"perf script -i {output}/perf.data | "
+            f"stackcollapse-perf.pl | flamegraph.pl > {output}/flamegraph.svg"
+        )
+        fg_result = self._run(flamegraph_cmd, self.workdir, 30)
+
+        report = self._run(f"perf report -i {output}/perf.data --stdio --no-pager 2>&1 | head -40",
+                           self.workdir, 30)
+
+        return f"[效能分析]\n建置：{build_result}\nFlamegraph：{fg_result}\n報告前 40 行：\n{report}\n\n輸出目錄：{output}"
+
+    def _memcheck(self, command: str, cwd: str = None, tool: str = "memcheck") -> str:
+        work = cwd or self.workdir
+        cmd  = f"valgrind --tool={tool} --leak-check=full --show-leak-kinds=all --track-origins=yes {command}"
+        return f"[Valgrind {tool}]\n{self._run(cmd, work, 300)}"
+
+
+# 更新 ALL_TOOL_DEFS（讓 Agent 可以使用新工具）
+ALL_TOOL_DEFS.extend(SECURITY_TOOL_DEFS)
+ALL_TOOL_DEFS.extend(SYSTEMS_TOOL_DEFS)
+
+# 更新角色工具集
+ROLE_TOOLS["devops"].extend([t["name"] for t in SECURITY_TOOL_DEFS])
+ROLE_TOOLS["qa"].extend([t["name"] for t in SECURITY_TOOL_DEFS])
+ROLE_TOOLS["systems"] = [t["name"] for t in ALL_TOOL_DEFS]  # 系統工程部門有全套

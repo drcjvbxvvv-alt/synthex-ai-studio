@@ -166,3 +166,245 @@ test('登入流程', async ({ page }) => {
 | 圖片 | alt text、404 時的 fallback |
 | 錯誤 | API 失敗時的用戶提示（不是 console.error） |
 | 手機 | 同樣的 E2E 在 375px 視窗重跑一次 |
+
+---
+
+## P1：負載測試（k6）
+
+任何要上線的服務都必須知道它能承受多少流量。負載測試不是上線後才想到的事。
+
+### k6 基本腳本
+
+```javascript
+// load-test/baseline.js
+import http from "k6/http"
+import { check, sleep } from "k6"
+import { Rate, Trend } from "k6/metrics"
+
+// 自訂指標
+const errorRate    = new Rate("errors")
+const apiLatency   = new Trend("api_latency", true)
+
+export const options = {
+  // 場景一：正常負載
+  scenarios: {
+    normal_load: {
+      executor:         "ramping-vus",
+      startVUs:         0,
+      stages: [
+        { duration: "1m",  target: 10  },  // 爬升到 10 個並發用戶
+        { duration: "3m",  target: 10  },  // 維持
+        { duration: "1m",  target: 0   },  // 降回
+      ],
+      gracefulRampDown: "30s",
+    },
+    // 場景二：壓力測試（找崩潰點）
+    stress_test: {
+      executor: "ramping-vus",
+      startTime: "6m",    // 正常負載結束後開始
+      stages: [
+        { duration: "2m",  target: 50  },
+        { duration: "2m",  target: 100 },
+        { duration: "2m",  target: 200 },  // 壓到 200 個並發
+        { duration: "1m",  target: 0   },
+      ],
+    },
+  },
+
+  // 品質門禁（任何一個失敗，測試視為不通過）
+  thresholds: {
+    "http_req_duration":        ["p(95)<500"],  // 95% 請求 < 500ms
+    "http_req_duration{api:login}": ["p(99)<1000"], // 登入 P99 < 1s
+    "errors":                   ["rate<0.01"],  // 錯誤率 < 1%
+    "http_req_failed":          ["rate<0.01"],
+  },
+}
+
+const BASE_URL = __ENV.BASE_URL || "http://localhost:3000"
+
+export default function () {
+  // 測試登入 API
+  const loginRes = http.post(
+    `${BASE_URL}/api/v1/auth/login`,
+    JSON.stringify({ email: "test@example.com", password: "password123" }),
+    { headers: { "Content-Type": "application/json" },
+      tags:    { api: "login" } }   // 用 tag 分組指標
+  )
+
+  check(loginRes, {
+    "login status 200":        (r) => r.status === 200,
+    "login has token":         (r) => r.json("token") !== undefined,
+    "login response time < 1s":(r) => r.timings.duration < 1000,
+  })
+
+  errorRate.add(loginRes.status !== 200)
+  apiLatency.add(loginRes.timings.duration, { api: "login" })
+
+  if (loginRes.status === 200) {
+    const token = loginRes.json("token")
+
+    // 測試需要認證的 API
+    const profileRes = http.get(
+      `${BASE_URL}/api/v1/users/me`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    check(profileRes, { "profile status 200": (r) => r.status === 200 })
+  }
+
+  sleep(1)    // 模擬真實用戶思考時間
+}
+```
+
+### 執行與分析
+
+```bash
+# 安裝 k6
+brew install k6    # macOS
+# 或 sudo apt install k6
+
+# 基線測試
+k6 run load-test/baseline.js
+
+# 指定環境
+k6 run -e BASE_URL=https://staging.example.com load-test/baseline.js
+
+# 輸出到 CSV 做分析
+k6 run --out csv=results.csv load-test/baseline.js
+
+# 壓力測試後解讀關鍵數字
+# http_req_duration p(95)：95% 的請求都在這個時間內完成
+# http_req_duration p(99)：99% 的請求時間（注意 tail latency）
+# http_reqs：每秒請求數（RPS）= 系統吞吐量
+# vus：當時的並發用戶數
+```
+
+### Phase 9 的負載測試策略輸出格式
+
+```
+負載測試計畫：
+
+目標：
+  正常負載：[N] 個並發用戶，持續 3 分鐘
+  壓力上限：[N] 個並發用戶
+
+品質門禁：
+  P95 延遲：< [N]ms（一般 API）
+  P99 延遲：< [N]ms（關鍵路徑）
+  錯誤率：< 1%
+  吞吐量：> [N] RPS
+
+測試場景：
+  - [端點名稱]：[測試邏輯說明]
+
+執行方式：
+  k6 run load-test/baseline.js -e BASE_URL=http://localhost:3000
+```
+
+---
+
+## P2：契約測試（Pact）
+
+契約測試確保前後端 API 介面永遠一致，不需要整合測試才發現不一致。
+
+### 為什麼需要契約測試
+
+```
+問題場景：
+  BYTE 的程式碼：POST /api/v1/users → body: { email, password }
+  STACK 改了 API：POST /api/v1/auth/register → body: { email, pwd }
+
+  沒有契約測試：整合測試（或用戶）才發現
+  有契約測試：STACK 一改 API，CI 立刻紅燈
+```
+
+### Consumer 端（前端，定義期待）
+
+```typescript
+// tests/contract/user.consumer.test.ts
+import { PactV3, MatchersV3 } from "@pact-foundation/pact"
+
+const { string, integer, eachLike } = MatchersV3
+
+const provider = new PactV3({
+  consumer: "frontend",
+  provider: "backend-api",
+  dir:      "./pacts",                 // 契約文件存這裡
+  logLevel: "warn",
+})
+
+describe("User API Contract", () => {
+  it("登入 API 的回應格式", async () => {
+    await provider.addInteraction({
+      states:         [{ description: "用戶存在" }],
+      uponReceiving:  "有效的登入請求",
+      withRequest: {
+        method:  "POST",
+        path:    "/api/v1/auth/login",
+        headers: { "Content-Type": "application/json" },
+        body:    { email: "test@example.com", password: "password123" },
+      },
+      willRespondWith: {
+        status:  200,
+        headers: { "Content-Type": "application/json" },
+        body: {
+          token:     string("eyJhbGc..."),        // 字串型別即可
+          expiresAt: string("2025-12-31T00:00:00Z"),
+          user: {
+            id:    string("uuid-here"),
+            email: string("test@example.com"),
+            name:  string("Test User"),
+          },
+        },
+      },
+    })
+
+    await provider.executeTest(async (mockServer) => {
+      const response = await fetch(`${mockServer.url}/api/v1/auth/login`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ email: "test@example.com", password: "password123" }),
+      })
+      const data = await response.json()
+      expect(response.status).toBe(200)
+      expect(data.token).toBeDefined()
+      expect(data.user.email).toBeDefined()
+    })
+  })
+})
+// 執行後產出 pacts/frontend-backend-api.json
+```
+
+### Provider 端（後端，驗證契約）
+
+```typescript
+// tests/contract/user.provider.test.ts
+import { PactV3 } from "@pact-foundation/pact"
+import { versionFromGitTag } from "@pact-foundation/pact-node"
+
+const provider = new PactV3({
+  provider:      "backend-api",
+  providerBaseUrl: "http://localhost:3001",
+  pactUrls:      ["./pacts/frontend-backend-api.json"],
+})
+
+describe("Backend API Provider Verification", () => {
+  it("驗證所有前端契約", async () => {
+    await provider.verifyProvider()
+    // 如果後端 API 不符合 pacts/ 裡的契約，測試失敗
+  })
+})
+```
+
+### CI 整合
+
+```yaml
+# .github/workflows/ci.yml
+- name: 前端契約測試
+  run: npx jest tests/contract/*.consumer.test.ts
+
+- name: 後端契約驗證
+  run: |
+    npm run start:test &    # 啟動測試用 server
+    sleep 5
+    npx jest tests/contract/*.provider.test.ts
+```

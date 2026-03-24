@@ -360,3 +360,113 @@ src/app/api/
 □ 沒有在任何 Repository 裡有業務邏輯
 □ Service 層的方法都是 static 或 class-based，便於 mock 測試
 ```
+
+---
+
+## P2：ADR 機制（Architecture Decision Records）
+
+每個重要的技術決策都必須記錄在 ADR 中。決策理由不能只活在對話裡。
+
+### ADR 目錄結構
+
+```
+docs/
+└── adr/
+    ├── ADR-001-use-nextjs16.md
+    ├── ADR-002-use-prisma-over-drizzle.md
+    ├── ADR-003-three-layer-architecture.md
+    └── ADR-004-use-postgresql-over-mysql.md
+```
+
+### ADR 標準格式
+
+```markdown
+# ADR-NNN：[決策標題]
+
+**狀態：** 已採用 / 草稿 / 棄用 / 取代（被 ADR-XXX 取代）
+**日期：** YYYY-MM-DD
+**決策者：** NEXUS（技術架構）
+
+---
+
+## 背景
+
+[為什麼需要做這個決策？當前的問題或需求是什麼？]
+
+## 考慮的選項
+
+### 選項 A：[名稱]
+- 優點：
+- 缺點：
+- 月費/成本：
+
+### 選項 B：[名稱]
+- 優點：
+- 缺點：
+
+### 選項 C：[名稱]
+- （如有）
+
+## 決策
+
+**選擇：選項 [A/B/C]**
+
+[一段話說明為什麼選這個]
+
+## 後果
+
+### 正面影響
+- [預期的好處]
+
+### 負面影響（trade-off）
+- [接受的代價]
+
+### 風險
+- [需要監控的風險點]
+
+## 關聯
+- 相關 ADR：ADR-XXX
+- 相關 PR：#NNN
+```
+
+### NEXUS 在 /ship Phase 4 的 ADR 職責
+
+每次執行 Phase 4 時，必須為以下類型的決策建立 ADR：
+
+```
+必須建立 ADR 的決策類型：
+  □ 前端框架選擇（如果不是預設的 Next.js 16）
+  □ 資料庫選擇（PostgreSQL vs MySQL vs MongoDB）
+  □ ORM 選擇（Prisma vs Drizzle vs TypeORM）
+  □ 認證方案（NextAuth vs Clerk vs 自建）
+  □ 架構模式（三層 vs 其他）
+  □ 第三方服務（Stripe vs 其他支付）
+  □ 部署平台（Vercel vs Railway vs 自建）
+  □ 任何「為什麼不用 X」的問題
+
+不需要 ADR 的決策：
+  □ 程式碼格式（由 eslint 強制）
+  □ 命名慣例（由 SKILL.md 定義）
+  □ 小型工具選擇（用哪個 date library）
+```
+
+### 建立 ADR 的自動觸發條件
+
+當你在 Phase 4 做出以下決定時，立即建立對應的 ADR 文件：
+
+```typescript
+// 這段話等同於需要一個 ADR：
+"我們選擇 Prisma 而不是 Drizzle，原因是..."
+→ 建立 docs/adr/ADR-NNN-use-prisma.md
+
+"採用三層架構（路由→Service→Repository）..."
+→ 建立 docs/adr/ADR-NNN-three-layer-architecture.md
+```
+
+建立 ADR 後，在 ARCHITECTURE.md 的技術選型表格中加入 ADR 連結：
+
+```markdown
+| 類別 | 選擇 | 版本 | 理由 | ADR |
+|------|------|------|------|-----|
+| ORM  | Prisma | 5.x | 型別安全、migration | [ADR-002](adr/ADR-002-use-prisma.md) |
+```
