@@ -73,25 +73,42 @@ synthex-release/
 │   ├── CLAUDE.md                    ← 最新版（同 project-template）
 │   ├── core/
 │   │   ├── base_agent.py            ← Agent 基底
+│   │   ├── browser_qa.py            ← 瀏覽器 QA 測試與互動 (新增)
+│   │   ├── deploy_pipeline.py       ← 自動化部署流水線 (新增)
 │   │   ├── orchestrator.py          ← 智能路由
+│   │   ├── project_scanner.py       ← 專案環境與結構掃描 (新增)
 │   │   ├── tools.py                 ← 基礎工具（讀寫檔案、執行命令）
-│   │   ├── web_tools.py             ← 網頁開發工具（npm、git）
-│   │   └── web_orchestrator.py      ← /discover + /ship 流水線
+│   │   ├── web_orchestrator.py      ← /discover + /ship 流水線
+│   │   └── web_tools.py             ← 網頁開發工具（npm、git）
 │   ├── agents/
+│   │   ├── __init__.py
 │   │   └── all_agents.py            ← 全部 24 位 Agent 定義
 │   └── memory/                      ← Agent 記憶（執行後自動產生）
 │
 └── project-template/                ← 複製到每個專案根目錄
     ├── CLAUDE.md                    ← 給 Claude Code 的公司作業系統
-    └── agents/                      ← 8 位高頻角色的完整技能手冊
-        ├── SPARK/SKILL.md           ← UX 方法論、線框格式
-        ├── PRISM/SKILL.md           ← 設計系統、tokens.css 規範
-        ├── NEXUS/SKILL.md           ← 技術選型、架構文件格式
-        ├── BYTE/SKILL.md            ← 前端實作標準
-        ├── STACK/SKILL.md           ← 後端實作標準
-        ├── FORGE/SKILL.md           ← 設定檔範本、CI/CD
-        ├── PROBE/SKILL.md           ← 測試策略框架
-        └── SHIELD/SKILL.md          ← 安全審查清單
+    └── agents/                      ← 各角色的完整技能手冊 (SKILL.md)
+        ├── ARIA/                    ← CEO / 策略與任務確認
+        ├── ATOM/                    ← 系統程式工程師 / Linux Kernel、C/Rust、高效能 IPC
+        ├── BOLT/                    ← 韌體技術主管 / MCU、RTOS、C/C++ 裸機開發
+        ├── BYTE/                    ← 前端實作標準
+        ├── ECHO/                    ← 商業分析師 / PRD 規格
+        ├── FORGE/                   ← 設定檔範本、CI/CD
+        ├── KERN/                    ← 系統效能與底層調優
+        ├── LUMI/                    ← 產品長 / 產品驗證
+        ├── NEXUS/                   ← 技術選型、架構文件格式
+        ├── NOVA/                    ← ML 主管 / AI 架構設計
+        ├── PRISM/                   ← 設計系統、tokens.css 規範
+        ├── PROBE/                   ← 測試策略框架
+        ├── RELAY/                   ← 雲端架構師
+        ├── RIFT/                    ← 行動端工程師
+        ├── SHIELD/                  ← 安全審查清單
+        ├── SIGMA/                   ← 財務長 / 可行性評估
+        ├── SPARK/                   ← UX 方法論、線框格式
+        ├── STACK/                   ← 後端實作標準
+        ├── TRACE/                   ← 自動化測試執行
+        ├── VOLT/                    ← 嵌入式系統工程師 / Linux BSP、Device Driver、Yocto
+        └── WIRE/                    ← 軟硬體整合工程師 / 協議分析 (SPI/I2C)、Board Bring-up
 ```
 
 ---
