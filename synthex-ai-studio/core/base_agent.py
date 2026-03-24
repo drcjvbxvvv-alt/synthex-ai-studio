@@ -31,22 +31,56 @@ PRICING = {
 DEFAULT_BUDGET_USD = 5.0   # 預設每次 /ship 的 budget 上限
 
 # ── P0-1：Extended Thinking 設定 ──────────────────────────────
-# 哪些 Agent 在執行深度推理任務時啟用 Extended Thinking
-# Extended Thinking 讓模型在回答前進行內部推理，提升複雜決策品質
 EXTENDED_THINKING_AGENTS = {
-    "NEXUS",   # Phase 4 技術架構（複雜技術決策）
-    "SIGMA",   # Phase 5 可行性評估（多維度分析）
-    "ARIA",    # Phase 1 任務分析（需求澄清）
-    "NOVA",    # AI 架構設計（高複雜度）
-    "ATOM",    # 系統效能分析
+    "NEXUS", "SIGMA", "ARIA", "NOVA", "ATOM",
+}
+THINKING_BUDGET = {
+    "deep":    10000,
+    "normal":   5000,
+    "quick":    2000,
 }
 
-# Extended Thinking 的 budget_tokens（思考用的 token 上限）
-THINKING_BUDGET = {
-    "deep":    10000,  # 深度分析（架構設計、可行性評估）
-    "normal":   5000,  # 一般推理
-    "quick":    2000,  # 快速判斷
+# ── P0-1：多模型策略（成本最佳化）────────────────────────────
+# 根據任務複雜度自動選擇最適合的模型
+# Opus：複雜推理和架構決策（$15/1M input）
+# Sonnet：一般實作任務（$3/1M input，便宜 5x）
+# Haiku：格式化、文案、簡單分類（$0.25/1M input，便宜 60x）
+
+MODEL_STRATEGY = {
+    # Opus：需要最高品質推理的角色
+    "opus": {
+        "agents": {"NEXUS", "SIGMA", "ARIA", "NOVA", "ATOM", "SHIELD", "BOLT"},
+        "model":  "claude-opus-4-5",
+        "reason": "架構決策、安全審查、韌體設計需要最高推理品質",
+    },
+    # Sonnet：實作和分析（大多數角色）
+    "sonnet": {
+        "agents": {
+            "BYTE", "STACK", "FLUX", "KERN", "RIFT",
+            "ECHO", "LUMI", "VISTA", "SPARK", "PRISM",
+            "PROBE", "TRACE", "FORGE", "RELAY",
+            "VOLT", "WIRE", "QUANT", "ATLAS",
+        },
+        "model":  "claude-sonnet-4-5",
+        "reason": "實作、測試、設計任務需要平衡品質和成本",
+    },
+    # Haiku：輕量任務（文案、格式化、行銷）
+    "haiku": {
+        "agents": {"PULSE", "BRIDGE", "MEMO"},
+        "model":  "claude-haiku-4-5",
+        "reason": "文案生成、提案格式化、合規清單不需要複雜推理",
+    },
 }
+
+# 快速查找：Agent 名稱 → 模型
+_AGENT_MODEL_MAP: dict[str, str] = {}
+for tier in MODEL_STRATEGY.values():
+    for agent in tier["agents"]:
+        _AGENT_MODEL_MAP[agent] = tier["model"]
+
+def get_model_for_agent(agent_name: str) -> str:
+    """根據 Agent 名稱回傳最佳模型"""
+    return _AGENT_MODEL_MAP.get(agent_name, "claude-sonnet-4-5")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -150,6 +184,157 @@ class BudgetExceededError(Exception):
     pass
 
 
+# ══════════════════════════════════════════════════════════════
+#  P2-1：Circuit Breaker（Agent 依賴容錯）
+# ══════════════════════════════════════════════════════════════
+
+class CircuitState:
+    CLOSED = "closed"       # 正常
+    OPEN   = "open"         # 熔斷（不呼叫）
+    HALF   = "half_open"    # 試探性呼叫
+
+class CircuitBreaker:
+    """
+    為每個 Agent 的 API 呼叫加入 Circuit Breaker。
+    連續失敗 3 次 → 熔斷 60 秒 → 試探性恢復。
+
+    好處：
+    - 快速失敗（不等待 30s 超時）
+    - 給 API 恢復時間
+    - 防止級聯失敗
+    """
+
+    def __init__(self,
+                 failure_threshold: int   = 3,
+                 recovery_timeout:  float = 60.0,
+                 half_open_max:     int   = 1):
+        self.failure_threshold  = failure_threshold
+        self.recovery_timeout   = recovery_timeout
+        self.half_open_max      = half_open_max
+        self._failures: dict    = {}   # agent_name → 連續失敗次數
+        self._opened_at: dict   = {}   # agent_name → 熔斷時間
+        self._state: dict       = {}   # agent_name → CircuitState
+
+    def _get_state(self, agent: str) -> str:
+        state = self._state.get(agent, CircuitState.CLOSED)
+        if state == CircuitState.OPEN:
+            opened = self._opened_at.get(agent, 0)
+            if time.time() - opened > self.recovery_timeout:
+                self._state[agent] = CircuitState.HALF
+                return CircuitState.HALF
+        return state
+
+    def call(self, agent: str, fn):
+        """執行呼叫，帶 Circuit Breaker 保護"""
+        state = self._get_state(agent)
+
+        if state == CircuitState.OPEN:
+            remaining = self.recovery_timeout - (time.time() - self._opened_at.get(agent, 0))
+            raise RuntimeError(f"[Circuit Breaker] {agent} 熔斷中，{remaining:.0f}s 後恢復")
+
+        try:
+            result = fn()
+            # 成功：重置失敗計數
+            self._failures[agent] = 0
+            if state == CircuitState.HALF:
+                self._state[agent] = CircuitState.CLOSED
+                print(f"\n{GREEN}✔ [{agent}] Circuit Breaker 恢復{RESET}")
+
+            return result
+
+        except Exception as e:
+            self._failures[agent] = self._failures.get(agent, 0) + 1
+            failures = self._failures[agent]
+
+            if failures >= self.failure_threshold:
+                self._state[agent]     = CircuitState.OPEN
+                self._opened_at[agent] = time.time()
+                print(f"\n{RED}⚡ [{agent}] Circuit Breaker 熔斷"
+
+                      f"（連續失敗 {failures} 次，{self.recovery_timeout}s 後恢復）{RESET}")
+
+            raise
+
+
+# 全域 Circuit Breaker（所有 Agent 共用）
+_circuit_breaker = CircuitBreaker()
+
+
+# ══════════════════════════════════════════════════════════════
+#  P2-2：Agentic Monitoring（決策可觀測性）
+# ══════════════════════════════════════════════════════════════
+
+class AgentDecisionLog:
+    """
+    記錄每個 Agent 的決策品質、延遲和失敗模式。
+    寫入 docs/AGENT_LOG.jsonl，供事後分析。
+    """
+
+    def __init__(self, workdir: str):
+        from pathlib import Path
+        self.log_path = Path(workdir) / "docs" / "AGENT_LOG.jsonl"
+        self.log_path.parent.mkdir(exist_ok=True)
+
+    def record(self, agent: str, phase: int, task_type: str,
+               duration_s: float, tokens_in: int, tokens_out: int,
+               cost_usd: float, success: bool, quality_score: int = None,
+               error: str = None):
+        """記錄一次 Agent 決策"""
+        entry = {
+            "ts":           datetime.now().isoformat(),
+            "agent":        agent,
+            "phase":        phase,
+            "task_type":    task_type,
+            "duration_s":   round(duration_s, 2),
+            "tokens_in":    tokens_in,
+            "tokens_out":   tokens_out,
+            "cost_usd":     round(cost_usd, 6),
+            "success":      success,
+            "quality_score":quality_score,
+            "error":        error,
+        }
+        with open(self.log_path, "a") as f:
+            import json as _j
+            f.write(_j.dumps(entry, ensure_ascii=False) + "\n")
+
+
+    def summary(self) -> str:
+        """產出監控摘要"""
+        if not self.log_path.exists():
+            return "（無監控記錄）"
+
+        import json as _j
+        entries = [_j.loads(l) for l in self.log_path.read_text().splitlines() if l.strip()]
+        if not entries:
+            return "（無記錄）"
+
+        by_agent: dict = {}
+        for e in entries:
+            n = e["agent"]
+            if n not in by_agent:
+                by_agent[n] = {"calls": 0, "total_cost": 0, "failures": 0, "avg_duration": []}
+            by_agent[n]["calls"]        += 1
+            by_agent[n]["total_cost"]   += e.get("cost_usd", 0)
+            by_agent[n]["failures"]     += 0 if e.get("success") else 1
+            by_agent[n]["avg_duration"].append(e.get("duration_s", 0))
+
+        lines = [f"\n{CYAN}{'─'*50}\n  📊 Agent 監控摘要\n{'─'*50}{RESET}"]
+
+
+
+        for agent, stats in sorted(by_agent.items(), key=lambda x: -x[1]["total_cost"]):
+            avg_d   = sum(stats["avg_duration"]) / len(stats["avg_duration"])
+            fail_r  = stats["failures"] / stats["calls"] * 100
+            lines.append(
+                f"  {agent:<8} 呼叫:{stats['calls']:>3}  "
+                f"成本:${stats['total_cost']:.4f}  "
+                f"平均:{avg_d:.1f}s  "
+                f"失敗率:{fail_r:.0f}%"
+            )
+        return "\n".join(lines)
+
+
+
 # ── 全域 session budget（所有 Agent 共享）────────────────────
 _session_budget: TokenBudget = None
 
@@ -235,7 +420,8 @@ class BaseAgent:
     def __init__(self, workdir: str = None, auto_confirm: bool = False,
                  budget_usd: float = None):
         self.client   = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-        self.model    = "claude-opus-4-5"
+        # P0-1：自動選擇最適合的模型（成本最佳化）
+        self.model    = get_model_for_agent(self.name)
         self.workdir  = workdir or os.getcwd()
         self.executor = ToolExecutor(workdir=self.workdir, auto_confirm=auto_confirm)
         self.memory_file          = MEMORY_DIR / f"{self.name.lower()}_memory.json"
@@ -272,13 +458,16 @@ class BaseAgent:
     # ── 顯示工具 ───────────────────────────────────────────────
 
     def _header(self, mode: str = "") -> str:
-        ts       = datetime.now().strftime("%H:%M:%S")
-        mode_tag = f" [{mode}]" if mode else ""
-        budget   = self._budget
-        cost_str = f"${budget.total_cost_usd:.3f}/${budget.budget_usd:.1f}"
+        ts        = datetime.now().strftime("%H:%M:%S")
+        mode_tag  = f" [{mode}]" if mode else ""
+        budget    = self._budget
+        cost_str  = f"${budget.total_cost_usd:.3f}/${budget.budget_usd:.1f}"
+        # 顯示使用的模型層級
+        model_tag = {"claude-opus-4-5": "Opus", "claude-sonnet-4-5": "Sonnet",
+                     "claude-haiku-4-5": "Haiku"}.get(self.model, self.model.split("-")[1])
         return (
             f"\n{self.color}{BOLD}┌─ {self.emoji} {self.name}{RESET}"
-            f"{DIM} · {self.title}{mode_tag} · {ts} · 💰{cost_str}{RESET}"
+            f"{DIM} · {self.title}{mode_tag} · {model_tag} · {ts} · 💰{cost_str}{RESET}"
         )
 
     def _footer(self) -> str:
@@ -437,6 +626,8 @@ class BaseAgent:
             self._budget.check_budget()
 
             try:
+                _start_ts = time.time()
+
                 def _call():
                     return self.client.messages.create(
                         model=self.model,
@@ -446,7 +637,11 @@ class BaseAgent:
                         messages=messages,
                     )
 
-                response = _api_call_with_retry(_call, agent_name=self.name)
+                # P2-1：Circuit Breaker 保護
+                response = _circuit_breaker.call(
+                    self.name,
+                    lambda: _api_call_with_retry(_call, agent_name=self.name)
+                )
 
                 # Token 追蹤
                 if hasattr(response, "usage"):

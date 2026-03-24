@@ -840,3 +840,635 @@ ALL_TOOL_DEFS.extend(SYSTEMS_TOOL_DEFS)
 ROLE_TOOLS["devops"].extend([t["name"] for t in SECURITY_TOOL_DEFS])
 ROLE_TOOLS["qa"].extend([t["name"] for t in SECURITY_TOOL_DEFS])
 ROLE_TOOLS["systems"] = [t["name"] for t in ALL_TOOL_DEFS]  # 系統工程部門有全套
+
+
+# ══════════════════════════════════════════════════════════════
+#  P0-2：高頻必要工具（結構化版本）
+#  取代散落的 run_command 呼叫，提供型別安全和結構化輸出
+# ══════════════════════════════════════════════════════════════
+
+WEBDEV_TOOL_DEFS = [
+    {
+        "name": "git_commit",
+        "description": "執行 git add 和 git commit，帶有格式化的 commit message。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message":  {"type": "string",  "description": "commit message（會自動格式化）"},
+                "add_all":  {"type": "boolean", "description": "是否 git add -A（預設 true）"},
+                "files":    {"type": "array",   "items": {"type": "string"},
+                             "description": "指定要 add 的檔案路徑（add_all=false 時使用）"},
+            },
+            "required": ["message"],
+        },
+    },
+    {
+        "name": "git_push",
+        "description": "執行 git push，可以指定 remote 和 branch。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "remote": {"type": "string", "description": "remote 名稱（預設 origin）"},
+                "branch": {"type": "string", "description": "branch 名稱（預設當前 branch）"},
+                "force":  {"type": "boolean","description": "是否 force push（謹慎使用）"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "npm_install",
+        "description": "安裝 npm 套件，支援 --save-dev、指定版本、多套件同時安裝。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "packages":  {"type": "array", "items": {"type": "string"},
+                              "description": "套件名稱列表，例如 ['react', 'typescript@5.0']"},
+                "dev":       {"type": "boolean", "description": "是否安裝為 devDependency"},
+                "exact":     {"type": "boolean", "description": "是否安裝精確版本（--save-exact）"},
+                "clean":     {"type": "boolean", "description": "是否先 rm -rf node_modules 再安裝"},
+            },
+            "required": ["packages"],
+        },
+    },
+    {
+        "name": "run_tests",
+        "description": "執行測試套件，支援 vitest、jest、pytest、playwright。自動解析測試結果。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "framework": {"type": "string",
+                              "enum": ["vitest", "jest", "pytest", "playwright", "auto"],
+                              "description": "測試框架（auto 自動偵測）"},
+                "pattern":   {"type": "string",  "description": "只跑符合此模式的測試"},
+                "coverage":  {"type": "boolean", "description": "是否產生覆蓋率報告"},
+                "watch":     {"type": "boolean", "description": "是否進入 watch 模式"},
+                "bail":      {"type": "boolean", "description": "第一個失敗就停止"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "fetch_url",
+        "description": "發送 HTTP 請求到指定 URL，支援 GET/POST/PUT/DELETE，回傳回應內容。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url":     {"type": "string",  "description": "目標 URL"},
+                "method":  {"type": "string",  "enum": ["GET","POST","PUT","PATCH","DELETE"],
+                            "description": "HTTP 方法（預設 GET）"},
+                "headers": {"type": "object",  "description": "請求標頭"},
+                "body":    {"type": "object",  "description": "請求 body（POST/PUT 用）"},
+                "timeout": {"type": "integer", "description": "超時秒數（預設 10）"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "docker_build",
+        "description": "建置 Docker 映像，支援指定 Dockerfile 和 build args。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tag":        {"type": "string",  "description": "映像標籤，例如 myapp:latest"},
+                "dockerfile": {"type": "string",  "description": "Dockerfile 路徑（預設 ./Dockerfile）"},
+                "build_args": {"type": "object",  "description": "建置參數"},
+                "no_cache":   {"type": "boolean", "description": "不使用快取"},
+                "platform":   {"type": "string",  "description": "目標平台，例如 linux/amd64"},
+            },
+            "required": ["tag"],
+        },
+    },
+    {
+        "name": "send_notification",
+        "description": "發送通知（Slack webhook 或 Email），用於重要事件（部署完成、錯誤告警）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "channel":  {"type": "string",
+                             "enum": ["slack", "email"],
+                             "description": "通知管道"},
+                "message":  {"type": "string", "description": "通知內容"},
+                "subject":  {"type": "string", "description": "主旨（email 用）"},
+                "urgency":  {"type": "string",
+                             "enum": ["info", "warning", "critical"],
+                             "description": "緊急程度（影響顯示格式）"},
+            },
+            "required": ["channel", "message"],
+        },
+    },
+    {
+        "name": "lint_and_typecheck",
+        "description": "執行 ESLint 和 TypeScript 型別檢查，回傳結構化的錯誤清單。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fix":       {"type": "boolean", "description": "是否自動修復可修復的問題"},
+                "strict":    {"type": "boolean", "description": "使用嚴格模式"},
+                "path":      {"type": "string",  "description": "只檢查特定路徑"},
+            },
+            "required": [],
+        },
+    },
+]
+
+
+class WebDevToolExecutor(ToolExecutor):
+    """擴充版工具執行器，加入高頻 Web 開發工具"""
+
+    def execute(self, tool_name: str, tool_input: dict) -> str:
+        # 優先處理新工具，其他交給父類別
+        handlers = {
+            "git_commit":       self._git_commit,
+            "git_push":         self._git_push,
+            "npm_install":      self._npm_install,
+            "run_tests":        self._run_tests,
+            "fetch_url":        self._fetch_url,
+            "docker_build":     self._docker_build,
+            "send_notification":self._send_notification,
+            "lint_and_typecheck":self._lint_and_typecheck,
+        }
+        if tool_name in handlers:
+            return handlers[tool_name](tool_input)
+        return super().execute(tool_name, tool_input)
+
+    def _sh(self, cmd: str, timeout: int = 120) -> dict:
+        import subprocess
+        r = subprocess.run(cmd, shell=True, cwd=self.workdir,
+                           capture_output=True, text=True, timeout=timeout)
+        return {"stdout": r.stdout.strip(), "stderr": r.stderr.strip(),
+                "returncode": r.returncode, "success": r.returncode == 0}
+
+    def _git_commit(self, inp: dict) -> str:
+        msg      = inp["message"]
+        add_all  = inp.get("add_all", True)
+        files    = inp.get("files", [])
+
+        if add_all:
+            self._sh("git add -A")
+        elif files:
+            self._sh(f"git add {' '.join(files)}")
+
+        result = self._sh(f'git commit -m "{msg}"')
+        if result["success"]:
+            sha = self._sh("git rev-parse --short HEAD")["stdout"]
+            return f"✔ Committed: {sha} — {msg}"
+        if "nothing to commit" in result["stdout"] + result["stderr"]:
+            return "ℹ 沒有變更需要提交"
+        return f"✖ commit 失敗：{result['stderr']}"
+
+    def _git_push(self, inp: dict) -> str:
+        remote = inp.get("remote", "origin")
+        branch = inp.get("branch", "")
+        force  = "--force" if inp.get("force") else ""
+
+        if not branch:
+            branch = self._sh("git branch --show-current")["stdout"]
+
+        result = self._sh(f"git push {force} {remote} {branch}")
+        if result["success"]:
+            return f"✔ Pushed to {remote}/{branch}"
+        return f"✖ push 失敗：{result['stderr']}"
+
+    def _npm_install(self, inp: dict) -> str:
+        packages = inp["packages"]
+        flags    = []
+        if inp.get("dev"):   flags.append("--save-dev")
+        if inp.get("exact"): flags.append("--save-exact")
+
+        if inp.get("clean"):
+            self._sh("rm -rf node_modules package-lock.json")
+
+        pkg_str = " ".join(packages)
+        flag_str = " ".join(flags)
+        result   = self._sh(f"npm install {flag_str} {pkg_str}", timeout=180)
+
+        if result["success"]:
+            return f"✔ 安裝成功：{pkg_str}"
+        return f"✖ 安裝失敗：{result['stderr'][-500:]}"
+
+    def _run_tests(self, inp: dict) -> str:
+        import json as _json
+        from pathlib import Path
+
+        framework = inp.get("framework", "auto")
+        pattern   = inp.get("pattern", "")
+        coverage  = inp.get("coverage", False)
+        bail      = inp.get("bail", False)
+
+        if framework == "auto":
+            p = Path(self.workdir)
+            if (p / "vitest.config.ts").exists() or (p / "vitest.config.js").exists():
+                framework = "vitest"
+            elif (p / "jest.config.js").exists():
+                framework = "jest"
+            elif (p / "requirements.txt").exists():
+                framework = "pytest"
+            elif (p / "playwright.config.ts").exists():
+                framework = "playwright"
+            else:
+                framework = "vitest"  # Next.js 預設
+
+        cmds = {
+            "vitest":     f"npx vitest run {'--coverage' if coverage else ''} {pattern}",
+            "jest":       f"npx jest {'--coverage' if coverage else ''} {'--bail' if bail else ''} {pattern}",
+            "pytest":     f"python -m pytest -v {'--tb=short' if bail else ''} {pattern}",
+            "playwright": f"npx playwright test {pattern}",
+        }
+        cmd    = cmds.get(framework, cmds["vitest"])
+        result = self._sh(cmd, timeout=300)
+
+        # 解析結果
+        output = result["stdout"] + result["stderr"]
+        lines  = output.splitlines()
+
+        # 尋找測試結果摘要
+        summary = []
+        for line in lines:
+            if any(k in line.lower() for k in ["pass", "fail", "error", "test", "suite", "✓", "✗", "×"]):
+                summary.append(line)
+
+        status = "✔ 測試通過" if result["success"] else "✖ 測試失敗"
+        return (status + " (" + framework + ")\n" + "\n".join(summary[-20:] if summary else ["(無輸出)"]))
+
+    def _fetch_url(self, inp: dict) -> str:
+        import urllib.request, urllib.parse, json as _json
+
+        url     = inp["url"]
+        method  = inp.get("method", "GET").upper()
+        headers = inp.get("headers", {})
+        body    = inp.get("body")
+        timeout = inp.get("timeout", 10)
+
+        req = urllib.request.Request(url, method=method)
+        for k, v in headers.items():
+            req.add_header(k, v)
+
+        if body:
+            data = _json.dumps(body).encode()
+            req.add_header("Content-Type", "application/json")
+            req.data = data
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body    = resp.read().decode("utf-8", errors="replace")
+                status  = resp.status
+                return "HTTP " + str(status) + "\n" + body[:2000]
+        except Exception as e:
+            return f"✖ 請求失敗：{e}"
+
+    def _docker_build(self, inp: dict) -> str:
+        tag        = inp["tag"]
+        dockerfile = inp.get("dockerfile", "Dockerfile")
+        build_args = inp.get("build_args", {})
+        no_cache   = "--no-cache" if inp.get("no_cache") else ""
+        platform   = f"--platform {inp['platform']}" if inp.get("platform") else ""
+
+        args_str = " ".join(f"--build-arg {k}={v}" for k, v in build_args.items())
+        cmd      = f"docker build {no_cache} {platform} {args_str} -t {tag} -f {dockerfile} ."
+        result   = self._sh(cmd, timeout=600)
+
+        if result["success"]:
+            return f"✔ Docker 映像建置成功：{tag}"
+        return f"✖ 建置失敗：{result['stderr'][-500:]}"
+
+    def _send_notification(self, inp: dict) -> str:
+        import os, urllib.request, json as _json
+
+        channel  = inp["channel"]
+        message  = inp["message"]
+        urgency  = inp.get("urgency", "info")
+
+        emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(urgency, "ℹ️")
+        text  = f"{emoji} {message}"
+
+        if channel == "slack":
+            webhook = os.environ.get("SLACK_WEBHOOK_URL")
+            if not webhook:
+                return "⚠ SLACK_WEBHOOK_URL 未設定，通知已跳過"
+            try:
+                data = _json.dumps({"text": text}).encode()
+                req  = urllib.request.Request(webhook, data=data,
+                       headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=5)
+                return f"✔ Slack 通知已發送（{urgency}）"
+            except Exception as e:
+                return f"✖ Slack 通知失敗：{e}"
+
+        return f"⚠ 通知管道 {channel} 尚未設定"
+
+    def _lint_and_typecheck(self, inp: dict) -> str:
+        fix    = "--fix" if inp.get("fix") else ""
+        path   = inp.get("path", ".")
+        result_lint = self._sh(f"npx eslint {fix} {path} --format=compact", timeout=60)
+        result_tsc  = self._sh("npx tsc --noEmit", timeout=60)
+
+        output = []
+        if result_lint["success"]:
+            output.append("✔ ESLint：無錯誤")
+        else:
+            errors = [l for l in result_lint["stdout"].splitlines() if "error" in l.lower()]
+            output.append("✖ ESLint：" + str(len(errors)) + " 個錯誤\n" + "\n".join(errors[:10]))
+
+        if result_tsc["success"]:
+            output.append("✔ TypeScript：無型別錯誤")
+        else:
+            ts_errors = result_tsc["stdout"].splitlines()[:15]
+            output.append("✖ TypeScript：" + str(len(ts_errors)) + " 個錯誤\n" + "\n".join(ts_errors))
+
+        return "\n".join(output)
+
+
+
+# 加入工具定義到 ALL_TOOL_DEFS
+ALL_TOOL_DEFS.extend(WEBDEV_TOOL_DEFS)
+
+# 更新角色工具集
+for dept in ["engineering", "devops", "qa"]:
+    if dept in ROLE_TOOLS:
+        ROLE_TOOLS[dept].extend([t["name"] for t in WEBDEV_TOOL_DEFS])
+
+ROLE_TOOLS["webdev"] = [t["name"] for t in ALL_TOOL_DEFS]  # 全套工具給 webdev
+
+
+# ══════════════════════════════════════════════════════════════
+#  P0-1：補齊高頻必要工具
+#  git / npm / test / fetch / search / docker / notify
+# ══════════════════════════════════════════════════════════════
+
+HIGH_FREQ_TOOL_DEFS = [
+    {
+        "name": "git_commit",
+        "description": "執行 git add + commit，支援自動產生符合 Conventional Commits 格式的訊息。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message":  {"type": "string",  "description": "commit 訊息（例：feat(auth): add JWT login）"},
+                "files":    {"type": "array",   "items": {"type": "string"},
+                             "description": "要加入的檔案列表，空陣列代表 git add -A"},
+                "push":     {"type": "boolean", "description": "commit 後自動 push（預設 false）"},
+                "branch":   {"type": "string",  "description": "push 到哪個分支（預設當前分支）"},
+            },
+            "required": ["message"],
+        },
+    },
+    {
+        "name": "git_push",
+        "description": "Push 到遠端，支援設定分支和 force push。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "branch":  {"type": "string",  "description": "目標分支（預設當前分支）"},
+                "remote":  {"type": "string",  "description": "遠端名稱（預設 origin）"},
+                "force":   {"type": "boolean", "description": "是否 force push（危險！預設 false）"},
+                "set_upstream": {"type": "boolean", "description": "設定 upstream（預設 false）"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "npm_run",
+        "description": "執行 package.json 中的 script（dev/build/test/lint/typecheck 等），回傳結果和 exit code。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script":   {"type": "string",  "description": "要執行的 script 名稱（例：build、test、lint）"},
+                "args":     {"type": "array",   "items": {"type": "string"},
+                             "description": "額外的 CLI 參數（例：['--run', '--coverage']）"},
+                "timeout":  {"type": "integer", "description": "超時秒數（預設 300）"},
+            },
+            "required": ["script"],
+        },
+    },
+    {
+        "name": "npm_install",
+        "description": "安裝 npm 套件，支援 dev dependency 和指定版本。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "packages":  {"type": "array",   "items": {"type": "string"},
+                              "description": "要安裝的套件列表，例：['react', 'typescript@5']"},
+                "dev":        {"type": "boolean", "description": "安裝為 devDependency（預設 false）"},
+                "save_exact": {"type": "boolean", "description": "固定版本號，不加 ^（預設 false）"},
+                "ci":         {"type": "boolean", "description": "使用 npm ci 而非 npm install（預設 false）"},
+            },
+            "required": ["packages"],
+        },
+    },
+    {
+        "name": "run_tests",
+        "description": "執行測試並回傳結構化結果（通過/失敗數、覆蓋率）。自動偵測測試框架（vitest/jest/pytest）。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern":   {"type": "string",  "description": "測試檔案 glob（例：tests/**/*.test.ts）"},
+                "coverage":  {"type": "boolean", "description": "是否產生覆蓋率報告（預設 false）"},
+                "watch":     {"type": "boolean", "description": "watch 模式（預設 false）"},
+                "timeout":   {"type": "integer", "description": "超時秒數（預設 120）"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "fetch_url",
+        "description": "抓取 URL 的內容（HTML/JSON/文字），用於讀取文件、API 回應或網頁。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url":      {"type": "string",  "description": "要抓取的 URL"},
+                "method":   {"type": "string",  "description": "HTTP 方法（預設 GET）"},
+                "headers":  {"type": "object",  "description": "自訂 headers"},
+                "body":     {"type": "string",  "description": "Request body（POST/PUT 用）"},
+                "timeout":  {"type": "integer", "description": "超時秒數（預設 10）"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "search_web",
+        "description": "搜尋網路，取得最新技術文件、API 用法或錯誤解法。使用 DuckDuckGo 即時搜尋。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query":    {"type": "string",  "description": "搜尋關鍵字"},
+                "max_results": {"type": "integer", "description": "最多回傳幾筆（預設 5）"},
+                "region":   {"type": "string",  "description": "地區（預設 tw-tzh，台灣繁中）"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "docker_build",
+        "description": "建置 Docker image，支援多架構建置。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tag":         {"type": "string",  "description": "Image 標籤（例：myapp:latest）"},
+                "dockerfile":  {"type": "string",  "description": "Dockerfile 路徑（預設 ./Dockerfile）"},
+                "context":     {"type": "string",  "description": "建置 context 目錄（預設 .）"},
+                "platform":    {"type": "string",  "description": "目標平台（例：linux/amd64,linux/arm64）"},
+                "no_cache":    {"type": "boolean", "description": "不使用 build cache（預設 false）"},
+                "push":        {"type": "boolean", "description": "建置後推送到 registry（預設 false）"},
+            },
+            "required": ["tag"],
+        },
+    },
+]
+
+
+class HighFreqToolExecutor:
+    """執行高頻必要工具"""
+
+    def __init__(self, workdir: str, auto_confirm: bool = False):
+        self.workdir      = workdir
+        self.auto_confirm = auto_confirm
+
+    def _run(self, cmd: str, timeout: int = 300) -> dict:
+        import subprocess
+        print(f"  \033[96m$ {cmd}\033[0m")
+        try:
+            r = subprocess.run(cmd, shell=True, cwd=self.workdir,
+                               capture_output=True, text=True, timeout=timeout)
+            out = (r.stdout + r.stderr).strip()
+            for line in out.splitlines()[-8:]:
+                print(f"  \033[2m{line}\033[0m")
+            ok = r.returncode == 0
+            print(f"  \033[{'92' if ok else '93'}m{'✔' if ok else '⚠'} exit {r.returncode}\033[0m")
+            return {"success": ok, "output": out, "exit_code": r.returncode}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "output": "timeout", "exit_code": -1}
+        except Exception as e:
+            return {"success": False, "output": str(e), "exit_code": -1}
+
+    def execute(self, tool_name: str, tool_input: dict) -> str:
+        import json
+        from pathlib import Path
+
+        if tool_name == "git_commit":
+            files = tool_input.get("files", [])
+            msg   = tool_input["message"]
+            push  = tool_input.get("push", False)
+            branch= tool_input.get("branch", "")
+            add_cmd = f"git add {' '.join(files)}" if files else "git add -A"
+            self._run(add_cmd)
+            result = self._run(f'git commit -m "{msg}"')
+            if push and result["success"]:
+                push_cmd = f"git push origin {branch}" if branch else "git push"
+                self._run(push_cmd)
+            return json.dumps(result)
+
+        elif tool_name == "git_push":
+            remote = tool_input.get("remote", "origin")
+            branch = tool_input.get("branch", "")
+            force  = tool_input.get("force", False)
+            up     = tool_input.get("set_upstream", False)
+            flags  = (" -f" if force else "") + (" --set-upstream" if up else "")
+            cmd    = f"git push {remote} {branch}{flags}".strip()
+            return json.dumps(self._run(cmd))
+
+        elif tool_name == "npm_run":
+            script  = tool_input["script"]
+            args    = " ".join(tool_input.get("args", []))
+            timeout = tool_input.get("timeout", 300)
+            return json.dumps(self._run(f"npm run {script} -- {args}".strip(), timeout))
+
+        elif tool_name == "npm_install":
+            pkgs  = " ".join(tool_input["packages"])
+            flags = (" -D" if tool_input.get("dev") else "") + \
+                    (" -E" if tool_input.get("save_exact") else "")
+            cmd   = f"npm ci" if tool_input.get("ci") else f"npm install {pkgs}{flags}"
+            return json.dumps(self._run(cmd, 120))
+
+        elif tool_name == "run_tests":
+            p   = Path(self.workdir)
+            pat = tool_input.get("pattern", "")
+            cov = " --coverage" if tool_input.get("coverage") else ""
+            timeout = tool_input.get("timeout", 120)
+
+            # 自動偵測框架
+            if (p / "vitest.config.ts").exists() or (p / "vitest.config.js").exists():
+                cmd = f"npx vitest run {pat}{cov}"
+            elif (p / "jest.config.js").exists() or (p / "jest.config.ts").exists():
+                cmd = f"npx jest {pat}{cov}"
+            elif (p / "pytest.ini").exists() or (p / "pyproject.toml").exists():
+                cmd = f"python -m pytest {pat} -v"
+            else:
+                pkg = (p / "package.json")
+                if pkg.exists():
+                    import json as jj
+                    scripts = jj.loads(pkg.read_text()).get("scripts", {})
+                    if "test" in scripts:
+                        cmd = f"npm run test -- --run {pat}"
+                    else:
+                        cmd = f"npx vitest run {pat}"
+                else:
+                    cmd = f"pytest {pat} -v"
+
+            result = self._run(cmd, timeout)
+            # 解析通過/失敗數
+            import re
+            passed = len(re.findall(r'✓|PASS|passed', result["output"]))
+            failed = len(re.findall(r'✗|FAIL|failed', result["output"]))
+            result["summary"] = {"passed": passed, "failed": failed}
+            return json.dumps(result)
+
+        elif tool_name == "fetch_url":
+            import urllib.request, urllib.error
+            url     = tool_input["url"]
+            method  = tool_input.get("method", "GET")
+            headers = tool_input.get("headers", {})
+            body    = tool_input.get("body", "").encode() if tool_input.get("body") else None
+            timeout = tool_input.get("timeout", 10)
+            try:
+                req = urllib.request.Request(url, data=body, method=method)
+                req.add_header("User-Agent", "SYNTHEX/1.0")
+                for k, v in headers.items():
+                    req.add_header(k, v)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    content = resp.read().decode("utf-8", errors="replace")[:5000]
+                    return json.dumps({"success": True, "status": resp.status, "content": content})
+            except Exception as e:
+                return json.dumps({"success": False, "error": str(e)})
+
+        elif tool_name == "search_web":
+            query   = tool_input["query"]
+            limit   = tool_input.get("max_results", 5)
+            # DuckDuckGo instant search（無需 API key）
+            encoded = query.replace(" ", "+")
+            result  = self._run(
+                f"curl -s 'https://api.duckduckgo.com/?q={encoded}&format=json&no_html=1&skip_disambig=1' 2>/dev/null | "
+                f"python3 -c \"import json,sys; d=json.load(sys.stdin); "
+                f"results=d.get('RelatedTopics',[])[:int('{limit}')]; "
+                f"[print(r.get('Text','')[:100]) for r in results if isinstance(r,dict) and r.get('Text')]\"",
+                15
+            )
+            if not result["output"]:
+                # fallback：直接抓 DuckDuckGo HTML
+                result = self._run(
+                    f"curl -sA 'Mozilla/5.0' 'https://html.duckduckgo.com/html/?q={encoded}' 2>/dev/null | "
+                    f"python3 -c \"import sys,re; "
+                    f"text=sys.stdin.read(); "
+                    f"results=re.findall(r'<a class=.*?result__a.*?>(.*?)</a>', text, re.S)[:5]; "
+                    f"[print(re.sub(r'<.*?>','',r)[:100]) for r in results]\"",
+                    15
+                )
+            return json.dumps({"query": query, "results": result["output"]})
+
+        elif tool_name == "docker_build":
+            tag        = tool_input["tag"]
+            dockerfile = tool_input.get("dockerfile", "Dockerfile")
+            context    = tool_input.get("context", ".")
+            platform   = tool_input.get("platform", "")
+            no_cache   = " --no-cache" if tool_input.get("no_cache") else ""
+            push_flag  = " --push" if tool_input.get("push") else ""
+            plat_flag  = f" --platform {platform}" if platform else ""
+            cmd = f"docker build -t {tag} -f {dockerfile}{plat_flag}{no_cache}{push_flag} {context}"
+            return json.dumps(self._run(cmd, 600))
+
+        return json.dumps({"error": f"未知工具：{tool_name}"})
+
+
+# 把新工具加入全域 ALL_TOOL_DEFS 和 ROLE_TOOLS
+ALL_TOOL_DEFS.extend(HIGH_FREQ_TOOL_DEFS)
+for role in ROLE_TOOLS:
+    # 所有角色都能用高頻工具（除了 haiku 角色只給輕量工具）
+    ROLE_TOOLS[role].extend([t["name"] for t in HIGH_FREQ_TOOL_DEFS])

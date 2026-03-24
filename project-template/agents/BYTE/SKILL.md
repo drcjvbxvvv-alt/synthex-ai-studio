@@ -802,3 +802,348 @@ formatCurrency(1234,   "JPY", "ja-JP")  // → "¥1,234"
   formatCurrency(amount, currency, locale)  ← 用 Intl API
   formatDate(date, locale, timezone)        ← 指定時區
 ```
+
+---
+
+## P0：Next.js 16 渲染策略決策框架
+
+這是每個 Next.js 頁面最重要的架構決策，**必須在開始寫程式碼前確定**。
+
+### 決策流程圖
+
+```
+這個頁面/組件需要：
+
+1. 即時數據（每秒都在變）？
+   → WebSocket / SSE（實時訂閱）
+   → Server Component + 搭配 Supabase Realtime
+
+2. 用戶個人化數據（登入後才有）？
+   → Server Component（在伺服器讀 session + DB）
+   → 不用 useEffect + fetch
+
+3. 互動性（點擊、表單、動畫）？
+   → Client Component（"use client"）
+   → 盡量把互動部分拆到最小的子組件
+
+4. 靜態內容（Blog、文件、產品頁）？
+   → 用 generateStaticParams + SSG
+   → 或 ISR（revalidate = 3600）
+
+5. 動態但不需要 session？
+   → Server Component（預設，效能最好）
+```
+
+### 五種渲染模式的完整說明
+
+```typescript
+// ── 1. Server Component（預設，多數情況的選擇）────────────
+// 在伺服器執行，直接存取 DB，不暴露 secret，無 hydration 成本
+// 這是 Next.js 16 App Router 的預設，不需要加任何標記
+
+// app/dashboard/page.tsx
+import { db } from "@/lib/db"
+import { getServerSession } from "next-auth"
+
+// 沒有 "use client" = Server Component
+export default async function DashboardPage() {
+  // ✅ 直接在 server 讀資料庫，不需要 API
+  const session = await getServerSession()
+  const orders  = await db.order.findMany({
+    where:   { userId: session!.user.id },
+    orderBy: { createdAt: "desc" },
+    take:    10,
+  })
+  return <OrderList orders={orders} />
+}
+// 優點：SEO 好、無 loading state、不暴露 DB 給 client
+// 缺點：無法使用 hooks、無法直接互動
+
+// ── 2. Client Component（互動式 UI）─────────────────────────
+"use client"
+
+import { useState } from "react"
+
+// 盡量只把「需要互動的部分」標記為 Client Component
+// 錯誤：把整個頁面都標記為 "use client"
+// 正確：只把按鈕、表單、dropdown 等互動元素標記
+export function DeleteButton({ orderId }: { orderId: string }) {
+  const [loading, setLoading] = useState(false)
+  const handleDelete = async () => {
+    setLoading(true)
+    await fetch(`/api/v1/orders/${orderId}`, { method: "DELETE" })
+    setLoading(false)
+  }
+  return <button onClick={handleDelete} disabled={loading}>刪除</button>
+}
+
+// ── 3. SSG（靜態生成，適合 Blog/文件）────────────────────────
+// app/blog/[slug]/page.tsx
+export async function generateStaticParams() {
+  const posts = await getAllPosts()
+  return posts.map(p => ({ slug: p.slug }))
+  // 建置時生成所有靜態頁面，CDN 直接服務
+}
+
+export default async function BlogPost({ params }: { params: { slug: string } }) {
+  const post = await getPostBySlug(params.slug)
+  return <article>{post.content}</article>
+}
+
+// ── 4. ISR（增量靜態再生，適合產品頁/新聞）──────────────────
+// 在 Server Component 裡加入 revalidate
+export const revalidate = 3600  // 每小時重新生成
+// 或動態：export const revalidate = 0（每次都重新）
+
+// ── 5. Streaming（大型頁面逐步載入）───────────────────────────
+// app/reports/page.tsx
+import { Suspense } from "react"
+
+export default function ReportsPage() {
+  return (
+    <div>
+      <h1>報表</h1>
+      {/* 慢的部分用 Suspense 包住，先顯示 skeleton */}
+      <Suspense fallback={<ReportSkeleton />}>
+        <SlowReport />   {/* 這個組件在後台慢慢載入 */}
+      </Suspense>
+    </div>
+  )
+}
+```
+
+### BYTE 的渲染策略決策清單
+
+開始寫每個頁面前，必須回答這些問題：
+
+```
+□ 這個頁面需要 SEO？（是→Server Component / SSG / ISR）
+□ 這個頁面的數據是個人化的？（是→Server Component + session）
+□ 這個頁面有互動（點擊/表單）？
+  → 盡量用 Server Component + 小型 Client Component 子元件
+□ 數據多久更新一次？
+  → 幾乎不變 → SSG
+  → 幾小時 → ISR（revalidate = 3600）
+  → 幾分鐘 → Server Component（每次請求重新讀取）
+  → 即時 → Client Component + SWR/React Query
+
+□ 這個頁面的 JS Bundle 大小？
+  → Server Component 不增加 client JS
+  → Client Component 的 import 都進 Bundle
+  → 大型庫（Chart.js / Editor）必須用 dynamic import
+```
+
+### 常見錯誤和正確做法
+
+```typescript
+// ❌ 錯誤：整個頁面標記為 "use client"（失去 SSR 優勢）
+"use client"
+export default function Page() {
+  const { data } = useQuery(...)  // 只需要這個是 client
+  return <div>...</div>
+}
+
+// ✅ 正確：只有需要互動的部分是 Client Component
+// Server Component（無標記）
+export default async function Page() {
+  const data = await db.getData()
+  return (
+    <div>
+      <StaticContent data={data} />     // Server Component
+      <InteractiveWidget />             // Client Component（另一個檔案）
+    </div>
+  )
+}
+
+// ❌ 錯誤：在 Server Component 裡用 useState
+export default function Page() {
+  const [count, setCount] = useState(0)  // 編譯錯誤！
+}
+
+// ❌ 錯誤：在 Server Component 裡用 useEffect fetch
+export default function Page() {
+  useEffect(() => {
+    fetch("/api/data").then(...)  // 改成直接 await db.getData()
+  }, [])
+}
+```
+
+---
+
+## P0：Next.js 16 渲染策略決策框架
+
+這是 Next.js App Router 最核心的決策，每個頁面和元件都必須回答：**誰來渲染？在哪裡渲染？什麼時候渲染？**
+
+### 決策樹（必須遵循）
+
+```
+問：這個元件/頁面需要什麼？
+│
+├─ 需要 onClick / useState / useEffect / 瀏覽器 API？
+│   → "use client"（Client Component）
+│
+├─ 需要即時資料（每次請求都要最新）？
+│   → Server Component + fetch（no-store）
+│   → 或 Route Handler + React Query（Client 輪詢）
+│
+├─ 資料幾分鐘內不變（如新聞列表）？
+│   → Server Component + fetch revalidate 60
+│   → 或 ISR：export const revalidate = 60
+│
+├─ 資料幾乎不變（文章內容、產品描述）？
+│   → SSG：export const dynamic = 'force-static'
+│   → 或 generateStaticParams
+│
+└─ 完全靜態（關於頁面、隱私政策）？
+    → 預設 SSG（App Router 自動）
+```
+
+### 五種渲染策略的正確用法
+
+```typescript
+// ════════════════════════════════════════════════════════
+// 1. RSC — React Server Component（預設，最優先考慮）
+// ════════════════════════════════════════════════════════
+// app/products/page.tsx
+// 不加 "use client"，不加 export dynamic = 預設就是 RSC
+
+import { db } from "@/lib/db"
+
+// ✅ 直接在 Server 端存取 DB，不需要 API Route
+export default async function ProductsPage() {
+  const products = await db.product.findMany({
+    where:  { active: true },
+    select: { id: true, name: true, price: true },
+  })
+  // → 只有 HTML 被送到客戶端，沒有額外的 JS bundle
+  return <ProductList products={products} />
+}
+
+// RSC 適合：資料列表、詳情頁、Dashboard（不需要互動的部分）
+// RSC 禁止：useState、useEffect、onClick、window、localStorage
+
+// ════════════════════════════════════════════════════════
+// 2. SSG — 靜態生成（建置時產生，最快）
+// ════════════════════════════════════════════════════════
+// app/blog/[slug]/page.tsx
+
+export async function generateStaticParams() {
+  const posts = await getAllPostSlugs()
+  return posts.map(p => ({ slug: p.slug }))
+}
+
+export const revalidate = false  // 或 export const dynamic = 'force-static'
+
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params   // Next.js 16：params 是 async
+  const post = await getPostBySlug(slug)
+  return <PostContent post={post} />
+}
+
+// SSG 適合：部落格、文件、行銷頁、產品詳情
+
+// ════════════════════════════════════════════════════════
+// 3. ISR — 增量靜態再生（定期更新的靜態頁）
+// ════════════════════════════════════════════════════════
+// app/news/page.tsx
+
+export const revalidate = 3600  // 每小時重新生成
+
+// 或 on-demand revalidation
+// import { revalidatePath } from "next/cache"
+// revalidatePath("/news")  // 在 API Route 或 Server Action 中呼叫
+
+// ISR 適合：新聞列表、商品目錄、定期更新的資料
+
+// ════════════════════════════════════════════════════════
+// 4. SSR — 伺服器端渲染（每次請求都執行）
+// ════════════════════════════════════════════════════════
+// app/dashboard/page.tsx
+
+export const dynamic = "force-dynamic"  // 強制每次請求都重新渲染
+
+// 或在 fetch 中設定
+const data = await fetch("/api/data", {
+  cache: "no-store",  // 等同於 force-dynamic
+})
+
+// SSR 適合：個人化頁面（依用戶不同）、即時資料、購物車
+
+// ════════════════════════════════════════════════════════
+// 5. Client Component + React Query（最靈活的互動方案）
+// ════════════════════════════════════════════════════════
+// components/features/SearchResults.tsx
+"use client"
+import { useQuery } from "@tanstack/react-query"
+
+export function SearchResults({ initialQuery }: { initialQuery: string }) {
+  // 在客戶端發 API 請求（可以在用戶互動後重新請求）
+  const { data, isLoading } = useQuery({
+    queryKey:  ["search", initialQuery],
+    queryFn:   () => api.search(initialQuery),
+    staleTime: 60_000,  // 1 分鐘內不重新請求
+  })
+  if (isLoading) return <SearchSkeleton />
+  return <ResultList results={data?.results ?? []} />
+}
+
+// Client Component 適合：搜尋框、互動表格、地圖、圖表
+```
+
+### 組合模式（Server + Client 混合）
+
+```tsx
+// ✅ 正確：Server Component 傳資料給 Client Component
+// app/dashboard/page.tsx（Server）
+import { StatsWidget } from "@/components/StatsWidget"
+
+export default async function DashboardPage() {
+  // Server 端取資料
+  const stats = await fetchDashboardStats()
+
+  return (
+    <div>
+      {/* 靜態部分直接 render */}
+      <h1>儀表板</h1>
+
+      {/* 需要互動的部分包成 Client Component，傳入初始資料 */}
+      <StatsWidget initialData={stats} />
+
+      {/* 不需要互動的表格直接在 Server 端 render */}
+      <RecentOrdersTable orders={stats.recentOrders} />
+    </div>
+  )
+}
+
+// components/StatsWidget.tsx（Client）
+"use client"
+export function StatsWidget({ initialData }: { initialData: DashboardStats }) {
+  const [timeRange, setTimeRange] = useState("7d")
+
+  // 用戶切換時間範圍時重新請求
+  const { data } = useQuery({
+    queryKey:  ["stats", timeRange],
+    queryFn:   () => api.getStats(timeRange),
+    initialData,  // 先用 Server 傳來的資料，避免 loading flash
+  })
+  // ...
+}
+```
+
+### BYTE 的渲染策略規定
+
+```
+每個新頁面/組件，先問自己這三個問題：
+1. 需要互動嗎？→ 是：Client，否：Server（預設）
+2. 資料多久更新一次？→ 決定 static/ISR/SSR/dynamic
+3. 這個組件需要多少 JS？→ 越少越好（RSC 送零 JS）
+
+❌ 不允許：
+  - 所有頁面都加 "use client"（常見錯誤）
+  - 在 Client Component 直接存取 DB
+  - 不思考渲染策略就開始寫程式碼
+
+✅ 必須：
+  - 新頁面預設嘗試 RSC，確認需要互動才改 Client
+  - 架構文件中說明每個頁面的渲染策略
+```

@@ -891,3 +891,320 @@ function useSSE<T>(url: string, onMessage: (data: T) => void) {
   }, [url])
 }
 ```
+
+---
+
+## P1：Event-Driven Architecture（事件驅動架構）
+
+### 為什麼需要事件驅動
+
+當系統變複雜，服務間直接呼叫會產生緊耦合：
+
+```
+❌ 緊耦合（OrderService 直接呼叫三個服務）：
+OrderService.complete(orderId) {
+  NotificationService.sendEmail(...)    // 如果 Email 掛了，訂單也失敗
+  InventoryService.deduct(...)          // 如果庫存慢了，用戶等待
+  AnalyticsService.track(...)           // 不重要的操作影響主流程
+}
+
+✅ 事件驅動（OrderService 發事件，其他服務自行監聽）：
+OrderService.complete(orderId) {
+  await eventBus.publish("order.completed", { orderId, userId, items })
+  // 完成！EmailService/InventoryService/AnalyticsService 各自監聽處理
+}
+```
+
+### 輕量方案：Upstash QStash（Serverless 友好）
+
+```typescript
+// 安裝：npm install @upstash/qstash
+
+// src/lib/events.ts — 統一的事件發布介面
+import { Client } from "@upstash/qstash"
+
+const qstash = new Client({ token: process.env.QSTASH_TOKEN! })
+
+type DomainEvent =
+  | { type: "order.completed";   payload: { orderId: string; userId: string; total: number } }
+  | { type: "user.registered";   payload: { userId: string; email: string } }
+  | { type: "payment.failed";    payload: { orderId: string; reason: string } }
+
+export async function publishEvent<T extends DomainEvent>(event: T) {
+  // QStash 接收事件後，呼叫對應的 webhook endpoint
+  await qstash.publishJSON({
+    url:     `${process.env.APP_URL}/api/events/${event.type.replace(".", "/")}`,
+    body:    event.payload,
+    retries: 3,                    // 失敗自動重試
+    delay:   event.type === "analytics" ? 60 : 0,  // 分析事件可以延遲
+  })
+}
+
+// 在 OrderService 中使用
+export const OrderService = {
+  async complete(orderId: string) {
+    const order = await db.$transaction(async (tx) => {
+      const o = await tx.order.update({
+        where: { id: orderId },
+        data:  { status: "completed", completedAt: new Date() },
+      })
+      return o
+    })
+
+    // 發布事件（非同步，不阻塞主流程）
+    await publishEvent({
+      type:    "order.completed",
+      payload: { orderId: order.id, userId: order.userId, total: order.total },
+    })
+
+    return order
+  },
+}
+
+// 事件處理器（各自的 webhook endpoint）
+// app/api/events/order/completed/route.ts
+export async function POST(req: Request) {
+  const payload = await req.json()
+
+  // 驗證來源（防止偽造請求）
+  const signature = req.headers.get("upstash-signature")
+  await verifyQStashSignature(signature!, await req.text())
+
+  // 各自處理，互相不影響
+  await Promise.allSettled([
+    EmailService.sendOrderConfirmation(payload),
+    InventoryService.deductStock(payload),
+    AnalyticsService.trackOrderCompleted(payload),
+  ])
+
+  return NextResponse.json({ ok: true })
+}
+```
+
+### 進階：Redis Pub/Sub（低延遲即時事件）
+
+```typescript
+// 用於需要毫秒級反應的場景（聊天、即時通知）
+// 安裝：npm install ioredis
+
+import Redis from "ioredis"
+
+const publisher  = new Redis(process.env.REDIS_URL!)
+const subscriber = new Redis(process.env.REDIS_URL!)
+
+// 發布
+await publisher.publish("chat:room:123", JSON.stringify({
+  userId: "user_1",
+  message: "Hello!",
+  timestamp: Date.now(),
+}))
+
+// 訂閱（在後台 worker 執行）
+subscriber.subscribe("chat:room:123")
+subscriber.on("message", (channel, message) => {
+  const data = JSON.parse(message)
+  // 廣播給 WebSocket 連線的用戶
+  broadcastToRoom(channel.split(":")[2], data)
+})
+```
+
+### 事件設計原則
+
+```typescript
+// ✅ 好的事件設計：
+// 1. 事件名稱用「實體.動作」格式（過去式）
+type GoodEvents =
+  | "order.completed"     // 不是 "complete_order"
+  | "user.registered"     // 不是 "register"
+  | "payment.failed"      // 清楚說明發生了什麼
+
+// 2. Payload 包含足夠資訊，讓接收者不需要再查詢
+type OrderCompletedPayload = {
+  orderId:    string
+  userId:     string       // ← 不要只給 orderId 讓接收者自己查
+  userEmail:  string       // ← Email 服務直接可用，不用再查 User
+  items:      OrderItem[]  // ← 庫存服務直接可用
+  total:      number
+  occurredAt: string       // ← 事件發生時間（ISO 8601）
+}
+
+// 3. 事件必須冪等（重複處理不會出問題）
+// 用 eventId 去重
+async function handleOrderCompleted(eventId: string, payload: OrderCompletedPayload) {
+  const processed = await db.processedEvent.findUnique({ where: { id: eventId } })
+  if (processed) return  // 已處理過，跳過
+
+  await doTheActualWork(payload)
+  await db.processedEvent.create({ data: { id: eventId } })
+}
+```
+
+---
+
+## P1：Event-Driven Architecture（事件驅動架構）
+
+### 為什麼需要事件驅動？
+
+```
+❌ 直接呼叫（高耦合，難擴充）：
+  OrderService.complete(orderId)
+    → 呼叫 NotificationService.send(...)   // OrderService 知道 NotificationService
+    → 呼叫 InventoryService.decrement(...) // 任何一個失敗都影響下訂單
+    → 呼叫 AnalyticsService.track(...)     // 加新服務要改 OrderService
+
+✅ 事件驅動（低耦合，易擴充）：
+  OrderService.complete(orderId)
+    → 發佈事件：order.completed { orderId, userId, items }
+    ← NotificationService 監聽，自行處理
+    ← InventoryService 監聽，自行處理
+    ← AnalyticsService 監聽，自行處理
+    // 加新服務：只要加一個新的 listener，不動 OrderService
+```
+
+### 輕量方案：內部事件（同一服務內）
+
+```typescript
+// src/lib/event-bus.ts — 輕量事件總線（不需要外部服務）
+import EventEmitter from "events"
+
+type DomainEvent =
+  | { type: "order.completed";    payload: { orderId: string; userId: string; total: number } }
+  | { type: "user.registered";    payload: { userId: string; email: string } }
+  | { type: "payment.failed";     payload: { orderId: string; reason: string } }
+  | { type: "subscription.expired"; payload: { userId: string } }
+
+class DomainEventBus {
+  private emitter = new EventEmitter()
+
+  publish<T extends DomainEvent>(event: T): void {
+    console.log(`[Event] ${event.type}`, event.payload)
+    this.emitter.emit(event.type, event.payload)
+
+    // 同時寫入 event store（可選，用於審計和重播）
+    this.persistEvent(event).catch(err =>
+      console.error("[Event] 持久化失敗", err)
+    )
+  }
+
+  subscribe<T extends DomainEvent["type"]>(
+    eventType: T,
+    handler: (payload: Extract<DomainEvent, { type: T }>["payload"]) => Promise<void>
+  ): void {
+    this.emitter.on(eventType, async (payload) => {
+      try {
+        await handler(payload as any)
+      } catch (err) {
+        console.error(`[Event] Handler 失敗 ${eventType}:`, err)
+        // 可以加入 Dead Letter Queue 邏輯
+      }
+    })
+  }
+
+  private async persistEvent(event: DomainEvent): Promise<void> {
+    await db.domainEvent.create({
+      data: {
+        type:      event.type,
+        payload:   JSON.stringify(event.payload),
+        createdAt: new Date(),
+      },
+    })
+  }
+}
+
+export const eventBus = new DomainEventBus()
+
+// prisma/schema.prisma 加入：
+// model DomainEvent {
+//   id        String   @id @default(cuid())
+//   type      String
+//   payload   String   @db.Text
+//   createdAt DateTime @default(now())
+//   @@index([type, createdAt])
+// }
+```
+
+### 事件監聽器的組織方式
+
+```typescript
+// src/listeners/index.ts — 集中註冊所有監聽器（App 啟動時執行）
+import { eventBus } from "@/lib/event-bus"
+import { sendWelcomeEmail, sendOrderConfirmation } from "@/services/notification.service"
+import { decrementInventory } from "@/services/inventory.service"
+import { trackPurchase } from "@/services/analytics.service"
+
+export function registerEventListeners() {
+  // 訂單完成
+  eventBus.subscribe("order.completed", async ({ orderId, userId, total }) => {
+    await sendOrderConfirmation(orderId)
+  })
+
+  eventBus.subscribe("order.completed", async ({ orderId }) => {
+    await decrementInventory(orderId)
+  })
+
+  // 用戶注冊
+  eventBus.subscribe("user.registered", async ({ userId, email }) => {
+    await sendWelcomeEmail(email)
+  })
+}
+
+// src/app/api/orders/route.ts（使用事件）
+export async function POST(req: Request) {
+  const order = await OrderService.create(validatedData)
+
+  // 發佈事件，不直接呼叫其他服務
+  eventBus.publish({
+    type:    "order.completed",
+    payload: { orderId: order.id, userId: order.userId, total: order.total },
+  })
+
+  return NextResponse.json(order, { status: 201 })
+}
+```
+
+### 重量方案：外部 Message Queue（高流量時）
+
+```typescript
+// 使用 Upstash QStash（Serverless 友善的 Queue）
+import { Client } from "@upstash/qstash"
+
+const qstash = new Client({ token: process.env.QSTASH_TOKEN! })
+
+// 發佈到 Queue（非同步，解耦服務）
+async function publishToQueue(event: DomainEvent) {
+  await qstash.publishJSON({
+    url:  `${process.env.NEXT_PUBLIC_URL}/api/webhooks/events`,
+    body: event,
+    // 重試設定
+    retries: 3,
+    // 延遲執行（排程任務）
+    // delay: "1h"
+  })
+}
+
+// 接收端：app/api/webhooks/events/route.ts
+export async function POST(req: Request) {
+  // 驗證 QStash 簽章
+  const isValid = await verifyQStashSignature(req)
+  if (!isValid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const event: DomainEvent = await req.json()
+  await processEvent(event)
+  return NextResponse.json({ processed: true })
+}
+```
+
+### 適用場景決策
+
+```
+內部事件總線（EventEmitter）：
+  ✓ 同一個服務的不同模組解耦
+  ✓ 不需要跨服務通訊
+  ✓ 可以接受少量事件遺失（非關鍵業務）
+
+外部 Queue（QStash/SQS/RabbitMQ）：
+  ✓ 跨服務通訊
+  ✓ 需要保證交付（零丟失）
+  ✓ 高流量（每秒 1000+ 事件）
+  ✓ 需要重試和 Dead Letter Queue
+```
