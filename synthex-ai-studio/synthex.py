@@ -651,6 +651,112 @@ if __name__ == "__main__":
 
 # ── 弱項補強：新命令 ──────────────────────────────────────────
 
+
+# ══════════════════════════════════════════════════════════
+#  Project Brain 命令群
+# ══════════════════════════════════════════════════════════
+
+def cmd_brain(args):
+    """Project Brain — 知識積累主命令（分派子命令）"""
+    subcmd = getattr(args, "subcmd", None)
+    if subcmd == "init":
+        cmd_brain_init(args)
+    elif subcmd == "scan":
+        cmd_brain_scan(args)
+    elif subcmd == "context":
+        cmd_brain_context(args)
+    elif subcmd == "learn":
+        cmd_brain_learn(args)
+    elif subcmd == "status":
+        cmd_brain_status(args)
+    elif subcmd == "export":
+        cmd_brain_export(args)
+    elif subcmd == "add":
+        cmd_brain_add(args)
+    else:
+        print("用法：synthex brain <init|scan|context|learn|status|export|add>")
+
+
+def cmd_brain_init(args):
+    """初始化 Project Brain（新專案）"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    brain   = ProjectBrain(workdir)
+    name    = getattr(args, "name", None) or ""
+    result  = brain.init(project_name=name)
+    print(result)
+
+
+def cmd_brain_scan(args):
+    """考古掃描（舊專案重建知識圖譜）"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    print(f"\n🔍 開始考古掃描：{workdir}")
+    print("  這可能需要幾分鐘，取決於 git 歷史大小...")
+    brain  = ProjectBrain(workdir)
+    report = brain.scan(verbose=True)
+    # 儲存報告
+    report_path = f"{workdir}/.brain/SCAN_REPORT.md"
+    print(f"\n📄 考古報告已儲存：{report_path}")
+    print(report[:1000])
+
+
+def cmd_brain_context(args):
+    """為指定任務生成 Context 注入"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    task    = " ".join(args.task)
+    file    = getattr(args, "file", None) or ""
+    brain   = ProjectBrain(workdir)
+    ctx     = brain.get_context(task, file)
+    if ctx:
+        print(ctx)
+    else:
+        print("（知識庫為空，請先執行 synthex brain init 或 scan）")
+
+
+def cmd_brain_learn(args):
+    """手動觸發從最近 commit 學習"""
+    from core.brain import ProjectBrain
+    workdir     = get_workdir(getattr(args, "workdir", None))
+    commit_hash = getattr(args, "commit", "HEAD")
+    brain       = ProjectBrain(workdir)
+    n           = brain.learn_from_commit(commit_hash)
+    print(f"✓ 從 {commit_hash} 學習了 {n} 個知識片段")
+
+
+def cmd_brain_status(args):
+    """查看知識庫狀態"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    brain   = ProjectBrain(workdir)
+    print(brain.status())
+
+
+def cmd_brain_export(args):
+    """匯出知識圖譜（Mermaid 格式）"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    brain   = ProjectBrain(workdir)
+    mermaid = brain.export_mermaid()
+    out = f"{workdir}/.brain/graph.md"
+    open(out, "w").write(f"```mermaid\n{mermaid}\n```")
+    print(f"✓ 知識圖譜已匯出：{out}")
+    print(mermaid[:500])
+
+
+def cmd_brain_add(args):
+    """手動加入知識片段"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    brain   = ProjectBrain(workdir)
+    title   = " ".join(args.title)
+    content = getattr(args, "content", "") or ""
+    kind    = getattr(args, "kind", "Decision") or "Decision"
+    tags    = getattr(args, "tags", []) or []
+    node_id = brain.add_knowledge(title, content, kind, tags)
+    print(f"✓ 知識已加入：{node_id}")
+
 def cmd_init(args):
     """
     init — 智能專案初始化
