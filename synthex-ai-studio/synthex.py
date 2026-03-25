@@ -577,10 +577,10 @@ def main():
     # 網頁開發命令
     p=mkp("discover"); p.add_argument("idea", nargs="+")
     p=mkp("ship");     p.add_argument("requirement", nargs="+")
-                          ; p.add_argument("--budget", type=float, default=5.0,
-                                           help="API 費用預算上限 USD（預設 $5.0）")
-                          ; p.add_argument("--no-resume", action="store_true",
-                                           help="不使用斷點續跑，從頭開始")
+    p.add_argument("--budget",    type=float, default=5.0,
+                   help="API 費用預算上限 USD（預設 $5.0）")
+    p.add_argument("--no-resume", action="store_true",
+                   help="不使用斷點續跑，從頭開始")
     p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
     p=mkp("feature");  p.add_argument("description", nargs="+")
     p=mkp("fixbug");   p.add_argument("description", nargs="+")
@@ -589,12 +589,12 @@ def main():
     # 新增弱項補強命令
     p=mkp("retro");       p.add_argument("--since", default="7 days ago")
     p=mkp("qa-browser");  p.add_argument("url", nargs="?", default=None)
-                          ; p.add_argument("--routes", nargs="+")
-                          ; p.add_argument("--headed", action="store_true",
+    p.add_argument("--routes", nargs="+")
+    p.add_argument("--headed", action="store_true",
                                            help="顯示瀏覽器視窗（非無頭模式）")
     p=mkp("investigate"); p.add_argument("description", nargs="+")
-                          ; p.add_argument("--url", default="http://localhost:3000")
-                          ; p.add_argument("--headed", action="store_true")
+    p.add_argument("--url", default="http://localhost:3000")
+    p.add_argument("--headed", action="store_true")
 
     args = parser.parse_args()
     if args.command is None or args.command == "help":
@@ -850,10 +850,10 @@ def main():
     # 規劃流水線
     p=mkp("discover"); p.add_argument("idea", nargs="+")
     p=mkp("ship");     p.add_argument("requirement", nargs="+")
-                          ; p.add_argument("--budget", type=float, default=5.0,
-                                           help="API 費用預算上限 USD（預設 $5.0）")
-                          ; p.add_argument("--no-resume", action="store_true",
-                                           help="不使用斷點續跑，從頭開始")
+    p.add_argument("--budget",    type=float, default=5.0,
+                   help="API 費用預算上限 USD（預設 $5.0）")
+    p.add_argument("--no-resume", action="store_true",
+                   help="不使用斷點續跑，從頭開始")
     p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
     p=mkp("feature");  p.add_argument("description", nargs="+")
     p=mkp("fixbug");   p.add_argument("description", nargs="+")
@@ -862,20 +862,20 @@ def main():
     # 弱項補強第一批
     p=mkp("retro");       p.add_argument("--since", default="7 days ago")
     p=mkp("qa-browser");  p.add_argument("url", nargs="?", default=None)
-                          ; p.add_argument("--routes", nargs="+")
-                          ; p.add_argument("--headed", action="store_true")
+    p.add_argument("--routes", nargs="+")
+    p.add_argument("--headed", action="store_true")
     p=mkp("investigate"); p.add_argument("description", nargs="+")
-                          ; p.add_argument("--url", default="http://localhost:3000")
-                          ; p.add_argument("--headed", action="store_true")
+    p.add_argument("--url", default="http://localhost:3000")
+    p.add_argument("--headed", action="store_true")
 
     # 弱項補強第二批（本次新增）
     mkp("init")
     p=mkp("deploy");      p.add_argument("--target", default="vercel",
                                           choices=["vercel","railway","manual"])
-                          ; p.add_argument("--skip-browser", action="store_true")
-                          ; p.add_argument("--url", default=None)
+    p.add_argument("--skip-browser", action="store_true")
+    p.add_argument("--url", default=None)
     p=mkp("vitals");      p.add_argument("url", nargs="?", default="http://localhost:3000")
-                          ; p.add_argument("--runs", type=int, default=3)
+    p.add_argument("--runs", type=int, default=3)
     p=mkp("cross-device"); p.add_argument("url", nargs="?", default="http://localhost:3000")
 
     args = parser.parse_args()

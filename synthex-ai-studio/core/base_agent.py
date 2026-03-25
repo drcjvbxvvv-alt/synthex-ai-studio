@@ -556,12 +556,15 @@ class BaseAgent:
                         "type":          "enabled",
                         "budget_tokens": thinking_budget,
                     }
-                    # Extended Thinking 需要 claude-sonnet-4-5 以上
                     if params["model"] == "claude-haiku-4-5":
                         params["model"] = "claude-sonnet-4-5"
                 return self.client.messages.create(**params)
 
-            resp = _api_call_with_retry(_call, agent_name=self.name)
+            # P0-3：Circuit Breaker 保護 chat()
+            resp = _circuit_breaker.call(
+                lambda: _api_call_with_retry(_call, agent_name=self.name),
+                agent=self.name
+            )
 
             if use_thinking:
                 self._print_system(f"🧠 Extended Thinking 啟用（budget: {thinking_budget} tokens）")

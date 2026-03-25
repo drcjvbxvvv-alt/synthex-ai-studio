@@ -47,6 +47,13 @@
 | SIGMA | `agents/SIGMA/SKILL.md` | Phase 5 可行性評估（成本、風險矩陣）|
 | KERN  | `agents/KERN/SKILL.md`  | /perf 效能分析（Flamegraph、慢查詢）|
 | RIFT  | `agents/RIFT/SKILL.md`  | 行動端（React Native + Expo）|
+| QUANT | `agents/QUANT/SKILL.md` | A/B 測試設計、指標框架、統計分析 |
+| ATLAS | `agents/ATLAS/SKILL.md` | ETL Pipeline、dbt 建模、資料品質 |
+| VISTA | `agents/VISTA/SKILL.md` | Sprint 規劃、Roadmap、ICE 框架 |
+| FLUX  | `agents/FLUX/SKILL.md`  | 全端整合、第三方服務、PoC 快速原型 |
+| MEMO  | `agents/MEMO/SKILL.md`  | GDPR、台灣個資法、隱私工程 |
+| PULSE | `agents/PULSE/SKILL.md` | SEO、GTM、AARRR 成長框架 |
+| BRIDGE| `agents/BRIDGE/SKILL.md`| MEDDIC 銷售、提案設計、合作框架 |
 | NOVA  | `agents/NOVA/SKILL.md`  | AI 功能設計（LLM 整合、RAG、Prompt Injection 防護）|
 | RELAY | `agents/RELAY/SKILL.md` | 雲端部署（Vercel、Neon、FinOps）|
 | BOLT  | `agents/BOLT/SKILL.md`  | 韌體實作（MCU/RTOS/Bootloader）|

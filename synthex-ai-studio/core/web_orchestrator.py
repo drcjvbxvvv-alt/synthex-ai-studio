@@ -71,6 +71,38 @@ class DocContext:
             return content[:max_chars] + f"\n\n[... 完整內容見 docs/{name}.md]"
         return content
 
+    def read_summary(self, name: str) -> str:
+        """
+        P2-1：摘要快取 — 讀取文件的摘要版本。
+        首次讀取時產生摘要並快取，後續直接從快取讀取。
+        用於「需要了解但不需要完整細節」的 Phase，節省 Token。
+
+        完整文件適合：主要使用者（ECHO→PRD，NEXUS→架構）
+        摘要版本適合：參考用途（TRACE 需要知道 PRD 的 AC，但不需要全部）
+        """
+        summary_path = self.docs / f"{name}_SUMMARY.md"
+        if summary_path.exists():
+            return summary_path.read_text(encoding="utf-8")
+
+        # 摘要不存在時，用前 800 字 + 結構性提取
+        full = self.read(name)
+        if len(full) <= 1000:
+            return full  # 短文件直接返回
+
+        # 提取重要段落（標題 + 前幾行）
+        lines = full.split("\n")
+        summary_lines = []
+        for line in lines:
+            # 保留標題行
+            if line.startswith("#") or line.startswith("- ") or line.startswith("□"):
+                summary_lines.append(line)
+            if len("\n".join(summary_lines)) > 1200:
+                break
+
+        summary = f"# {name} 摘要（完整版：docs/{name}.md）\n\n" + "\n".join(summary_lines)
+        summary_path.write_text(summary, encoding="utf-8")
+        return summary
+
 
 # ══════════════════════════════════════════════════════════════
 #  P0-2：Self-Critique Loop（自我評估品質閉環）
@@ -369,16 +401,46 @@ SUMMARY: [一句話評語]
 TOP_ISSUE: [最重要的一個問題，或「無」]
 """)
 
-        import re
-        score_m = re.search(r'SCORE:\s*(\d+)', review)
-        gate_m  = re.search(r'GATE:\s*(PASS|FAIL)', review, re.IGNORECASE)
-        sum_m   = re.search(r'SUMMARY:\s*(.+)', review)
-        issue_m = re.search(r'TOP_ISSUE:\s*(.+)', review)
+        import re, json as _json
 
-        score   = int(score_m.group(1)) if score_m else 5
-        passed  = (gate_m.group(1).upper() == "PASS") if gate_m else score >= threshold
-        summary = sum_m.group(1).strip() if sum_m else ""
-        issue   = issue_m.group(1).strip() if issue_m else ""
+        # P2-2：多層次解析策略（Structured Output → 正規表達式 → 關鍵字）
+        score   = 5
+        passed  = False
+        summary = ""
+        issue   = ""
+
+        # 策略 1：嘗試解析 JSON 格式
+        try:
+            json_match = re.search(r'\{[^{}]+\}', review, re.DOTALL)
+            if json_match:
+                parsed = _json.loads(json_match.group())
+                score   = int(parsed.get("score", parsed.get("SCORE", 5)))
+                gate_val = str(parsed.get("gate", parsed.get("GATE", ""))).upper()
+                passed  = gate_val == "PASS" or score >= threshold
+                summary = parsed.get("summary", parsed.get("SUMMARY", ""))
+                issue   = parsed.get("top_issue", parsed.get("TOP_ISSUE", ""))
+        except Exception:
+            pass
+
+        # 策略 2：正規表達式（如果 JSON 解析失敗）
+        if not summary:
+            score_m  = re.search(r'SCORE[:\s]+([1-9]|10)', review, re.IGNORECASE)
+            gate_m   = re.search(r'GATE[:\s]+(PASS|FAIL)', review, re.IGNORECASE)
+            sum_m    = re.search(r'SUMMARY[:\s]+(.+?)(?:\n|$)', review, re.IGNORECASE)
+            issue_m  = re.search(r'TOP_ISSUE[:\s]+(.+?)(?:\n|$)', review, re.IGNORECASE)
+            score    = int(score_m.group(1)) if score_m else 5
+            passed   = (gate_m.group(1).upper() == "PASS") if gate_m else score >= threshold
+            summary  = sum_m.group(1).strip() if sum_m else ""
+            issue    = issue_m.group(1).strip() if issue_m else ""
+
+        # 策略 3：關鍵字偵測（最後手段）
+        if not summary:
+            if any(w in review.lower() for w in ["通過", "pass", "良好", "符合"]):
+                passed, score = True, max(score, threshold)
+                summary = "自動偵測：通過"
+            elif any(w in review.lower() for w in ["失敗", "fail", "問題", "缺少"]):
+                passed, score = False, min(score, threshold - 1)
+                summary = "自動偵測：需改善"
 
         self._scores[doc_name] = score
         color = GREEN if passed else YELLOW
@@ -896,7 +958,10 @@ class WebOrchestrator:
         print(f"{'═'*62}{RESET}")
 
         # ── Phase 1：ARIA 任務確認 ─────────────────────────────
-        if resume and ckpt.is_done(1):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 1 not in active_phases and not ckpt.is_done(1):
+            _ok(f"Phase 1（ARIA 任務確認）已被動態路由跳過")
+        elif resume and ckpt.is_done(1):
             _ok("Phase 1 已完成，跳過")
         else:
             _phase(1, "ARIA — 任務接收與範疇確認")
@@ -917,7 +982,10 @@ class WebOrchestrator:
             ckpt.mark_done(1)
 
         # ── Phase 2：ECHO 寫 PRD ───────────────────────────────
-        if resume and ckpt.is_done(2):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 2 not in active_phases and not ckpt.is_done(2):
+            _ok(f"Phase 2（ECHO PRD）已被動態路由跳過")
+        elif resume and ckpt.is_done(2):
             _ok("Phase 2 已完成，跳過")
         else:
             _phase(2, "ECHO — 需求分析與 PRD")
@@ -933,21 +1001,32 @@ ARIA 的範疇確認：
 請嚴格按照你的 Phase 2 格式產出完整 PRD。
 每個欄位都必須填寫，驗收標準（AC）要具體可驗證。
 """)
-            # P0-2：Self-Critique — LUMI 評審 PRD 品質
-            prd = critique.critique_loop(
-                "PRD", ctx,
-                generate_fn=lambda: prd,
-                improve_prompt_fn=lambda fb: f"""
-LUMI 對 PRD 的評審反饋：
+            # P0-2 + P1-2：Self-Critique — LUMI 評審 PRD 品質
+            # P1-2 修復：不用 lambda 捕獲外部變數，改用 Orchestrator 重新呼叫 ECHO
+            _prd_ref = [prd]   # 用 list 讓內層函數可以修改
+
+            def _prd_generate():
+                return _prd_ref[0]
+
+            def _prd_improve(fb: str) -> str:
+                improved = self._chat("ECHO", f"""
+LUMI 的評審反饋指出以下問題：
 {fb}
 
-請根據以上反饋改善 PRD，特別注意：
+請根據以上反饋修訂 PRD，特別注意：
 1. 所有 P0 功能的 AC 改為 GIVEN-WHEN-THEN 格式
 2. 補上邊界條件（空狀態、錯誤狀態）
 3. 補上遺漏的「不在範疇」說明
 
-輸出完整的修訂版 PRD。
-"""
+輸出完整的修訂版 PRD（不要說明，直接輸出）。
+""")
+                _prd_ref[0] = improved   # 更新參考
+                return ""   # 空字串表示已由 improve_fn 直接產生
+
+            prd = critique.critique_loop(
+                "PRD", ctx,
+                generate_fn=_prd_generate,
+                improve_prompt_fn=_prd_improve,
             )
             # P1-3：Generator-Critic 評審 PRD
             if not gc.gate("PRD", ctx) and not self.auto_confirm:
@@ -956,7 +1035,10 @@ LUMI 對 PRD 的評審反饋：
             ckpt.mark_done(2)
 
         # ── Phase 3：LUMI 產品驗證 ────────────────────────────
-        if resume and ckpt.is_done(3):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 3 not in active_phases and not ckpt.is_done(3):
+            _ok(f"Phase 3（LUMI 產品驗證）已被動態路由跳過")
+        elif resume and ckpt.is_done(3):
             _ok("Phase 3 已完成，跳過")
         else:
             _phase(3, "LUMI — 產品驗證")
@@ -988,7 +1070,10 @@ LUMI 的驗證報告指出以下問題：
             ckpt.mark_done(3)
 
         # ── Phase 4：NEXUS 技術架構 ───────────────────────────
-        if resume and ckpt.is_done(4):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 4 not in active_phases and not ckpt.is_done(4):
+            _ok(f"Phase 4（NEXUS 技術架構）已被動態路由跳過")
+        elif resume and ckpt.is_done(4):
             _ok("Phase 4 已完成，跳過")
         else:
             _phase(4, "NEXUS — 技術架構設計")
@@ -1029,7 +1114,10 @@ P2 要求：
             ckpt.mark_done(4)
 
         # ── Phase 5：SIGMA 可行性評估 ─────────────────────────
-        if resume and ckpt.is_done(5):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 5 not in active_phases and not ckpt.is_done(5):
+            _ok(f"Phase 5（SIGMA 可行性評估）已被動態路由跳過")
+        elif resume and ckpt.is_done(5):
             _ok("Phase 5 已完成，跳過")
         else:
             _phase(5, "SIGMA — 可行性評估")
@@ -1053,7 +1141,10 @@ P2 要求：
             ckpt.mark_done(5)
 
         # ── Phase 6：FORGE 環境準備（含可觀測性）────────────────
-        if resume and ckpt.is_done(6):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 6 not in active_phases and not ckpt.is_done(6):
+            _ok(f"Phase 6（FORGE 環境準備）已被動態路由跳過")
+        elif resume and ckpt.is_done(6):
             _ok("Phase 6 已完成，跳過")
         else:
             _phase(6, "FORGE — 環境準備")
@@ -1078,7 +1169,10 @@ P2 要求：
             ckpt.mark_done(6)
 
         # ── Phase 7：SPARK UX 設計 ────────────────────────────
-        if resume and ckpt.is_done(7):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 7 not in active_phases and not ckpt.is_done(7):
+            _ok(f"Phase 7（SPARK UX 設計）已被動態路由跳過")
+        elif resume and ckpt.is_done(7):
             _ok("Phase 7 已完成，跳過")
         else:
             _phase(7, "SPARK — UX 設計")
@@ -1110,7 +1204,10 @@ P2 要求：
             ckpt.mark_done(7)
 
         # ── Phase 8：PRISM UI 設計系統 ─────────────────────────
-        if resume and ckpt.is_done(8):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 8 not in active_phases and not ckpt.is_done(8):
+            _ok(f"Phase 8（PRISM UI 設計系統）已被動態路由跳過")
+        elif resume and ckpt.is_done(8):
             _ok("Phase 8 已完成，跳過")
         else:
             _phase(8, "PRISM — UI 設計系統")
@@ -1134,6 +1231,11 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
             ckpt.mark_done(8)
 
         # ── Phase 9 + 10：BYTE 前端 + STACK 後端（並行執行）─────
+        # P0-1：動態路由 Phase 9+10 的外層跳過
+        if 9 not in active_phases and 10 not in active_phases and            not (ckpt.is_done(9) and ckpt.is_done(10)):
+            _ok("Phase 9+10（BYTE+STACK 並行實作）已被動態路由跳過")
+        else:
+            pass  # 繼續執行並行實作
         both_done = (resume and ckpt.is_done(9) and ckpt.is_done(10))
         if both_done:
             _ok("Phase 7 + 8 已完成，跳過")
@@ -1172,6 +1274,8 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
 實作順序：型別定義 → API 客戶端 → 組件 → 頁面 → 路由
 """)
                 ctx.write("FRONTEND_IMPL", result, "前端實作報告")
+                # P1-1：GeneratorCritic 評審前端實作
+                gc.gate("FRONTEND_IMPL", ctx)
                 ckpt.mark_done(9)
                 return result
 
@@ -1199,6 +1303,8 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
 實作順序：資料模型 → Repository → Service → API 路由 → 中間件
 """)
                 ctx.write("BACKEND_IMPL", result, "後端實作報告")
+                # P1-1：GeneratorCritic 評審後端實作
+                gc.gate("BACKEND_IMPL", ctx)
                 ckpt.mark_done(10)
                 return result
 
@@ -1213,7 +1319,10 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
             results["phase8_backend"]  = backend
 
         # ── Phase 11：PROBE 策略 + TRACE 執行 ───────────────────
-        if resume and ckpt.is_done(11):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 11 not in active_phases and not ckpt.is_done(11):
+            _ok(f"Phase 11（PROBE+TRACE 測試）已被動態路由跳過")
+        elif resume and ckpt.is_done(11):
             _ok("Phase 9 已完成，跳過")
         else:
             _phase(9, "PROBE + TRACE — 完整測試")
@@ -1259,11 +1368,16 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
 如果有測試失敗：分析原因 → 修復程式碼或測試 → 重跑 → 確認全綠
 """)
             ctx.write("TEST_RESULTS", test_result, "測試結果")
+            # P1-1：GeneratorCritic 評審測試品質
+            gc.gate("TEST_RESULTS", ctx)
             results["phase9_tests"] = test_result
             ckpt.mark_done(11)
 
         # ── Phase 12：SHIELD 安全審查（含自動化掃描）─────────
-        if resume and ckpt.is_done(12):
+        # P1-4 動態路由：跳過不在 active_phases 的 Phase
+        if 12 not in active_phases and not ckpt.is_done(12):
+            _ok(f"Phase 12（SHIELD 安全審查）已被動態路由跳過")
+        elif resume and ckpt.is_done(12):
             _ok("Phase 12 已完成，跳過")
         else:
             _phase(12, "SHIELD — 安全審查與修復")
@@ -1287,6 +1401,9 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
 輸出安全審查報告（按你的 Phase 10 格式）。
 """)
             ctx.write("SECURITY", security, "安全審查報告")
+            # P1-1：GeneratorCritic 評審安全審查（最高標準 9/10）
+            if not gc.gate("SECURITY", ctx):
+                _warn("安全審查品質未達標（9/10），建議重新執行 Phase 12")
             results["phase10_security"] = security
             ckpt.mark_done(12)
 

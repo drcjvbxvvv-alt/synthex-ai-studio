@@ -1208,3 +1208,242 @@ export async function POST(req: Request) {
   ✓ 高流量（每秒 1000+ 事件）
   ✓ 需要重試和 Dead Letter Queue
 ```
+
+---
+
+## P1：tRPC 型別安全 API（前後端型別完全共享）
+
+tRPC 讓前後端共享完整的 TypeScript 型別，從根本消除 API 介面不一致的問題。
+
+### 為什麼選 tRPC
+
+```
+REST API 的問題：
+  後端：POST /api/v1/users → 回傳 { id: string, name: string }
+  前端：await fetch("/api/v1/users") → 型別是 any，要手動寫
+  結果：後端改了 name → firstName，前端沒有報錯，執行時才崩潰
+
+tRPC 的解法：
+  後端定義 router → 前端直接 import 型別
+  後端改了欄位 → 前端在編譯時立刻報錯，不用等執行
+```
+
+### 安裝
+
+```bash
+npm install @trpc/server @trpc/client @trpc/react-query @tanstack/react-query zod
+```
+
+### 後端設定（完整）
+
+```typescript
+// src/server/trpc.ts — tRPC 核心設定
+import { initTRPC, TRPCError } from "@trpc/server"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth"
+import superjson from "superjson"
+import { ZodError } from "zod"
+
+// Context：每個請求的共享資料
+export async function createContext(opts: { req: Request }) {
+  const session = await getServerSession(authOptions)
+  return { session, db }
+}
+
+type Context = Awaited<ReturnType<typeof createContext>>
+
+const t = initTRPC.context<Context>().create({
+  transformer: superjson,      // 支援 Date、Map、Set 等型別
+  errorFormatter({ shape, error }) {
+    return {
+      ...shape,
+      data: {
+        ...shape.data,
+        zodError: error.cause instanceof ZodError
+          ? error.cause.flatten()
+          : null,
+      },
+    }
+  },
+})
+
+// 中間件：確認登入
+const isAuthed = t.middleware(({ ctx, next }) => {
+  if (!ctx.session?.user) {
+    throw new TRPCError({ code: "UNAUTHORIZED" })
+  }
+  return next({ ctx: { ...ctx, session: ctx.session } })
+})
+
+export const router    = t.router
+export const procedure = t.procedure
+export const protectedProcedure = t.procedure.use(isAuthed)
+```
+
+```typescript
+// src/server/routers/user.ts — User Router
+import { router, protectedProcedure } from "@/server/trpc"
+import { z } from "zod"
+import { TRPCError } from "@trpc/server"
+
+export const userRouter = router({
+  // 取得目前用戶
+  me: protectedProcedure
+    .query(async ({ ctx }) => {
+      const user = await ctx.db.user.findUnique({
+        where:  { id: ctx.session.user.id },
+        select: { id: true, name: true, email: true, role: true },
+      })
+      if (!user) throw new TRPCError({ code: "NOT_FOUND" })
+      return user
+    }),
+
+  // 更新個人資料
+  update: protectedProcedure
+    .input(z.object({
+      name:  z.string().min(1).max(50).optional(),
+      email: z.string().email().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.db.user.update({
+        where: { id: ctx.session.user.id },
+        data:  input,
+      })
+    }),
+
+  // 列出所有用戶（需要管理員）
+  list: protectedProcedure
+    .input(z.object({
+      limit:  z.number().min(1).max(100).default(20),
+      cursor: z.string().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      if (ctx.session.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN" })
+      }
+      const users = await ctx.db.user.findMany({
+        take:   input.limit + 1,
+        cursor: input.cursor ? { id: input.cursor } : undefined,
+        orderBy: { createdAt: "desc" },
+      })
+      const nextCursor = users.length > input.limit
+        ? users.pop()?.id
+        : undefined
+      return { users, nextCursor }
+    }),
+})
+
+// src/server/root.ts — 合併所有 Router
+import { router } from "@/server/trpc"
+import { userRouter  } from "./routers/user"
+import { orderRouter } from "./routers/order"
+
+export const appRouter = router({
+  user:  userRouter,
+  order: orderRouter,
+})
+
+export type AppRouter = typeof appRouter
+```
+
+```typescript
+// app/api/trpc/[trpc]/route.ts — Next.js App Router 整合
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch"
+import { appRouter } from "@/server/root"
+import { createContext } from "@/server/trpc"
+
+const handler = (req: Request) =>
+  fetchRequestHandler({
+    endpoint:   "/api/trpc",
+    req,
+    router:     appRouter,
+    createContext: () => createContext({ req }),
+    onError: ({ error, path }) => {
+      if (error.code === "INTERNAL_SERVER_ERROR") {
+        console.error(`tRPC error on ${path}:`, error)
+      }
+    },
+  })
+
+export { handler as GET, handler as POST }
+```
+
+### 前端使用（完整型別安全）
+
+```typescript
+// src/lib/trpc.ts — 前端 tRPC Client
+import { createTRPCReact } from "@trpc/react-query"
+import type { AppRouter } from "@/server/root"
+
+export const trpc = createTRPCReact<AppRouter>()
+
+// src/app/providers.tsx — 包住整個應用
+"use client"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { trpc } from "@/lib/trpc"
+import { httpBatchLink } from "@trpc/client"
+import superjson from "superjson"
+import { useState } from "react"
+
+export function TRPCProvider({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient())
+  const [trpcClient]  = useState(() =>
+    trpc.createClient({
+      links: [
+        httpBatchLink({
+          url:         "/api/trpc",
+          transformer: superjson,
+        }),
+      ],
+    })
+  )
+  return (
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    </trpc.Provider>
+  )
+}
+
+// 在組件中使用：完全型別安全
+function UserProfile() {
+  // 型別自動推導：user 的型別和後端 me.query() 的回傳完全一致
+  const { data: user, isLoading } = trpc.user.me.useQuery()
+
+  const updateMutation = trpc.user.update.useMutation({
+    onSuccess: () => {
+      trpc.useUtils().user.me.invalidate()  // 讓快取失效
+    },
+  })
+
+  if (isLoading) return <Skeleton />
+  if (!user) return null
+
+  return (
+    <form onSubmit={(e) => {
+      e.preventDefault()
+      updateMutation.mutate({ name: "新名字" })
+    }}>
+      <input defaultValue={user.name} />
+      {/* user.name 的型別是 string，後端改了就這裡也報錯 */}
+      <button type="submit">更新</button>
+    </form>
+  )
+}
+```
+
+### tRPC vs REST 選擇時機
+
+```
+選 tRPC：
+  ✓ Next.js 全端專案，前後端同一個 repo
+  ✓ 後端 API 主要給自己的前端用
+  ✓ 重視型別安全和 DX
+
+選 REST（配合 OpenAPI）：
+  ✓ 需要對外公開 API（第三方整合）
+  ✓ 需要非 TypeScript 的客戶端（iOS App、Android）
+  ✓ 微服務架構（跨服務 API）
+  ✓ 有現有的 REST API 生態系統
+```
