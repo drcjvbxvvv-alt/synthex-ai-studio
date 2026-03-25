@@ -21,6 +21,8 @@ from .graph import KnowledgeGraph
 from .extractor import KnowledgeExtractor
 from .context import ContextEngineer
 from .archaeologist import ProjectArchaeologist
+from .vector_memory  import VectorMemory          # v1.1
+from .temporal_graph import TemporalGraph         # v1.1
 
 
 class ProjectBrain:
@@ -47,6 +49,9 @@ class ProjectBrain:
         self._extractor = None
         self._context   = None
         self._config    = {}
+        # v1.1 新增
+        self._vector    = None   # VectorMemory（Chroma）
+        self._temporal  = None   # TemporalGraph
 
     # ── 屬性懶初始化 ──────────────────────────────────────────────
 
@@ -66,8 +71,23 @@ class ProjectBrain:
     @property
     def context_engineer(self) -> ContextEngineer:
         if self._context is None:
-            self._context = ContextEngineer(self.graph, self.brain_dir)
+            self._context = ContextEngineer(
+                self.graph, self.brain_dir, self.vector_memory
+            )
         return self._context
+
+    @property
+    def vector_memory(self) -> VectorMemory:
+        if self._vector is None:
+            self.brain_dir.mkdir(parents=True, exist_ok=True)
+            self._vector = VectorMemory(self.brain_dir)
+        return self._vector
+
+    @property
+    def temporal_graph(self) -> TemporalGraph:
+        if self._temporal is None:
+            self._temporal = TemporalGraph(self.graph)
+        return self._temporal
 
     # ── 公開 API ──────────────────────────────────────────────────
 
@@ -251,7 +271,7 @@ class ProjectBrain:
     # ── 內部方法 ──────────────────────────────────────────────────
 
     def _store_chunk(self, chunk: dict, meta: dict):
-        """把一個知識片段存入圖譜"""
+        """把一個知識片段存入圖譜，並同步到向量記憶（v1.1）"""
         node_id = self.extractor.make_id(
             chunk["type"], chunk["title"] + chunk["content"]
         )
@@ -261,12 +281,34 @@ class ProjectBrain:
             title     = chunk["title"],
             content   = chunk["content"],
             tags      = chunk.get("tags", []),
-            source_url= meta.get("commit", chunk.get("source","")) ,
+            source_url= meta.get("commit", chunk.get("source", "")),
             author    = meta.get("author", ""),
             meta      = {"confidence": chunk.get("confidence", 0.8)},
         )
 
-        # 記錄貢獻者
+        # v1.1：同步到向量記憶（語義搜尋）
+        self.vector_memory.upsert(
+            node_id    = node_id,
+            content    = chunk["content"],
+            node_type  = chunk["type"],
+            title      = chunk["title"],
+            tags       = chunk.get("tags", []),
+            author     = meta.get("author", ""),
+            created_at = meta.get("date", ""),
+        )
+
+        # v1.1：同步到時序圖譜（帶時間戳的邊）
+        if meta.get("date"):
+            self.temporal_graph.add_temporal_edge(
+                source_id  = node_id,
+                relation   = "CONTRIBUTED_BY",
+                target_id  = meta.get("author", "unknown"),
+                confidence = chunk.get("confidence", 0.8),
+                valid_from = meta.get("date", ""),
+                note       = meta.get("commit", "")[:100],
+            )
+
+        # 記錄貢獻者（知識圖譜節點）
         if meta.get("author"):
             author_id = self.extractor.make_id("person", meta["author"])
             if not self.graph.get_node(author_id):

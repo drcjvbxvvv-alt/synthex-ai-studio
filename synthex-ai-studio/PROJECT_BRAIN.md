@@ -680,11 +680,101 @@ synthex brain context "修改支付邏輯" | grep -i "幂等\|重複\|idempotent
 - ✅ 考古掃描（舊專案）
 - ✅ 動態 Context 組裝
 
-### v1.1（計畫中）
-- [ ] 向量嵌入（pgvector / Chroma）語義搜尋
-- [ ] Graphiti 整合（時序知識圖譜，更精準的時序推理）
-- [ ] Claude Code MCP Server（讓 Claude Code 直接呼叫 Project Brain）
-- [ ] VS Code 擴充套件（在編輯器側欄顯示相關知識）
+### v1.1（已完成）
+
+#### 1. 向量記憶（Chroma 語義搜尋）— `core/brain/vector_memory.py`
+
+取代 FTS5 精確關鍵字比對，改為語義向量搜尋。詢問「支付問題」
+也能找到標題是「Stripe Webhook 重複觸發」的踩坑記錄。
+
+```python
+from core.brain import VectorMemory
+vm = VectorMemory(brain_dir)
+results = vm.search("支付金額計算錯誤", top_k=5)
+# → 回傳語義相近的知識，包含 similarity 分數
+```
+
+安全設計：路徑驗證（只允許 .brain/ 內部）、輸入長度限制、
+匿名遙測關閉（`anonymized_telemetry=False`）、集合上限 50,000 筆。
+不可用時自動降級到 FTS5，主流程不受影響。
+
+---
+
+#### 2. 時序知識圖譜（Graphiti 啟發）— `core/brain/temporal_graph.py`
+
+每條邊帶有 `valid_from`、`valid_until`、`confidence` 和衰減率。
+可以問「三個月前這個組件的依賴是什麼」，或「這條知識現在還可信嗎」。
+
+```python
+from core.brain import TemporalGraph
+tg = TemporalGraph(graph)
+
+# 加入帶時效的邊
+tg.add_temporal_edge("OrderService", "DEPENDS_ON", "PaymentService",
+                     confidence=0.95, valid_from="2024-01-15T09:00:00")
+
+# 時間點查詢（過去三個月的狀態）
+history = tg.at_time("OrderService", "2024-01-15T00:00:00")
+
+# 信心衰減曲線
+timeline = tg.confidence_timeline("OrderService", "PaymentService")
+```
+
+衰減模型：`confidence(t) = c₀ × e^(-λ × days)`。
+因果關係（λ=0.001）幾乎不衰減；引用關係（λ=0.01）衰減較快。
+
+---
+
+#### 3. MCP Server — `core/brain/mcp_server.py`
+
+讓 Claude Code 直接透過 MCP 協議呼叫 Project Brain，
+無需透過命令列。
+
+```json
+{
+  "mcpServers": {
+    "project-brain": {
+      "command": "python",
+      "args": ["-m", "core.brain.mcp_server"],
+      "env": { "BRAIN_WORKDIR": "/your/project" }
+    }
+  }
+}
+```
+
+提供 5 個 MCP Tools：
+- `get_context(task, file)` — 動態 Context 注入
+- `search_knowledge(query, kind, top_k)` — 語義搜尋
+- `impact_analysis(component)` — 衝擊分析
+- `add_knowledge(title, content, kind, tags)` — 手動加入
+- `brain_status()` — 知識庫狀態
+
+安全設計：Rate Limiting（60 RPM）、輸入驗證、workdir 驗證、
+錯誤訊息不洩漏系統路徑。
+
+---
+
+#### 4. VS Code 擴充套件 — `vscode-extension/`
+
+在編輯器側欄即時顯示和當前檔案相關的知識。
+
+```
+vscode-extension/
+├── package.json          ← 擴充套件描述和命令定義
+├── tsconfig.json         ← TypeScript 編譯設定
+├── .vscode/launch.json   ← 除錯設定
+├── icons/brain.svg       ← 側欄圖標
+└── src/extension.ts      ← 主要邏輯（Tree View + 命令）
+```
+
+功能：
+- 側欄 Tree View 顯示相關知識（切換檔案自動更新）
+- 命令：Refresh / 語義搜尋 / 加入知識 / 顯示 Context / 開啟圖譜
+- Debounce 自動刷新（避免頻繁呼叫）
+- 編譯：`cd vscode-extension && npm install && npm run compile`
+
+安全設計：子進程用 argv 陣列（不用 shell）、使用者輸入長度限制
+（200 字）、緩衝大小限制（50KB）、timeout 保護（10s）。
 
 ### v2.0（未來）
 - [ ] 多專案知識共享（跨 repo 的知識圖譜）

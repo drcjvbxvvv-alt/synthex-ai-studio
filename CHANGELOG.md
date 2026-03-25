@@ -1,26 +1,43 @@
 ## [v1.1.0] - 2026-03-25
 
-### 🚀 新增 Project Brain — SYNTHEX 知識積累子系統
+### 🚀 Project Brain v1.1 — 四大子系統與安全性全面升級
 
-這是一項重大的架構升級，旨在解決工程師離職與專案交接造成的知識流失問題。Project Brain 透過自動記錄與結構化，讓 AI 能夠隨時帶著完整的專案記憶進行開發。
+本次更新實作了 Project Brain 路線圖中的四大核心子系統，大幅強化語義搜尋、時序推理能力，並提供 Claude Code 與 VS Code 的深度整合。所有子系統皆導入嚴格的安全防護與邊界限制。
 
-#### 🧠 核心概念與三層次知識模型
+#### 🧠 核心子系統與整合
 
-- **自動知識積累：** 系統能從 Git 提交、PR、Issue 與程式碼中自動擷取知識，並將其轉化為專案資產。
-- **向量記憶（陳述性記憶）：** 用於儲存與搜尋相關的顯性知識片段。
-- **知識圖譜（情節記憶）：** 記錄系統組件、踩坑經驗、業務規則與架構決策之間的因果關係，支援衝擊分析與路徑查詢。
-- **結構化 ADR（程序性記憶）：** 留存技術決策記錄，重現歷史決策過程。
+- **1. VectorMemory 語義記憶 (`core/brain/vector_memory.py`)**
+  - **功能：** 導入 Chroma 1.5.5 向量記憶，使 Context 搜尋從「關鍵字完全匹配」升級為「語義理解」（例如搜尋「支付 bug」能精準命中「Stripe Webhook 觸發異常」的踩坑記錄）。若 Chroma 不可用，系統會自動降級到 FTS5 而不拋出例外。
+  - **安全防護：** 實作路徑遍歷防護（`vector_dir` 嚴格限制於 `.brain/` 內）、控制字元清理、輸入長度上限 8,000 字元、集合上限 50,000 筆（約 200MB），並預設關閉匿名遙測。
 
-#### 🛠 技術架構與實作
+- **2. TemporalGraph 時序知識圖譜 (`core/brain/temporal_graph.py`)**
+  - **功能：** 實作受 Graphiti 啟發的時序知識圖譜。每條關係邊帶有 `valid_from`、`confidence` 和衰減率 `λ`。信心值公式為：$c(t) = c_0 \times e^{-\lambda \times \text{days}}$。
+  - **權重與覆蓋：** 因果關係（`CAUSED_BY`、`SOLVED_BY`）的 $\lambda=0.001$ 幾乎不衰減，確保舊踩坑記錄持續有效；引用關係 $\lambda=0.01$ 衰減較快。矛盾知識不刪除，透過標記 `superseded_by` 保留歷史可審計性。
+  - **安全防護：** 全面使用 SQL 參數化查詢防止注入，且時間戳嚴格驗證 ISO 8601 格式。
 
-- **Knowledge Graph：** 採用無外部依賴的 SQLite + FTS5，提供嵌入式的圖節點儲存與全文搜尋能力。
-- **Knowledge Extractor：** 整合 `claude-sonnet-4-5` API，透過非同步 Git Hook 在背景自動執行知識提取，兼顧語義理解品質與成本預算。
-- **Context Engineer：** 負責在 AI 執行任務前，動態評估預算並依序注入最相關的「踩坑記錄」、「業務規則」與「架構決策」，確保 Context Window 的精準度。
-- **Project Archaeologist：** 針對缺乏文件記錄的舊專案提供「考古」功能，透過掃描目錄結構、Git 歷史與程式碼（如 TODO/FIXME 註解）來自動重建知識圖譜。
+- **3. MCP Server 協議支援 (`core/brain/mcp_server.py`)**
+  - **功能：** 讓 Claude Code 能直接透過 MCP 協議呼叫 Project Brain，無須透過命令列。提供 5 個 Tool（`get_context`、`search_knowledge`、`impact_analysis`、`add_knowledge`、`brain_status`）與 1 個 Resource（`brain://graph/mermaid`）。
+  - **安全防護：** 實作滑動視窗 Rate Limiting（60 RPM）、每個參數獨立的型別與長度驗證、啟動時檢查 `workdir` 必須存在 `.brain/` 目錄，並在錯誤訊息中遮蔽系統絕對路徑。
+  - **配置方式：** 將以下設定加入 Claude Code 的 `~/.claude.json`：
+    ```json
+    {
+      "mcpServers": {
+        "project-brain": {
+          "command": "python",
+          "args": ["-m", "core.brain.mcp_server"],
+          "env": { "BRAIN_WORKDIR": "/your/project" }
+        }
+      }
+    }
+    ```
 
-#### ⌨️ 新增 CLI 指令支援
-
-- 新增 `synthex brain init`：初始化新專案的圖譜與自動學習機制。
-- 新增 `synthex brain scan`：一鍵執行舊專案考古掃描並產出 `SCAN_REPORT.md`。
-- 新增 `synthex brain context "任務描述"`：為 AI 任務動態產生關聯背景知識。
-- 支援狀態查詢 (`status`)、手動知識錄入 (`add`)、從特定 commit 學習 (`learn`) 以及視覺化匯出 Mermaid 圖譜 (`export`)。
+- **4. VS Code Extension 編輯器擴充 (`vscode-extension/`)**
+  - **功能：** 在編輯器側欄即時顯示與當前程式碼相關的歷史知識，並支援切換檔案時的 Debounce 自動更新。
+  - **安全防護：** 子進程呼叫嚴格使用 `argv` 陣列（不使用 shell string）杜絕指令注入；使用者輸入長度限制 200 字元；`stdout` 緩衝上限設為 50KB 防止記憶體洩漏；每個命令強制 10 秒 timeout；並在 `deactivate()` 時安全釋放所有 EventEmitter 和 Timer。
+  - **編譯安裝：**
+    ```bash
+    cd vscode-extension
+    npm install
+    npm run compile
+    # 在 VS Code 按 F5 啟動開發模式
+    ```

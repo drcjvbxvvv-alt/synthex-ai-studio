@@ -1,3 +1,6 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
 """
 ContextEngineer — 動態 Context 組裝引擎
 
@@ -13,6 +16,8 @@ import re
 import json
 from pathlib import Path
 from .graph import KnowledgeGraph
+if TYPE_CHECKING:
+    from .vector_memory import VectorMemory
 
 
 # Token 估算（粗略：4 字元 ≈ 1 token）
@@ -32,9 +37,11 @@ class ContextEngineer:
     5. 最近的相關決策（近期上下文）
     """
 
-    def __init__(self, graph: KnowledgeGraph, brain_dir: Path):
+    def __init__(self, graph: KnowledgeGraph, brain_dir: Path,
+                 vector_memory: "VectorMemory | None" = None):
         self.graph     = graph
         self.brain_dir = brain_dir
+        self.vm        = vector_memory   # v1.1 向量記憶（可為 None）
 
     def build(self, task: str, current_file: str = "") -> str:
         """
@@ -61,13 +68,22 @@ class ContextEngineer:
                     section = self._format_pitfalls(impact["pitfalls"])
                     budget  = self._add_if_budget(sections, section, budget)
 
-        # 3. 全文搜尋相關知識
+        # 3. 知識搜尋：v1.1 向量語義優先，FTS5 備援
         keywords = self._extract_keywords(task)
         if keywords:
-            pitfalls  = self.graph.search_nodes(keywords, node_type="Pitfall", limit=3)
-            decisions = self.graph.search_nodes(keywords, node_type="Decision", limit=2)
-            rules     = self.graph.search_nodes(keywords, node_type="Rule", limit=2)
-            adrs      = self.graph.search_nodes(keywords, node_type="ADR", limit=1)
+            # v1.1：優先使用向量搜尋（更精準的語義匹配）
+            if self.vm and self.vm.available:
+                vm_results = self.vm.search(task, top_k=8)
+                pitfalls  = [r for r in vm_results if r.get("type") == "Pitfall"][:3]
+                decisions = [r for r in vm_results if r.get("type") == "Decision"][:2]
+                rules     = [r for r in vm_results if r.get("type") == "Rule"][:2]
+                adrs      = [r for r in vm_results if r.get("type") == "ADR"][:1]
+            else:
+                # FTS5 備援
+                pitfalls  = self.graph.search_nodes(keywords, node_type="Pitfall",  limit=3)
+                decisions = self.graph.search_nodes(keywords, node_type="Decision", limit=2)
+                rules     = self.graph.search_nodes(keywords, node_type="Rule",     limit=2)
+                adrs      = self.graph.search_nodes(keywords, node_type="ADR",      limit=1)
 
             for pitfall in pitfalls:
                 s = self._fmt_node("⚠ 已知踩坑", pitfall)

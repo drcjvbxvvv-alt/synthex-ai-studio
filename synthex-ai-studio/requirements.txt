@@ -1,2 +1,25 @@
-anthropic>=0.40.0
-playwright>=1.40.0   # 瀏覽器 QA 需要，安裝後執行：playwright install chromium
+# SYNTHEX AI STUDIO 依賴
+
+# ── 核心 ─────────────────────────────────────────────────────────
+anthropic>=0.86.0            # Claude API SDK
+
+# ── 瀏覽器 QA（選填）────────────────────────────────────────────
+playwright>=1.40.0           # 安裝後執行：playwright install chromium
+
+# ── Project Brain v1.1 ────────────────────────────────────────────
+# 向量記憶：語義搜尋（選填，未安裝時自動降級到 SQLite FTS5）
+chromadb>=1.5.5              # pip install chromadb
+
+# MCP Server：讓 Claude Code 直接呼叫 Project Brain
+mcp>=1.26.0                  # pip install mcp
+
+# ── 安裝指令 ─────────────────────────────────────────────────────
+# 完整安裝（含向量記憶和 MCP）：
+#   pip install -r requirements.txt
+#
+# 最小安裝（只有核心功能）：
+#   pip install anthropic
+#
+# Project Brain MCP Server 啟動：
+#   python -m core.brain.mcp_server --workdir /your/project
+#   或設定環境變數：BRAIN_WORKDIR=/your/project python -m core.brain.mcp_server
