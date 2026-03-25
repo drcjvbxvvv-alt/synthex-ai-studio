@@ -88,6 +88,135 @@ Synthex CLI 自動串接多個角色，Claude Code 讓你有更完整的 context
 
 ---
 
+
+---
+
+## Project Brain × SYNTHEX — 兩種使用場景
+
+> **核心原則**
+> - **自動觸發**：Context 注入（每次 `ship`/`feature`/`fix` 都自動）、Git Hook 學習（每次 `git commit` 都自動）
+> - **手動觸發**：`brain init` 或 `brain scan`（只需一次）、`brain add`（選填補充）
+
+---
+
+### 場景一：全新專案
+
+從零開始，同時建立開發系統和長期記憶。
+
+**完整流程：**
+
+```
+[你] python synthex.py brain init          ← 手動（僅一次）
+      │
+      │  建立 .brain/、設定 Git Hook、建立知識圖譜
+      ▼
+[你] python synthex.py discover "模糊想法"  ← 手動
+      │
+      │  (自動) Brain.get_context() 注入已知背景知識
+      │  6 個 Agent 深挖需求，產出 docs/DISCOVER_FINAL.md
+      ▼
+[你] python synthex.py ship "完整需求" --budget 5.0  ← 手動
+      │
+      │  Phase 4 NEXUS 架構設計
+      │    (自動) Brain 注入相關踩坑 + ADR
+      │  Phase 9+10 BYTE+STACK 實作
+      │    (自動) Brain 注入業務規則 + 依賴關係
+      │  Phase 11 PROBE+TRACE 測試
+      │    (自動) Brain 注入已知的邊界條件
+      ▼
+[你] git commit -m "feat: 完成登入功能"      ← 正常 git 操作
+      │
+      │  (自動) Git Hook → Brain.learn_from_commit()
+      │  Claude 分析 diff，提取決策 / 踩坑 / 規則
+      │  存入知識圖譜（背景執行，不阻塞你）
+      ▼
+ 知識圖譜自動成長（每次 commit 都在積累）
+      ↻ 下次工作，Brain 知道得更多
+```
+
+**時間線：**
+
+| 時間 | commit 數 | 知識節點 | Brain 效果 |
+|------|-----------|---------|-----------|
+| 第 1 週 | ~20 | ~5 | 基礎結構知識 |
+| 第 1 個月 | ~100 | ~30 | 開始有決策記錄 |
+| 第 3 個月 | ~300 | ~100 | 踩坑記錄豐富，不再重蹈覆轍 |
+| 第 1 年 | ~1000 | ~300 | 完整機構記憶 |
+
+---
+
+### 場景二：現有專案（接手 / 新功能 / 修復 / 重構）
+
+接手沒有記錄的舊專案，或在現有專案上持續開發。
+
+**接手舊專案（只需一次）：**
+
+```
+[你] python synthex.py brain scan           ← 手動（僅一次，約 3-10 分鐘）
+      │
+      │  Step 1：分析目錄結構，建立組件節點
+      │  Step 2：分析 Git 歷史（最近 200 commits）
+      │          Claude 提取每個 commit 的決策知識
+      │  Step 3：掃描「熱點」程式碼（修改最頻繁的檔案）
+      │          提取 TODO/FIXME/HACK 注釋
+      │  Step 4：整合現有 README / docs / ADR
+      │  Step 5：產出 .brain/SCAN_REPORT.md
+      ▼
+ 知識圖譜重建完成，可以立即使用
+```
+
+**日常開發（完全自動）：**
+
+```
+[你] python synthex.py feature "新增訂單退款功能"  ← 手動
+      │
+      │  (自動) Brain.get_context("新增訂單退款功能", "src/order/")
+      │          搜尋 → 「支付模組有重複扣款的踩坑記錄」
+      │          搜尋 → 「金額必須以分為單位儲存（業務規則）」
+      │          搜尋 → 「ADR-042：冪等性設計」
+      │          → 全部注入 Agent 的 Prompt 前端
+      ▼
+ AI Agent 帶著完整記憶工作
+ 知道之前踩過什麼坑，不會重複犯錯
+      │
+      ▼
+[你] git commit -m "feat: 加入退款 API"      ← 正常 git 操作
+      │
+      │  (自動) Git Hook 學習新知識
+      ▼
+ 知識圖譜持續成長 ↻
+```
+
+**四種操作的觸發方式：**
+
+| 操作 | 命令 | Brain 介入方式 |
+|------|------|----------------|
+| 新增功能 | `synthex.py feature "描述"` | 自動注入相關踩坑 + 依賴關係 |
+| 修復 Bug | `synthex.py fix "bug 描述"` | 自動注入歷史相似 bug 的解法 |
+| 除錯 | `synthex.py investigate "問題"` | 自動注入可能的根本原因 |
+| 重構 | `synthex.py ship "重構需求"` | 自動注入完整架構脈絡 |
+
+---
+
+### 哪些是自動的，哪些是手動的
+
+```
+自動（完全不需要手動觸發）：
+  ✓ git commit 後，知識自動積累（Git Hook）
+  ✓ 每次 AI 工作前，Context 自動注入（orchestrator 內建）
+  ✓ 知識圖譜自動成長
+
+手動（只需一次）：
+  ✓ brain init — 新專案初始化
+  ✓ brain scan — 舊專案考古掃描
+
+選填（隨時補充）：
+  ✓ brain add "知識" — 手動記錄重要決策
+  ✓ brain status    — 查看目前記憶狀態
+  ✓ brain context   — 測試 Context 注入效果
+```
+
+
 ## 完整命令列表
 
 ### 需求分析（從這裡開始）
