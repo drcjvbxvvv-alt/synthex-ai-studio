@@ -23,6 +23,14 @@ from .context import ContextEngineer
 from .archaeologist import ProjectArchaeologist
 from .vector_memory  import VectorMemory          # v1.1
 from .temporal_graph import TemporalGraph         # v1.1
+from .v2.shared_registry import SharedRegistry    # v2.0
+from .v2.decay_engine    import DecayEngine        # v2.0
+from .v2.counterfactual  import (                  # v2.0
+    CounterfactualEngine, CounterfactualQuery, CounterfactualResult
+)
+from .shared_registry import SharedRegistry       # v2.0
+from .decay_engine   import DecayEngine           # v2.0
+from .counterfactual import CounterfactualReasoner # v2.0
 
 
 class ProjectBrain:
@@ -49,9 +57,13 @@ class ProjectBrain:
         self._extractor = None
         self._context   = None
         self._config    = {}
-        # v1.1 新增
-        self._vector    = None   # VectorMemory（Chroma）
-        self._temporal  = None   # TemporalGraph
+        # v1.1
+        self._vector    = None
+        self._temporal  = None
+        # v2.0
+        self._registry  = None
+        self._decay     = None
+        self._cf        = None
 
     # ── 屬性懶初始化 ──────────────────────────────────────────────
 
@@ -88,6 +100,26 @@ class ProjectBrain:
         if self._temporal is None:
             self._temporal = TemporalGraph(self.graph)
         return self._temporal
+
+    @property
+    def shared_registry(self) -> SharedRegistry:
+        if self._shared is None:
+            ns = self._config.get("project_name",
+                                   self.workdir.name).replace(" ", "-")[:64]
+            self._shared = SharedRegistry(namespace=ns)
+        return self._shared
+
+    @property
+    def decay_engine(self) -> DecayEngine:
+        if self._decay is None:
+            self._decay = DecayEngine(self.graph, self.workdir)
+        return self._decay
+
+    @property
+    def counterfactual(self) -> CounterfactualEngine:
+        if self._cf is None:
+            self._cf = CounterfactualEngine(self.graph, self.workdir)
+        return self._cf
 
     # ── 公開 API ──────────────────────────────────────────────────
 

@@ -673,8 +673,16 @@ def cmd_brain(args):
         cmd_brain_export(args)
     elif subcmd == "add":
         cmd_brain_add(args)
+    elif subcmd == "share":
+        cmd_brain_share(args)
+    elif subcmd == "query-shared":
+        cmd_brain_query_shared(args)
+    elif subcmd == "decay":
+        cmd_brain_decay(args)
+    elif subcmd == "counterfactual":
+        cmd_brain_counterfactual(args)
     else:
-        print("用法：synthex brain <init|scan|context|learn|status|export|add>")
+        print("用法：synthex brain <init|scan|context|learn|status|export|add|share|query-shared|decay|counterfactual>")
 
 
 def cmd_brain_init(args):
@@ -744,6 +752,84 @@ def cmd_brain_export(args):
     print(f"✓ 知識圖譜已匯出：{out}")
     print(mermaid[:500])
 
+
+
+# ══════════════════════════════════════════════════════════════
+#  Project Brain v2.0 命令
+# ══════════════════════════════════════════════════════════════
+
+def cmd_brain_share(args):
+    """發布知識到跨專案共享庫"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    brain   = ProjectBrain(workdir)
+    title   = " ".join(args.title)
+    content_text = getattr(args, "content", "") or ""
+    kind    = getattr(args, "kind", "Pitfall") or "Pitfall"
+    vis     = getattr(args, "visibility", "team") or "team"
+
+    reg = brain.shared_registry
+    new_id = reg.publish(title, content_text, kind,
+                         confidence=0.85, visibility=vis)
+    if new_id:
+        print(f"✓ 已發布到共享庫（ID: {new_id}，可見性: {vis}）")
+    else:
+        print("ℹ 相同知識已存在（冪等），已更新信心分數")
+
+
+def cmd_brain_query_shared(args):
+    """查詢跨專案知識庫"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    brain   = ProjectBrain(workdir)
+    q       = " ".join(args.query)
+
+    results = brain.shared_registry.query(q, limit=10)
+    if not results:
+        print("（共享庫中無相關知識）")
+        return
+    print(f"找到 {len(results)} 筆跨專案知識：")
+    for r in results:
+        print(f"\n  [{r['type']}] {r['title']}")
+        print(f"  來源：{r['namespace']}  信心：{r['confidence']:.0%}")
+        print(f"  {(r.get('content') or '')[:120]}...")
+
+
+def cmd_brain_decay(args):
+    """查看知識衰減報告"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    brain   = ProjectBrain(workdir)
+    de      = brain.decay_engine
+
+    action = getattr(args, "action", "report")
+    if action == "report":
+        print(de.decay_report())
+    elif action == "update":
+        n = de.update_churn_scores()
+        print(f"✓ 已更新 {n} 個節點的程式碼擾動分數")
+    elif action == "invalidate":
+        node_id = getattr(args, "node_id", "")
+        reason  = getattr(args, "reason", "") or ""
+        de.invalidate(node_id, reason)
+        print(f"✓ 已標記節點 {node_id} 為失效（信心降至 5%）")
+
+
+def cmd_brain_counterfactual(args):
+    """反事實推理：如果當初不這樣設計，會怎樣？"""
+    from core.brain import ProjectBrain
+    from core.brain.v2.counterfactual import CounterfactualQuery
+    workdir   = get_workdir(getattr(args, "workdir", None))
+    brain     = ProjectBrain(workdir)
+    question  = " ".join(args.question)
+    component = getattr(args, "component", "") or ""
+    depth     = getattr(args, "depth", "brief") or "brief"
+
+    print(f"\n🔮 反事實分析中（{depth} 模式）...")
+    q      = CounterfactualQuery(question=question,
+                                  target_component=component, depth=depth)
+    result = brain.counterfactual.reason(q)
+    print(brain.counterfactual.format_result(result))
 
 def cmd_brain_add(args):
     """手動加入知識片段"""

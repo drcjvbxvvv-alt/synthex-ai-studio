@@ -1,43 +1,40 @@
-## [v1.1.0] - 2026-03-25
+## [v2.0.0] - 2026-03-26
 
-### 🚀 Project Brain v1.1 — 四大子系統與安全性全面升級
+### 🚀 Project Brain v2.0 — 三大革命性子系統
 
-本次更新實作了 Project Brain 路線圖中的四大核心子系統，大幅強化語義搜尋、時序推理能力，並提供 Claude Code 與 VS Code 的深度整合。所有子系統皆導入嚴格的安全防護與邊界限制。
+本次大版本更新打破了單一專案的知識孤島，引入了真實世界的知識衰減機制，並賦予 AI 基於歷史圖譜的反事實推理能力。所有核心模組均以企業級安全標準進行深度強化。
 
-#### 🧠 核心子系統與整合
+#### 🌐 1. SharedRegistry 多專案知識共享 (`core/brain/v2/shared_registry.py`)
 
-- **1. VectorMemory 語義記憶 (`core/brain/vector_memory.py`)**
-  - **功能：** 導入 Chroma 1.5.5 向量記憶，使 Context 搜尋從「關鍵字完全匹配」升級為「語義理解」（例如搜尋「支付 bug」能精準命中「Stripe Webhook 觸發異常」的踩坑記錄）。若 Chroma 不可用，系統會自動降級到 FTS5 而不拋出例外。
-  - **安全防護：** 實作路徑遍歷防護（`vector_dir` 嚴格限制於 `.brain/` 內）、控制字元清理、輸入長度上限 8,000 字元、集合上限 50,000 筆（約 200MB），並預設關閉匿名遙測。
+打破知識孤島，建立可見性受控的跨 Repo 知識庫（儲存於 `~/.brain_shared/registry.db`），避免相同踩坑在不同團隊間重複發生。
 
-- **2. TemporalGraph 時序知識圖譜 (`core/brain/temporal_graph.py`)**
-  - **功能：** 實作受 Graphiti 啟發的時序知識圖譜。每條關係邊帶有 `valid_from`、`confidence` 和衰減率 `λ`。信心值公式為：$c(t) = c_0 \times e^{-\lambda \times \text{days}}$。
-  - **權重與覆蓋：** 因果關係（`CAUSED_BY`、`SOLVED_BY`）的 $\lambda=0.001$ 幾乎不衰減，確保舊踩坑記錄持續有效；引用關係 $\lambda=0.01$ 衰減較快。矛盾知識不刪除，透過標記 `superseded_by` 保留歷史可審計性。
-  - **安全防護：** 全面使用 SQL 參數化查詢防止注入，且時間戳嚴格驗證 ISO 8601 格式。
+- **核心功能：** 支援透過 `brain share` 發布踩坑紀錄，並可指定可見性（如 `--visibility team`）；支援透過 `brain query-shared` 進行跨專案檢索。
+- **安全與併發設計：**
+  - **PII 自動過濾：** 透過正規表達式自動攔截並過濾密碼、API Key、IP、Email 與 URL。
+  - **Namespace 防護：** 路徑注入防護，僅允許字母數字開頭。
+  - **併發安全與效能：** 啟用 WAL 模式確保多專案讀寫不衝突；實作連線池復用（同進程不重複建立連線）。
+  - **品質控制：** 具備冪等發布機制（相同內容 Hash 不重複儲存），且信心門檻低於 **0.7** 的知識不予分享。
 
-- **3. MCP Server 協議支援 (`core/brain/mcp_server.py`)**
-  - **功能：** 讓 Claude Code 能直接透過 MCP 協議呼叫 Project Brain，無須透過命令列。提供 5 個 Tool（`get_context`、`search_knowledge`、`impact_analysis`、`add_knowledge`、`brain_status`）與 1 個 Resource（`brain://graph/mermaid`）。
-  - **安全防護：** 實作滑動視窗 Rate Limiting（60 RPM）、每個參數獨立的型別與長度驗證、啟動時檢查 `workdir` 必須存在 `.brain/` 目錄，並在錯誤訊息中遮蔽系統絕對路徑。
-  - **配置方式：** 將以下設定加入 Claude Code 的 `~/.claude.json`：
-    ```json
-    {
-      "mcpServers": {
-        "project-brain": {
-          "command": "python",
-          "args": ["-m", "core.brain.mcp_server"],
-          "env": { "BRAIN_WORKDIR": "/your/project" }
-        }
-      }
-    }
-    ```
+#### 📉 2. DecayEngine 三維知識衰減 (`core/brain/v2/decay_engine.py`)
 
-- **4. VS Code Extension 編輯器擴充 (`vscode-extension/`)**
-  - **功能：** 在編輯器側欄即時顯示與當前程式碼相關的歷史知識，並支援切換檔案時的 Debounce 自動更新。
-  - **安全防護：** 子進程呼叫嚴格使用 `argv` 陣列（不使用 shell string）杜絕指令注入；使用者輸入長度限制 200 字元；`stdout` 緩衝上限設為 50KB 防止記憶體洩漏；每個命令強制 10 秒 timeout；並在 `deactivate()` 時安全釋放所有 EventEmitter 和 Timer。
-  - **編譯安裝：**
-    ```bash
-    cd vscode-extension
-    npm install
-    npm run compile
-    # 在 VS Code 按 F5 啟動開發模式
-    ```
+讓信心分數反映真實世界。從單一的時間衰減，升級為融合「時間」、「程式碼擾動 (Churn)」與「顯式失效」的三維複合衰減模型。
+
+- **衰減公式：**
+  $$c_{final}(t) = c_{time}(t) \times c_{churn} \times c_{explicit}$$
+  $$c_{time}(t) = c_0 \times \exp(-\lambda_{eff} \times \text{days})$$
+  $$\lambda_{eff} = \lambda_{base} \times (1 + \text{churn\_penalty})$$
+  $$c_{churn} = 1 - (\text{churn\_score} \times 0.3)$$
+  $$c_{explicit} = 0.05 \text{ (if invalidated)}$$
+- **權重實作：** 踩坑記錄（$\lambda=0.001$）在一年後仍保有約 90% 信心；決策記錄（$\lambda=0.003$）一年後約剩 67%。當關聯程式碼頻繁變動時，信心將加速衰減。
+- **CLI 支援：** 新增 `brain decay report`（衰減報告）、`update`（分析擾動）與 `invalidate`（顯式標記失效）指令。
+- **安全與穩定性設計：** 實作 NaN/Inf 防護（浮點運算包裹於 `_safe_float()`）；信心邊界嚴格截斷於 $[0.001, 1.0]$；全面防護 SQL 注入；實作快取上限（超過 2,000 筆自動清空）與 Git 分析子進程 Timeout（最高 30 秒）。
+
+#### 🔮 3. CounterfactualEngine 反事實推理 (`core/brain/v2/counterfactual.py`)
+
+最具革命性的功能，基於知識圖譜中的決策歷史與踩坑紀錄，讓 AI 進行有根據的「如果不這樣做，會怎樣？」推理分析。
+
+- **核心功能：** 支援技術債分析與架構複盤。透過 `brain counterfactual` 提問，系統會輸出包含「信心水準」、「最可能結果」、「可避免風險」、「新引入風險」及「推理依據」的結構化報告。
+- **安全與成本控制：**
+  - **Prompt Injection 防護：** 針對 `ignore`、`forget`、`override` 等惡意指令自動過濾為 `[filtered]`。
+  - **邊界限制：** 問題長度限制 400 字元；API 輸出限制 `max_tokens=1500`。
+  - **成本優化與容錯：** 採用 Claude Sonnet 模型；實作雙層快取（Memory + SQLite，1 小時 TTL）；當 API 不可用時自動降級為基於知識圖譜的規則分析；嚴格驗證 JSON 輸出格式防止系統崩潰。
