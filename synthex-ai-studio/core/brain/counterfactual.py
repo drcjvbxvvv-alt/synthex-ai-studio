@@ -42,6 +42,12 @@ import anthropic
 
 from .graph import KnowledgeGraph
 
+try:
+    from core.config import cfg as _cfg
+    _DEFAULT_BRAIN_MODEL = _cfg.model_sonnet
+except ImportError:
+    _DEFAULT_BRAIN_MODEL = "claude-sonnet-4-6"
+
 logger = logging.getLogger(__name__)
 
 # ── 安全常數 ────────────────────────────────────────────────────
@@ -136,7 +142,7 @@ class CounterfactualReasoner:
     """
 
     def __init__(self, graph: KnowledgeGraph, brain_dir: Path,
-                 model: str = "claude-sonnet-4-5"):
+                 model: str = _DEFAULT_BRAIN_MODEL):
         self.graph      = graph
         self.cache_dir  = brain_dir / "counterfactuals"
         self.cache_dir.mkdir(parents=True, exist_ok=True)

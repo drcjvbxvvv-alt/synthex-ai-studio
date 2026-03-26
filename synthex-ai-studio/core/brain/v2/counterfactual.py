@@ -59,7 +59,7 @@ MAX_CONTEXT_CHARS   = 4_000   # 注入 Claude 的上下文最大字元
 MAX_ALTERNATIVES    = 5       # 最多考慮 N 個替代方案
 CACHE_TTL_SECONDS   = 3_600   # 推理結果快取 1 小時
 MAX_TOKENS          = 1_500   # Claude 回應 token 上限（成本控制）
-REASONING_MODEL     = "claude-sonnet-4-5"  # Sonnet 夠用，省 Opus 費用
+REASONING_MODEL     = "claude-sonnet-4-6"  # Sonnet 4.6：均衡效能，1M context
 
 # 推理快取（question_hash → (result, timestamp)）
 _reasoning_cache: dict[str, tuple[dict, float]] = {}

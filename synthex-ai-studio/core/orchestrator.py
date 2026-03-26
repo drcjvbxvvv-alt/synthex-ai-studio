@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import anthropic
 from agents.all_agents import ALL_AGENTS, DEPT_AGENTS, get_agent
+from core.config import cfg, ModelID
 
 RESET  = "\033[0m"
 BOLD   = "\033[1m"
@@ -89,7 +90,7 @@ class Orchestrator:
         self._print_routing(task)
         try:
             resp = self.client.messages.create(
-                model="claude-opus-4-5",
+                model=cfg.model_opus,
                 max_tokens=512,
                 system=ROUTING_SYSTEM,
                 messages=[{"role": "user", "content": task}],

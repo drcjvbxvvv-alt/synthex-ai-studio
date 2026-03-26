@@ -1,7 +1,19 @@
-# SYNTHEX AI STUDIO 依賴
+# SYNTHEX AI STUDIO 依賴（第十輪更新）
 
 # ── 核心 ─────────────────────────────────────────────────────────
-anthropic>=0.86.0            # Claude API SDK
+anthropic>=0.50.0            # Claude API SDK（Opus 4.6/Sonnet 4.6 支援）
+
+# ── 設定管理（config.py 必要）────────────────────────────────────
+pydantic-settings>=2.3.0     # SynthexConfig 型別驗證 + .env 讀取
+pydantic>=2.7.0              # pydantic-settings 依賴
+
+# ── 結構化日誌（logging_setup.py 必要）──────────────────────────
+structlog>=24.1.0            # 生產級結構化日誌（JSON 輸出）
+
+# ── 觀測性（observability.py，選填）────────────────────────────
+# pip install opentelemetry-api opentelemetry-sdk
+# opentelemetry-api>=1.24.0
+# opentelemetry-sdk>=1.24.0
 
 # ── 瀏覽器 QA（選填）────────────────────────────────────────────
 playwright>=1.40.0           # 安裝後執行：playwright install chromium

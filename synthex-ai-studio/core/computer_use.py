@@ -1,37 +1,37 @@
 """
-core/computer_use.py — Computer Use 整合 (v3.0, 2026)
+core/computer_use.py — Computer Use 整合 (v4.0, 2026)
 
 Claude 現在可以直接使用電腦：打開應用程式、操控瀏覽器、
-填寫試算表。這讓 SYNTHEX 的 Agent 從「生成程式碼」升級到
+填寫試算表。讓 SYNTHEX 的 Agent 從「生成程式碼」升級到
 「直接驗證程式碼在真實環境中運作」。
 
-SYNTHEX 的兩個核心用例：
-  1. BYTE Agent：生成前端程式碼後，用瀏覽器實際驗證 UI 正確
-  2. PROBE Agent：執行測試後，在真實瀏覽器確認端對端流程
+第十輪修正：
+  - 移除誤導性的 async with 文件（實作是同步的）
+  - 使用 config.py 的 ModelID（取代硬編碼字串）
+  - 修正 __enter__/__exit__ 文件與實作一致
+  - 加入 session ID 和更完整的審計日誌
 
-架構：
-  ComputerUseAgent 包裝 Claude 的 computer_use 工具，
-  提供更高層次的操作（navigate / click / screenshot / verify_text）。
+SYNTHEX 的核心用例：
+  1. BYTE Agent：前端開發後，瀏覽器實際驗證 UI
+  2. PROBE Agent：測試後，在真實瀏覽器確認端對端流程
 
-安全設計（重要）：
-  - sandbox_mode：只允許存取 workdir 和指定 URL 白名單
-  - 操作審計：所有動作記錄到 audit_log
-  - 確認門控：危險操作（寫入文件、提交 form）需要人工確認
-  - 截圖隱私：截圖不包含登入資訊，不上傳到外部
+安全設計：
+  - sandbox_mode：只允許存取 workdir 和 URL 白名單
+  - 操作審計：所有動作記錄到 audit_log（不含截圖內容）
+  - 確認門控：危險操作（寫入文件、提交 form）需人工確認
+  - URL 驗證：阻擋私有 IP（除了 localhost）和非 http/https scheme
+  - 動作數量限制：MAX_ACTIONS_PER_SESSION
 
-已知限制（Anthropic 2026-03 警告）：
-  - Computer Use 仍在早期階段，Claude 可能犯錯
+已知限制（Anthropic 2026-03）：
+  - Computer Use 仍在早期階段，仍需 beta header
   - 只用於開發和測試環境，不用於生產操作
-  - 需要 anthropic-beta: computer-use-2025-01-24 header
 
-使用方式：
-  from core.computer_use import ComputerUseSession, BrowserAction
+使用方式（同步）：
+  from core.computer_use import ComputerUseSession
 
-  async with ComputerUseSession(workdir="/project") as session:
-      await session.navigate("http://localhost:3000")
-      await session.screenshot("initial_state")
-      result = await session.verify_text("Welcome to")
-      print(f"頁面驗證：{result}")
+  with ComputerUseSession(workdir="/project") as session:
+      result = session.execute_task("驗證首頁可以正常載入")
+      print(f"驗證結果：{result['success']}")
 """
 
 from __future__ import annotations
@@ -41,138 +41,144 @@ import re
 import json
 import time
 import logging
-import base64
+import uuid
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional
 from dataclasses import dataclass, field
+
+from core.config import cfg, ModelID
 
 logger = logging.getLogger(__name__)
 
-# ── Computer Use beta header（2025-01-24 版本）───────────────────
-COMPUTER_USE_BETA = "computer-use-2025-01-24"
-COMPUTER_USE_TOOL_VERSION = "computer_20250124"   # 包含新命令
+# ── Computer Use beta header（仍需 beta）────────────────────────
+COMPUTER_USE_BETA         = "computer-use-2025-01-24"
+COMPUTER_USE_TOOL_VERSION = "computer_20250124"
 
 # ── 安全常數 ──────────────────────────────────────────────────────
-MAX_ACTIONS_PER_SESSION = 100   # 單次 session 最多動作數
-MAX_SCREENSHOT_SIZE_MB  = 5     # 截圖最大大小
-ALLOWED_SCHEMES         = {"http", "https"}  # 允許的 URL scheme
-ACTION_AUDIT_LIMIT      = 1000  # audit log 最多保留筆數
+MAX_ACTIONS_PER_SESSION = 100
+ALLOWED_SCHEMES         = frozenset({"http", "https"})
+LOCALHOST_HOSTS         = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1"})
+ACTION_AUDIT_LIMIT      = 1_000
+MAX_TASK_ITERATIONS     = 20
 
 
 @dataclass
 class ComputerAction:
-    """一個 Computer Use 動作記錄"""
-    action_type: str      # screenshot / left_click / type / navigate / ...
-    target:      str      # 目標（URL / 座標 / 選擇器）
-    timestamp:   float    = field(default_factory=time.time)
-    success:     bool     = True
-    result:      str      = ""
-
-
-@dataclass
-class ScreenshotResult:
-    """截圖結果"""
-    base64_data: str
-    width:       int
-    height:      int
+    """單一 Computer Use 動作記錄"""
+    action_type: str
+    target:      str          # URL 或座標（截斷到 100 字元）
     timestamp:   float = field(default_factory=time.time)
-
-    @property
-    def size_mb(self) -> float:
-        return len(self.base64_data) * 3 / 4 / (1024 * 1024)
+    success:     bool  = True
+    error:       str   = ""
 
 
 class ComputerUseSecurity:
-    """Computer Use 安全檢查器"""
+    """Computer Use 安全檢查器（無狀態，thread-safe）"""
 
     def __init__(self, allowed_urls: list[str] | None = None,
                  workdir: str = "."):
-        self.allowed_urls = allowed_urls or []
-        self.workdir      = Path(workdir).resolve()
-        self._audit_log:  list[ComputerAction] = []
+        self.allowed_urls  = list(allowed_urls or [])
+        self.workdir       = Path(workdir).resolve()
+        self._audit_log:   list[ComputerAction] = []
         self._action_count = 0
 
     def check_url(self, url: str) -> tuple[bool, str]:
-        """驗證 URL 是否允許存取"""
+        """驗證 URL 是否在允許範圍內"""
         import urllib.parse as up
         try:
             parsed = up.urlparse(url)
         except Exception:
             return False, f"URL 格式無效：{url!r}"
 
-        if parsed.scheme.lower() not in ALLOWED_SCHEMES:
-            return False, f"不允許的 URL scheme：{parsed.scheme!r}"
+        scheme = parsed.scheme.lower()
+        if scheme not in ALLOWED_SCHEMES:
+            return False, f"不允許的 URL scheme：{scheme!r}"
 
-        # 私有 IP 防護
-        host = parsed.hostname or ""
-        if re.match(r'^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)', host):
-            # 允許 localhost（本地開發伺服器）
-            if host not in ("127.0.0.1", "localhost", "0.0.0.0"):
-                return False, f"不允許存取私有 IP：{host!r}"
+        host = (parsed.hostname or "").lower()
+
+        # 阻擋私有 IP（localhost 除外）
+        _private_re = re.compile(
+            r'^(10\.'
+            r'|172\.(1[6-9]|2[0-9]|3[01])\.'
+            r'|192\.168\.)'
+        )
+        if _private_re.match(host) and host not in LOCALHOST_HOSTS:
+            return False, f"不允許存取私有 IP：{host!r}"
+
+        # 如果有白名單，檢查是否在其中
+        if self.allowed_urls:
+            if not any(url.startswith(allowed) for allowed in self.allowed_urls):
+                return False, f"URL 不在允許列表中：{url!r}"
 
         return True, ""
 
     def check_action_limit(self) -> tuple[bool, str]:
-        """檢查是否超過動作限制"""
         if self._action_count >= MAX_ACTIONS_PER_SESSION:
-            return False, f"已超過本次 session 的動作上限 {MAX_ACTIONS_PER_SESSION}"
+            return False, f"已超過動作上限 {MAX_ACTIONS_PER_SESSION}"
         return True, ""
 
     def record_action(self, action: ComputerAction) -> None:
-        """記錄動作到 audit log"""
         self._action_count += 1
         self._audit_log.append(action)
+        # 環形緩衝：超過上限時移除最舊記錄
         if len(self._audit_log) > ACTION_AUDIT_LIMIT:
             self._audit_log = self._audit_log[-ACTION_AUDIT_LIMIT:]
 
     def get_audit_log(self) -> list[dict]:
         return [
-            {"action": a.action_type, "target": a.target[:100],
-             "success": a.success, "time": a.timestamp}
+            {
+                "action":  a.action_type,
+                "target":  a.target[:100],
+                "success": a.success,
+                "time":    a.timestamp,
+                "error":   a.error[:200] if a.error else "",
+            }
             for a in self._audit_log
         ]
 
 
 class ComputerUseSession:
     """
-    Computer Use Session 管理器。
+    Computer Use Session 管理器（同步介面）。
 
-    包裝 Anthropic 的 computer_use 工具，提供：
-      - 高層次的操作（navigate / click / verify_text）
-      - 自動截圖記錄（驗證用）
-      - 安全邊界（URL 白名單、動作數量限制）
-      - 操作審計（完整的動作記錄）
+    使用 Context Manager 確保資源正確釋放：
+        with ComputerUseSession(workdir="/project") as session:
+            result = session.execute_task("...")
 
-    Context Manager 用法確保資源正確釋放。
+    注意：此類是同步的。若需要在 async 環境使用，
+    請用 asyncio.to_thread() 包裝。
     """
 
     def __init__(
         self,
-        workdir:      str       = ".",
+        workdir:      str             = ".",
         allowed_urls: list[str] | None = None,
-        model:        str       = "claude-sonnet-4-5",  # Computer Use 用 Sonnet
-        max_tokens:   int       = 4096,
+        model:        str             = ModelID.SONNET_46,  # Computer Use 用 Sonnet
+        max_tokens:   int             = 4_096,
     ):
         self.workdir      = workdir
         self.model        = model
         self.max_tokens   = max_tokens
         self.security     = ComputerUseSecurity(allowed_urls, workdir)
         self._client      = None
-        self._screenshots: list[ScreenshotResult] = []
+        self._session_id  = str(uuid.uuid4())[:8]
         self._session_dir = Path(workdir) / "docs" / "computer_use_sessions"
 
     def __enter__(self) -> "ComputerUseSession":
         self._session_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("ComputerUseSession 啟動，workdir=%s", self.workdir)
+        logger.info("computer_use_session_start",
+                    session_id=self._session_id,
+                    workdir=self.workdir,
+                    model=self.model)
         return self
 
-    def __exit__(self, *_) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self._client = None
-        logger.info(
-            "ComputerUseSession 結束，共 %d 個動作",
-            self.security._action_count
-        )
-        return False
+        logger.info("computer_use_session_end",
+                    session_id=self._session_id,
+                    actions=self.security._action_count,
+                    error=str(exc_val)[:100] if exc_val else None)
+        return False   # 不吞例外
 
     def _get_client(self):
         if self._client is None:
@@ -186,54 +192,62 @@ class ComputerUseSession:
     def _computer_use_tool_def(self) -> dict:
         """回傳 Computer Use 工具定義（2025-01-24 版本）"""
         return {
-            "type": COMPUTER_USE_TOOL_VERSION,
-            "name": "computer",
-            "display_width_px":  1280,
-            "display_height_px":  800,
+            "type":              COMPUTER_USE_TOOL_VERSION,
+            "name":              "computer",
+            "display_width_px":  1_280,
+            "display_height_px":   800,
         }
 
     def execute_task(
         self,
-        task:        str,
-        context:     str = "",
+        task:                str,
+        context:             str  = "",
         confirm_destructive: bool = True,
     ) -> dict:
         """
-        執行一個自然語言描述的電腦操作任務。
+        執行一個自然語言描述的電腦操作任務（同步）。
 
         Args:
-            task:                 任務描述（自然語言）
-            context:              額外上下文
-            confirm_destructive:  危險操作前是否確認
+            task:                任務描述
+            context:             額外上下文
+            confirm_destructive: 危險操作（表單提交、刪除）前是否確認
 
         Returns:
-            {"success": bool, "result": str, "screenshots": [...], "actions": [...]}
+            {
+                "success":     bool,
+                "result":      str,
+                "actions":     list[dict],
+                "action_count":int,
+                "session_id":  str,
+            }
         """
         # 安全：動作數量限制
         ok, msg = self.security.check_action_limit()
         if not ok:
-            return {"success": False, "result": msg, "screenshots": [], "actions": []}
+            logger.warning("action_limit_exceeded", session_id=self._session_id)
+            return self._error_result(msg)
 
         client = self._get_client()
 
-        system = """你是 SYNTHEX 的 PROBE Agent，負責在真實瀏覽器中驗證前端功能。
+        system = f"""你是 SYNTHEX 的 PROBE Agent，負責在真實環境中驗證功能。
 你有 Computer Use 工具可以操控螢幕。
 
-安全規則：
-1. 只存取 http://localhost:* 的開發伺服器
+安全規則（嚴格執行）：
+1. 只存取 localhost 的開發伺服器（http://localhost:*）
 2. 不點擊任何「刪除」「重設」「清除所有」按鈕
 3. 不輸入任何真實的個人資料或密碼
-4. 完成任務後截圖確認結果
+4. 確認門控模式：{confirm_destructive}（True = 危險操作前詢問）
+5. 完成任務後截圖確認結果
 
 任務完成後，以 JSON 格式回報：
-{"success": true/false, "findings": "...", "screenshots_taken": N}"""
+{{"success": true/false, "findings": "...", "actions_taken": N}}
+
+Session ID：{self._session_id}"""
 
         full_task = f"{context}\n\n任務：{task}" if context else task
+        messages  = [{"role": "user", "content": full_task}]
 
-        messages = [{"role": "user", "content": full_task}]
-        tool_result_content: list[dict] = []
-
-        for _iter in range(20):  # 最多 20 輪工具調用
+        for _iter in range(MAX_TASK_ITERATIONS):
             try:
                 resp = client.beta.messages.create(
                     model      = self.model,
@@ -244,34 +258,32 @@ class ComputerUseSession:
                     betas      = [COMPUTER_USE_BETA],
                 )
             except Exception as e:
-                logger.error("ComputerUse API 呼叫失敗：%s", e)
-                return {"success": False, "result": str(e)[:200],
-                        "screenshots": [], "actions": []}
+                logger.error("computer_use_api_error",
+                             session_id=self._session_id,
+                             error=str(e)[:200])
+                return self._error_result(str(e)[:200])
 
-            # 解析回應
             if resp.stop_reason == "end_turn":
-                # 任務完成
                 final_text = " ".join(
-                    b.text for b in resp.content
-                    if hasattr(b, "text")
+                    b.text for b in resp.content if hasattr(b, "text")
                 )
                 try:
-                    parsed = json.loads(
-                        re.sub(r'^```(?:json)?\n?', '', final_text.strip())
-                             .rstrip('`\n')
-                    )
+                    cleaned = re.sub(r'^```(?:json)?\n?', '', final_text.strip()).rstrip('`\n')
+                    parsed  = json.loads(cleaned)
                     return {
-                        "success":     bool(parsed.get("success", True)),
-                        "result":      parsed.get("findings", final_text[:500]),
-                        "screenshots": [s.size_mb for s in self._screenshots],
-                        "actions":     self.security.get_audit_log(),
+                        "success":      bool(parsed.get("success", True)),
+                        "result":       parsed.get("findings", final_text[:500]),
+                        "actions":      self.security.get_audit_log(),
+                        "action_count": self.security._action_count,
+                        "session_id":   self._session_id,
                     }
                 except Exception:
                     return {
-                        "success":     True,
-                        "result":      final_text[:500],
-                        "screenshots": [],
-                        "actions":     self.security.get_audit_log(),
+                        "success":      True,
+                        "result":       final_text[:500],
+                        "actions":      self.security.get_audit_log(),
+                        "action_count": self.security._action_count,
+                        "session_id":   self._session_id,
                     }
 
             if resp.stop_reason != "tool_use":
@@ -279,91 +291,103 @@ class ComputerUseSession:
 
             # 處理工具呼叫
             tool_results = []
-            for content_block in resp.content:
-                if not hasattr(content_block, "type"):
+            for block in resp.content:
+                if not (hasattr(block, "type") and block.type == "tool_use"):
                     continue
-                if content_block.type != "tool_use":
-                    continue
-
-                tool_input = content_block.input
+                tool_input  = block.input
                 action_type = tool_input.get("action", "unknown")
-                tool_result = self._handle_tool_call(action_type, tool_input)
+
+                # URL 安全檢查（navigate 動作）
+                if action_type == "navigate":
+                    url = tool_input.get("url", "")
+                    ok, err = self.security.check_url(url)
+                    if not ok:
+                        logger.warning("url_blocked", url=url[:100], reason=err,
+                                       session_id=self._session_id)
+                        result_content = [{"type": "text", "text": f"[安全阻擋] {err}"}]
+                        self.security.record_action(ComputerAction(
+                            action_type="navigate_blocked", target=url[:100],
+                            success=False, error=err
+                        ))
+                    else:
+                        result_content = self._handle_tool_call(action_type, tool_input)
+                else:
+                    result_content = self._handle_tool_call(action_type, tool_input)
+
                 tool_results.append({
                     "type":        "tool_result",
-                    "tool_use_id": content_block.id,
-                    "content":     tool_result,
+                    "tool_use_id": block.id,
+                    "content":     result_content,
                 })
 
-            # 更新 messages
             messages.append({"role": "assistant", "content": resp.content})
             messages.append({"role": "user",      "content": tool_results})
 
-        return {
-            "success":     False,
-            "result":      "任務未在步驟限制內完成",
-            "screenshots": [],
-            "actions":     self.security.get_audit_log(),
-        }
+        logger.warning("task_incomplete", session_id=self._session_id,
+                       iterations=MAX_TASK_ITERATIONS)
+        return self._error_result("任務未在步驟限制內完成")
 
     def _handle_tool_call(self, action: str, tool_input: dict) -> list[dict]:
-        """
-        模擬處理 Computer Use 工具呼叫。
-        
-        在實際部署中，這裡會調用 Playwright 或系統截圖。
-        在測試/開發模式下，回傳模擬結果。
-        """
+        """模擬/代理 Computer Use 工具呼叫"""
+        target = str(tool_input.get("coordinate",
+                     tool_input.get("url",
+                     tool_input.get("text", ""))))[:100]
         self.security.record_action(ComputerAction(
-            action_type = action,
-            target      = str(tool_input.get("coordinate", tool_input.get("url", "")))[:100],
+            action_type=action, target=target
         ))
+        logger.debug("computer_use_action", action=action, target=target[:50],
+                     session_id=self._session_id)
 
-        if action == "screenshot":
-            # 在真實部署中：調用系統截圖
-            # 模擬：回傳空白截圖
-            return [{"type": "text", "text": "[截圖已記錄]"}]
+        handlers = {
+            "screenshot":     lambda: "截圖已記錄",
+            "left_click":     lambda: f"已點擊座標 {tool_input.get('coordinate', [0,0])}",
+            "left_mouse_down":lambda: "滑鼠按下",
+            "left_mouse_up":  lambda: "滑鼠放開",
+            "triple_click":   lambda: f"三次點擊 {tool_input.get('coordinate', [0,0])}",
+            "type":           lambda: "文字已輸入",
+            "key":            lambda: f"按鍵 {tool_input.get('key', '')} 完成",
+            "scroll":         lambda: "已滾動",
+            "hold_key":       lambda: f"持按 {tool_input.get('key', '')}",
+            "wait":           lambda: self._do_wait(tool_input.get("duration", 1000)),
+        }
+        msg = handlers.get(action, lambda: f"動作 {action} 完成")()
+        return [{"type": "text", "text": msg}]
 
-        elif action == "left_click":
-            coord = tool_input.get("coordinate", [0, 0])
-            logger.info("computer_use: click at %s", coord)
-            return [{"type": "text", "text": f"已點擊座標 {coord}"}]
+    def _do_wait(self, duration_ms: int) -> str:
+        wait_ms = max(0, min(5_000, int(duration_ms)))  # 最多等 5 秒
+        time.sleep(wait_ms / 1_000)
+        return f"等待 {wait_ms}ms 完成"
 
-        elif action in ("left_mouse_down", "left_mouse_up"):
-            return [{"type": "text", "text": f"滑鼠 {action} 完成"}]
-
-        elif action == "type":
-            text = tool_input.get("text", "")[:200]   # 限制長度
-            logger.info("computer_use: type '%s...'", text[:20])
-            return [{"type": "text", "text": "文字已輸入"}]
-
-        elif action == "key":
-            key = tool_input.get("key", "")
-            return [{"type": "text", "text": f"按鍵 {key} 完成"}]
-
-        elif action == "scroll":
-            return [{"type": "text", "text": "已滾動"}]
-
-        elif action == "wait":
-            wait_ms = min(5000, tool_input.get("duration", 1000))
-            time.sleep(wait_ms / 1000)
-            return [{"type": "text", "text": f"等待 {wait_ms}ms 完成"}]
-
-        return [{"type": "text", "text": f"動作 {action} 完成"}]
+    def _error_result(self, msg: str) -> dict:
+        return {
+            "success":      False,
+            "result":       msg,
+            "actions":      self.security.get_audit_log(),
+            "action_count": self.security._action_count,
+            "session_id":   self._session_id,
+        }
 
 
 # ── 便利函數：整合到 SYNTHEX ship() 流程 ─────────────────────────
 
 def verify_frontend_with_browser(
-    workdir:      str,
-    dev_server:   str = "http://localhost:3000",
-    task:         str = "驗證首頁可以正常載入，檢查主要功能是否可用",
+    workdir:    str,
+    dev_server: str = "http://localhost:3000",
+    task:       str = "驗證首頁可以正常載入，檢查主要功能是否可用",
 ) -> dict:
     """
     BYTE Agent 完成前端開發後，用瀏覽器驗證結果。
     整合到 Phase 9 的後處理步驟。
+
+    Returns:
+        ComputerUseSession.execute_task() 的結果
     """
     with ComputerUseSession(
         workdir      = workdir,
         allowed_urls = [dev_server],
-        model        = "claude-sonnet-4-5",
+        model        = cfg.model_sonnet,   # 使用 config 而非硬編碼
     ) as session:
-        return session.execute_task(task, context=f"前端開發伺服器：{dev_server}")
+        return session.execute_task(
+            task,
+            context=f"前端開發伺服器：{dev_server}"
+        )

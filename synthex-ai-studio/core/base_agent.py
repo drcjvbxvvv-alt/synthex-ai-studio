@@ -1,10 +1,21 @@
 """
-BaseAgent v3 — 生產級重構版
-P0 修復：
-  - API 重試 + 指數退避 (Rate Limit / 暫時性錯誤)
-  - Token 用量追蹤（每次呼叫、累計、成本估算）
-  - Budget Guard（超出預算自動暫停）
+BaseAgent v4 — 生產就緒版（第十輪重構）
+
+重大改動：
+  - 完全整合 core/config.py（移除重複的 PRICING/MODEL_STRATEGY）
+  - structlog 取代內部 print() 日誌（保留 UI 彩色輸出）
+  - TokenBudget 使用 cfg.calc_cost()（精確成本，含 cache read/write）
+  - 修正 haiku → sonnet fallback 使用 ModelID 常數
+  - TokenGuard 整合到 _build_system_prompt（防 context overflow）
+
+安全：
+  - 不使用 shell=True
+  - conversation_history 主動截斷（MAX_HISTORY_LEN）
+  - Budget Guard 超出預算即暫停
+  - Circuit Breaker 防止級聯失敗
 """
+
+from __future__ import annotations
 
 import os
 import json
@@ -14,128 +25,108 @@ from pathlib import Path
 from datetime import datetime
 
 from core.tools import ToolExecutor, get_tools_for_role
+from core.config import cfg, ModelID, AGENT_TIER_MAP, Tier, MODEL_COSTS_PER_MTK
+from core.logging_setup import get_logger, TokenGuard
+
+logger = get_logger("base_agent")
 
 MEMORY_DIR = Path(__file__).parent.parent / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
 
+# ── 終端機 UI 顏色（保留，這是 CLI 產品的 UX）─────────────────────
 RESET  = "\033[0m"; BOLD = "\033[1m"; DIM = "\033[2m"
 CYAN   = "\033[96m"; GREEN = "\033[92m"; YELLOW = "\033[93m"
 RED    = "\033[91m"; GRAY = "\033[90m"
 
-# ── 定價（claude-opus-4-5，USD per 1M tokens）─────────────────
-PRICING = {
-    "claude-opus-4-5":     {"input": 15.00, "output": 75.00},
-    "claude-sonnet-4-5":   {"input":  3.00, "output": 15.00},
-    "claude-haiku-4-5":    {"input":  0.25, "output":  1.25},
-}
-DEFAULT_BUDGET_USD = 5.0   # 預設每次 /ship 的 budget 上限
+# ── 常數 ──────────────────────────────────────────────────────────
+DEFAULT_BUDGET_USD = 5.0
+CACHE_MIN_TOKENS   = 1024     # 低於此值不值得快取
+MAX_HISTORY_LEN    = 40       # 對話歷史上限（20 輪）
 
-# ── P0-1：Extended Thinking + Adaptive Thinking 設定 ─────────
-EXTENDED_THINKING_AGENTS = {
+# ── Thinking 設定 ─────────────────────────────────────────────────
+ADAPTIVE_THINKING_AGENTS: frozenset[str] = frozenset({
     "NEXUS", "SIGMA", "ARIA", "NOVA", "ATOM",
-}
+})
 THINKING_BUDGET = {
-    "deep":    10000,
-    "normal":   5000,
-    "quick":    2000,
+    "deep":   10_000,
+    "normal":  5_000,
+    "quick":   2_000,
 }
 
-# ── P0-4：Prompt Caching 設定 ──────────────────────────────────
-# system prompt 超過此 token 閾值才加快取（短 prompt 加快取沒意義）
-CACHE_MIN_TOKENS = 1024
-
-# P0-1：記憶體管理 — 對話歷史最大長度
-# 超過此長度時自動截斷（保留最新 N 輪），防止長對話 OOM
-MAX_HISTORY_LEN = 40   # 20 輪對話（user + assistant × 20）
-
-
-# P1：Adaptive Thinking 設定
-# 使用 type="auto" 讓 Claude 自己決定要不要思考，取代硬編碼 budget
-ADAPTIVE_THINKING_AGENTS = EXTENDED_THINKING_AGENTS  # 同一批 Agent
-
-
-# ── P0-1：多模型策略（成本最佳化）────────────────────────────
-# 根據任務複雜度自動選擇最適合的模型
-# Opus：複雜推理和架構決策（$15/1M input）
-# Sonnet：一般實作任務（$3/1M input，便宜 5x）
-# Haiku：格式化、文案、簡單分類（$0.25/1M input，便宜 60x）
-
-MODEL_STRATEGY = {
-    # Opus：需要最高品質推理的角色
-    "opus": {
-        "agents": {"NEXUS", "SIGMA", "ARIA", "NOVA", "ATOM", "SHIELD", "BOLT"},
-        "model":  "claude-opus-4-5",
-        "reason": "架構決策、安全審查、韌體設計需要最高推理品質",
-    },
-    # Sonnet：實作和分析（大多數角色）
-    "sonnet": {
-        "agents": {
-            "BYTE", "STACK", "FLUX", "KERN", "RIFT",
-            "ECHO", "LUMI", "VISTA", "SPARK", "PRISM",
-            "PROBE", "TRACE", "FORGE", "RELAY",
-            "VOLT", "WIRE", "QUANT", "ATLAS",
-        },
-        "model":  "claude-sonnet-4-5",
-        "reason": "實作、測試、設計任務需要平衡品質和成本",
-    },
-    # Haiku：輕量任務（文案、格式化、行銷）
-    "haiku": {
-        "agents": {"PULSE", "BRIDGE", "MEMO"},
-        "model":  "claude-haiku-4-5",
-        "reason": "文案生成、提案格式化、合規清單不需要複雜推理",
-    },
-}
-
-# 快速查找：Agent 名稱 → 模型
-_AGENT_MODEL_MAP: dict[str, str] = {}
-for tier in MODEL_STRATEGY.values():
-    for agent in tier["agents"]:
-        _AGENT_MODEL_MAP[agent] = tier["model"]
+# ── 模型查詢（委託給 config.py）──────────────────────────────────
 
 def get_model_for_agent(agent_name: str) -> str:
-    """根據 Agent 名稱回傳最佳模型"""
-    return _AGENT_MODEL_MAP.get(agent_name, "claude-sonnet-4-5")
+    """根據 Agent 名稱回傳最佳模型（集中於 config.py）"""
+    return cfg.model_for_agent(agent_name)
 
 
-# ══════════════════════════════════════════════════════════════
-#  P0-1：Token 成本追蹤器
-# ══════════════════════════════════════════════════════════════
+def _model_display_tag(model: str) -> str:
+    """把模型 ID 縮短為顯示用標籤"""
+    tags = {
+        ModelID.OPUS_46:   "Opus 4.6",
+        ModelID.SONNET_46: "Sonnet 4.6",
+        ModelID.SONNET_45: "Sonnet 4.5",
+        ModelID.HAIKU_45:  "Haiku 4.5",
+        ModelID.OPUS_45:   "Opus 4.5",
+    }
+    return tags.get(model, model.split("-")[1] if "-" in model else model)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  TokenBudget — 使用 cfg.calc_cost() 精確計算
+# ══════════════════════════════════════════════════════════════════
 
 class TokenBudget:
     """
     追蹤整個 session 的 Token 用量和成本。
+    使用 config.py 的 MODEL_COSTS_PER_MTK（含 cache read/write 成本）。
     超出 budget 時自動暫停，防止失控燒錢。
     """
 
-    def __init__(self, budget_usd: float = DEFAULT_BUDGET_USD, model: str = "claude-opus-4-5"):
-        self.budget_usd     = budget_usd
-        self.model          = model
-        self.total_input    = 0
-        self.total_output   = 0
-        self.call_count     = 0
-        self.session_start  = datetime.now()
-        self._log: list     = []
+    def __init__(self, budget_usd: float = DEFAULT_BUDGET_USD,
+                 model: str = ModelID.OPUS_46):
+        self.budget_usd    = budget_usd
+        self.model         = model
+        self.total_input   = 0
+        self.total_output  = 0
+        self.total_cache_read  = 0
+        self.total_cache_write = 0
+        self.call_count    = 0
+        self.session_start = datetime.now()
+        self._log: list    = []
 
-    def record(self, agent_name: str, input_tokens: int, output_tokens: int):
-        self.total_input  += input_tokens
-        self.total_output += output_tokens
-        self.call_count   += 1
-        cost = self._calc_cost(input_tokens, output_tokens)
+    def record(self, agent_name: str, input_tokens: int, output_tokens: int,
+               cache_read: int = 0, cache_write: int = 0) -> None:
+        self.total_input       += input_tokens
+        self.total_output      += output_tokens
+        self.total_cache_read  += cache_read
+        self.total_cache_write += cache_write
+        self.call_count        += 1
+        cost = cfg.calc_cost(self.model, input_tokens, output_tokens,
+                             cache_read, cache_write)
         self._log.append({
-            "agent":  agent_name,
-            "input":  input_tokens,
-            "output": output_tokens,
-            "cost":   cost,
-            "at":     datetime.now().isoformat(),
+            "agent":       agent_name,
+            "input":       input_tokens,
+            "output":      output_tokens,
+            "cache_read":  cache_read,
+            "cache_write": cache_write,
+            "cost":        cost,
+            "at":          datetime.now().isoformat(),
         })
+        logger.debug("token_usage", agent=agent_name,
+                     input=input_tokens, output=output_tokens,
+                     cache_read=cache_read, cost_usd=round(cost, 6))
 
-    def _calc_cost(self, inp: int, out: int) -> float:
-        prices = PRICING.get(self.model, PRICING["claude-opus-4-5"])
-        return (inp / 1_000_000 * prices["input"]) + (out / 1_000_000 * prices["output"])
+    def _calc_cost(self, inp: int, out: int,
+                   cache_read: int = 0, cache_write: int = 0) -> float:
+        return cfg.calc_cost(self.model, inp, out, cache_read, cache_write)
 
     @property
     def total_cost_usd(self) -> float:
-        return self._calc_cost(self.total_input, self.total_output)
+        return self._calc_cost(
+            self.total_input, self.total_output,
+            self.total_cache_read, self.total_cache_write
+        )
 
     @property
     def budget_remaining(self) -> float:
@@ -145,13 +136,13 @@ class TokenBudget:
     def over_budget(self) -> bool:
         return self.total_cost_usd >= self.budget_usd
 
-    def check_budget(self):
-        """超出 budget 時拋出例外"""
+    def check_budget(self) -> None:
         if self.over_budget:
             raise BudgetExceededError(
                 f"Token 用量已超出預算 ${self.budget_usd:.2f} USD\n"
                 f"  已用：${self.total_cost_usd:.4f} USD "
                 f"({self.total_input:,} input + {self.total_output:,} output tokens)\n"
+                f"  Cache 節省：{self.total_cache_read:,} read tokens\n"
                 f"  呼叫次數：{self.call_count}\n"
                 f"  執行時間：{(datetime.now() - self.session_start).seconds}s\n"
                 f"  增加 budget：python synthex.py ship ... --budget 10.0"
@@ -159,18 +150,20 @@ class TokenBudget:
 
     def summary(self) -> str:
         elapsed = (datetime.now() - self.session_start).seconds
+        cache_saved = self._calc_cost(self.total_cache_read, 0) * 0.9  # cache 節省 90%
         return (
-            f"\n{CYAN}{'─'*50}\n"
+            f"\n{CYAN}{'─'*54}\n"
             f"  💰 Token 用量報告\n"
-            f"{'─'*50}{RESET}\n"
-            f"  模型：{self.model}\n"
-            f"  Input tokens：{self.total_input:,}\n"
-            f"  Output tokens：{self.total_output:,}\n"
-            f"  總成本：${self.total_cost_usd:.4f} USD\n"
-            f"  API 呼叫次數：{self.call_count}\n"
-            f"  執行時間：{elapsed}s\n"
-            f"  預算剩餘：${self.budget_remaining:.4f} USD / ${self.budget_usd:.2f}\n"
-            f"{CYAN}{'─'*50}{RESET}"
+            f"{'─'*54}{RESET}\n"
+            f"  模型：{_model_display_tag(self.model)}\n"
+            f"  Input tokens ：{self.total_input:,}\n"
+            f"  Output tokens ：{self.total_output:,}\n"
+            f"  Cache read    ：{self.total_cache_read:,} tokens（節省 ~${cache_saved:.4f}）\n"
+            f"  總成本        ：${self.total_cost_usd:.4f} USD\n"
+            f"  API 呼叫次數  ：{self.call_count}\n"
+            f"  執行時間      ：{elapsed}s\n"
+            f"  預算剩餘      ：${self.budget_remaining:.4f} / ${self.budget_usd:.2f}\n"
+            f"{CYAN}{'─'*54}{RESET}"
         )
 
     def per_agent_summary(self) -> str:
@@ -198,201 +191,96 @@ class BudgetExceededError(Exception):
     pass
 
 
-# ══════════════════════════════════════════════════════════════
-#  P2-1：Circuit Breaker（Agent 依賴容錯）
-# ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+#  Circuit Breaker — 防止 Agent 級聯失敗
+# ══════════════════════════════════════════════════════════════════
 
 class CircuitState:
-    CLOSED = "closed"       # 正常
-    OPEN   = "open"         # 熔斷（不呼叫）
-    HALF   = "half_open"    # 試探性呼叫
+    CLOSED = "closed"
+    OPEN   = "open"
+    HALF   = "half_open"
 
 class CircuitBreaker:
     """
     為每個 Agent 的 API 呼叫加入 Circuit Breaker。
     連續失敗 3 次 → 熔斷 60 秒 → 試探性恢復。
-
-    好處：
-    - 快速失敗（不等待 30s 超時）
-    - 給 API 恢復時間
-    - 防止級聯失敗
     """
 
-    def __init__(self,
-                 failure_threshold: int   = 3,
-                 recovery_timeout:  float = 60.0,
-                 half_open_max:     int   = 1):
-        self.failure_threshold  = failure_threshold
-        self.recovery_timeout   = recovery_timeout
-        self.half_open_max      = half_open_max
-        self._failures: dict    = {}   # agent_name → 連續失敗次數
-        self._opened_at: dict   = {}   # agent_name → 熔斷時間
-        self._state: dict       = {}   # agent_name → CircuitState
+    def __init__(self, failure_threshold: int = 3,
+                 recovery_timeout: float = 60.0):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout  = recovery_timeout
+        self._failures: dict   = {}
+        self._opened_at: dict  = {}
+        self._state: dict      = {}
 
     def _get_state(self, agent: str) -> str:
         state = self._state.get(agent, CircuitState.CLOSED)
         if state == CircuitState.OPEN:
-            opened = self._opened_at.get(agent, 0)
-            if time.time() - opened > self.recovery_timeout:
+            if time.time() - self._opened_at.get(agent, 0) > self.recovery_timeout:
                 self._state[agent] = CircuitState.HALF
                 return CircuitState.HALF
         return state
 
     def call(self, agent: str, fn):
-        """執行呼叫，帶 Circuit Breaker 保護"""
         state = self._get_state(agent)
-
         if state == CircuitState.OPEN:
             remaining = self.recovery_timeout - (time.time() - self._opened_at.get(agent, 0))
             raise RuntimeError(f"[Circuit Breaker] {agent} 熔斷中，{remaining:.0f}s 後恢復")
 
         try:
             result = fn()
-            # 成功：重置失敗計數
             self._failures[agent] = 0
             if state == CircuitState.HALF:
                 self._state[agent] = CircuitState.CLOSED
                 print(f"\n{GREEN}✔ [{agent}] Circuit Breaker 恢復{RESET}")
-
             return result
 
-        except Exception as e:
+        except Exception:
             self._failures[agent] = self._failures.get(agent, 0) + 1
             failures = self._failures[agent]
-
             if failures >= self.failure_threshold:
                 self._state[agent]     = CircuitState.OPEN
                 self._opened_at[agent] = time.time()
+                logger.error("circuit_open", agent=agent, failures=failures,
+                             recovery_in=self.recovery_timeout)
                 print(f"\n{RED}⚡ [{agent}] Circuit Breaker 熔斷"
-
-                      f"（連續失敗 {failures} 次，{self.recovery_timeout}s 後恢復）{RESET}")
-
+                      f"（連續失敗 {failures} 次）{RESET}")
             raise
 
 
-# 全域 Circuit Breaker（所有 Agent 共用）
 _circuit_breaker = CircuitBreaker()
 
 
-# ══════════════════════════════════════════════════════════════
-#  P2-2：Agentic Monitoring（決策可觀測性）
-# ══════════════════════════════════════════════════════════════
-
-class AgentDecisionLog:
-    """
-    記錄每個 Agent 的決策品質、延遲和失敗模式。
-    寫入 docs/AGENT_LOG.jsonl，供事後分析。
-    """
-
-    def __init__(self, workdir: str):
-        from pathlib import Path
-        self.log_path = Path(workdir) / "docs" / "AGENT_LOG.jsonl"
-        self.log_path.parent.mkdir(exist_ok=True)
-
-    def record(self, agent: str, phase: int, task_type: str,
-               duration_s: float, tokens_in: int, tokens_out: int,
-               cost_usd: float, success: bool, quality_score: int = None,
-               error: str = None):
-        """記錄一次 Agent 決策"""
-        entry = {
-            "ts":           datetime.now().isoformat(),
-            "agent":        agent,
-            "phase":        phase,
-            "task_type":    task_type,
-            "duration_s":   round(duration_s, 2),
-            "tokens_in":    tokens_in,
-            "tokens_out":   tokens_out,
-            "cost_usd":     round(cost_usd, 6),
-            "success":      success,
-            "quality_score":quality_score,
-            "error":        error,
-        }
-        with open(self.log_path, "a") as f:
-            import json as _j
-            f.write(_j.dumps(entry, ensure_ascii=False) + "\n")
-
-
-    def summary(self) -> str:
-        """產出監控摘要"""
-        if not self.log_path.exists():
-            return "（無監控記錄）"
-
-        import json as _j
-        entries = [_j.loads(l) for l in self.log_path.read_text().splitlines() if l.strip()]
-        if not entries:
-            return "（無記錄）"
-
-        by_agent: dict = {}
-        for e in entries:
-            n = e["agent"]
-            if n not in by_agent:
-                by_agent[n] = {"calls": 0, "total_cost": 0, "failures": 0, "avg_duration": []}
-            by_agent[n]["calls"]        += 1
-            by_agent[n]["total_cost"]   += e.get("cost_usd", 0)
-            by_agent[n]["failures"]     += 0 if e.get("success") else 1
-            by_agent[n]["avg_duration"].append(e.get("duration_s", 0))
-
-        lines = [f"\n{CYAN}{'─'*50}\n  📊 Agent 監控摘要\n{'─'*50}{RESET}"]
-
-
-
-        for agent, stats in sorted(by_agent.items(), key=lambda x: -x[1]["total_cost"]):
-            avg_d   = sum(stats["avg_duration"]) / len(stats["avg_duration"])
-            fail_r  = stats["failures"] / stats["calls"] * 100
-            lines.append(
-                f"  {agent:<8} 呼叫:{stats['calls']:>3}  "
-                f"成本:${stats['total_cost']:.4f}  "
-                f"平均:{avg_d:.1f}s  "
-                f"失敗率:{fail_r:.0f}%"
-            )
-        return "\n".join(lines)
-
-
-
-# ── 全域 session budget（所有 Agent 共享）────────────────────
-_session_budget: TokenBudget = None
-
-def get_session_budget() -> TokenBudget:
-    global _session_budget
-    if _session_budget is None:
-        _session_budget = TokenBudget()
-    return _session_budget
-
-def init_session_budget(budget_usd: float = DEFAULT_BUDGET_USD, model: str = "claude-opus-4-5"):
-    global _session_budget
-    _session_budget = TokenBudget(budget_usd=budget_usd, model=model)
-    return _session_budget
-
-
-# ══════════════════════════════════════════════════════════════
-#  P0-2：API 重試機制（指數退避）
-# ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+#  重試機制（指數退避）
+# ══════════════════════════════════════════════════════════════════
 
 def _api_call_with_retry(fn, max_retries: int = 4, agent_name: str = "?"):
     """
     帶重試的 API 呼叫包裝器。
-
-    重試策略：
-    - RateLimitError (429)：指數退避，最多 4 次，等待 2/4/8/16 秒
-    - APIConnectionError：最多 3 次，等待 1/2/4 秒
-    - APIStatusError 5xx：最多 2 次，等待 2/4 秒
-    - 其他例外：直接拋出，不重試
+    - RateLimitError (429)：指數退避 2/4/8/16 秒
+    - APIConnectionError：最多 3 次，1/2/4 秒
+    - APIStatusError 5xx：最多 2 次，2/4 秒
+    - 其他例外：直接拋出
     """
     for attempt in range(max_retries):
         try:
             return fn()
 
-        except anthropic.RateLimitError as e:
-            wait = 2 ** attempt  # 2, 4, 8, 16 秒
+        except anthropic.RateLimitError:
+            wait = 2 ** attempt
             if attempt < max_retries - 1:
-                print(f"\n{YELLOW}  ⚠ [{agent_name}] Rate Limit (429)，{wait}s 後重試 ({attempt+1}/{max_retries})...{RESET}")
+                logger.warning("rate_limit", agent=agent_name, wait_s=wait, attempt=attempt+1)
+                print(f"\n{YELLOW}  ⚠ [{agent_name}] Rate Limit，{wait}s 後重試 ({attempt+1}/{max_retries})...{RESET}")
                 time.sleep(wait)
             else:
                 raise
 
-        except anthropic.APIConnectionError as e:
-            wait = 2 ** min(attempt, 3)  # 1, 2, 4 秒
+        except anthropic.APIConnectionError:
+            wait = 2 ** min(attempt, 3)
             if attempt < min(max_retries - 1, 2):
+                logger.warning("conn_error", agent=agent_name, wait_s=wait)
                 print(f"\n{YELLOW}  ⚠ [{agent_name}] 連線錯誤，{wait}s 後重試...{RESET}")
                 time.sleep(wait)
             else:
@@ -402,14 +290,15 @@ def _api_call_with_retry(fn, max_retries: int = 4, agent_name: str = "?"):
             if e.status_code >= 500:
                 wait = 2 ** attempt
                 if attempt < min(max_retries - 1, 1):
+                    logger.warning("server_error", agent=agent_name,
+                                   status=e.status_code, wait_s=wait)
                     print(f"\n{YELLOW}  ⚠ [{agent_name}] 伺服器錯誤 ({e.status_code})，{wait}s 後重試...{RESET}")
                     time.sleep(wait)
                 else:
                     raise
-            elif e.status_code == 529:  # Overloaded
+            elif e.status_code == 529:
                 wait = 5 * (attempt + 1)
                 if attempt < max_retries - 1:
-                    print(f"\n{YELLOW}  ⚠ [{agent_name}] API 超載，{wait}s 後重試...{RESET}")
                     time.sleep(wait)
                 else:
                     raise
@@ -417,9 +306,28 @@ def _api_call_with_retry(fn, max_retries: int = 4, agent_name: str = "?"):
                 raise  # 4xx 客戶端錯誤不重試
 
 
-# ══════════════════════════════════════════════════════════════
-#  BaseAgent v3
-# ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+#  全域 Session Budget
+# ══════════════════════════════════════════════════════════════════
+
+_session_budget: TokenBudget | None = None
+
+def get_session_budget() -> TokenBudget:
+    global _session_budget
+    if _session_budget is None:
+        _session_budget = TokenBudget()
+    return _session_budget
+
+def init_session_budget(budget_usd: float = DEFAULT_BUDGET_USD,
+                        model: str = ModelID.OPUS_46) -> TokenBudget:
+    global _session_budget
+    _session_budget = TokenBudget(budget_usd=budget_usd, model=model)
+    return _session_budget
+
+
+# ══════════════════════════════════════════════════════════════════
+#  BaseAgent v4
+# ══════════════════════════════════════════════════════════════════
 
 class BaseAgent:
     name:     str  = "AGENT"
@@ -431,75 +339,80 @@ class BaseAgent:
     personality_traits: dict = {}
     system_prompt: str = ""
 
-    def __init__(self, workdir: str = None, auto_confirm: bool = False,
-                 budget_usd: float = None):
-        self.client   = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-        # P0-1：自動選擇最適合的模型（成本最佳化）
-        self.model    = get_model_for_agent(self.name)
+    def __init__(self, workdir: str | None = None, auto_confirm: bool = False,
+                 budget_usd: float | None = None):
+        self.client   = anthropic.Anthropic(
+            api_key=os.environ.get("ANTHROPIC_API_KEY", "")
+        )
+        # 模型選擇完全委託給 config.py
+        self.model    = cfg.model_for_agent(self.name)
         self.workdir  = workdir or os.getcwd()
         self.executor = ToolExecutor(workdir=self.workdir, auto_confirm=auto_confirm)
         self.memory_file          = MEMORY_DIR / f"{self.name.lower()}_memory.json"
         self.conversation_history = self._load_memory()
-        # 使用全域 session budget，或建立獨立的
-        self._budget = get_session_budget()
+        self._budget              = get_session_budget()
 
-    # ── 記憶管理 ───────────────────────────────────────────────
+    # ── 記憶管理 ───────────────────────────────────────────────────
 
     def _load_memory(self) -> list:
         if self.memory_file.exists():
             try:
-                return json.loads(self.memory_file.read_text())
-            except Exception:
-                pass
+                return json.loads(self.memory_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning("memory_load_failed", agent=self.name, error=str(e))
         return []
 
-    def _save_memory(self):
-        trimmed = self.conversation_history[-40:]
-        self.memory_file.write_text(json.dumps(trimmed, ensure_ascii=False, indent=2))
+    def _save_memory(self) -> None:
+        trimmed = self.conversation_history[-MAX_HISTORY_LEN:]
+        # 原子寫入（防止中斷導致記憶檔損毀）
+        tmp = self.memory_file.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(trimmed, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+        tmp.replace(self.memory_file)
 
-    def clear_memory(self):
+    def clear_memory(self) -> None:
         self.conversation_history = []
         if self.memory_file.exists():
             self.memory_file.unlink()
         self._print_system("記憶已清除")
 
-    def set_workdir(self, path: str):
+    def set_workdir(self, path: str) -> None:
         self.workdir  = str(Path(path).resolve())
         self.executor = ToolExecutor(workdir=self.workdir,
-                                      auto_confirm=self.executor.auto_confirm)
+                                     auto_confirm=self.executor.auto_confirm)
         self._print_system(f"工作目錄 → {self.workdir}")
 
-    # ── 顯示工具 ───────────────────────────────────────────────
+    # ── 終端 UI ────────────────────────────────────────────────────
 
     def _header(self, mode: str = "") -> str:
-        ts        = datetime.now().strftime("%H:%M:%S")
-        mode_tag  = f" [{mode}]" if mode else ""
-        budget    = self._budget
-        cost_str  = f"${budget.total_cost_usd:.3f}/${budget.budget_usd:.1f}"
-        # 顯示使用的模型層級
-        model_tag = {"claude-opus-4-5": "Opus", "claude-sonnet-4-5": "Sonnet",
-                     "claude-haiku-4-5": "Haiku"}.get(self.model, self.model.split("-")[1])
+        ts       = datetime.now().strftime("%H:%M:%S")
+        mode_tag = f" [{mode}]" if mode else ""
+        budget   = self._budget
+        cost_str = f"${budget.total_cost_usd:.3f}/${budget.budget_usd:.1f}"
         return (
             f"\n{self.color}{BOLD}┌─ {self.emoji} {self.name}{RESET}"
-            f"{DIM} · {self.title}{mode_tag} · {model_tag} · {ts} · 💰{cost_str}{RESET}"
+            f"{DIM} · {self.title}{mode_tag} · "
+            f"{_model_display_tag(self.model)} · {ts} · 💰{cost_str}{RESET}"
         )
 
     def _footer(self) -> str:
         return f"{self.color}└{'─'*58}{RESET}\n"
 
-    def _print_system(self, msg: str):
+    def _print_system(self, msg: str) -> None:
         print(f"\n{DIM}  ⚙ [{self.name}] {msg}{RESET}")
 
-    def _print_tool_call(self, name: str, inp: dict):
+    def _print_tool_call(self, name: str, inp: dict) -> None:
         args = ", ".join(f"{k}={repr(v)[:50]}" for k, v in inp.items())
         print(f"\n{self.color}│{RESET} {CYAN}🔧 {name}({args}){RESET}")
 
-    def _print_tool_result(self, result: str):
+    def _print_tool_result(self, result: str) -> None:
         preview = result[:200].replace("\n", " ")
         suffix  = "..." if len(result) > 200 else ""
         print(f"{self.color}│{RESET} {DIM}   → {preview}{suffix}{RESET}")
 
-    def _stream_text(self, text: str):
+    def _stream_text(self, text: str) -> None:
         print(f"{self.color}│{RESET} ", end="", flush=True)
         for ch in text:
             print(ch, end="", flush=True)
@@ -507,30 +420,20 @@ class BaseAgent:
                 print(f"{self.color}│{RESET} ", end="", flush=True)
         print()
 
-    # ── System Prompt ──────────────────────────────────────────
+    # ── History 截斷 ──────────────────────────────────────────────
 
     def _trim_history(self) -> None:
-        """
-        P0-1 記憶體管理：主動截斷 conversation_history。
-        在每次 append 後呼叫，確保不超過 MAX_HISTORY_LEN 輪。
-        保留最新的 N 條記錄（不是丟棄最舊的 system 消息）。
-        """
         if len(self.conversation_history) > MAX_HISTORY_LEN:
             self.conversation_history = self.conversation_history[-MAX_HISTORY_LEN:]
 
-    def _build_system_prompt(
-        self,
-        with_tools:    bool = False,
-        use_cache:     bool = True,
-    ) -> list[dict] | str:
+    # ── System Prompt 建構 ────────────────────────────────────────
+
+    def _build_system_prompt(self, with_tools: bool = False,
+                              use_cache: bool = True) -> list[dict] | str:
         """
         建立 system prompt。
-
-        P0-4 Prompt Caching：
-          - 回傳 list[dict] 格式（帶 cache_control），讓 Anthropic API 快取
-          - system prompt 是每次請求最大的固定成本，快取後成本降 90%
-          - 只有超過 CACHE_MIN_TOKENS 的 prompt 才值得快取
-          - cache_control.type = "ephemeral"：5 分鐘快取（標準 TTL）
+        - TokenGuard：防止 context window 溢位
+        - Prompt Caching（1h TTL，GA）：system prompt 固定部分快取後省 90%
         """
         skills_str = "\n".join(f"  • {s}" for s in self.skills)
         traits_str = "\n".join(f"  • {k}: {v}/100" for k, v in self.personality_traits.items())
@@ -562,46 +465,36 @@ class BaseAgent:
 
 今天日期：{datetime.now().strftime('%Y-%m-%d')}
 """
-
-        # P0-3：Context Window 保護（TokenGuard）
-        guard    = TokenGuard(self.model)
+        # TokenGuard：截斷過長的 system prompt
+        guard = TokenGuard(self.model)
         if not guard.check(prompt_text):
             prompt_text = guard.truncate(prompt_text, label="system_prompt")
 
-        # Prompt Caching（1小時 TTL，已 GA）
+        # Prompt Caching（ephemeral = 1h TTL，已 GA）
         est_tokens = len(prompt_text) // 4
         if use_cache and est_tokens >= CACHE_MIN_TOKENS:
             return [{"type": "text", "text": prompt_text,
                      "cache_control": cfg.cache_control_block()}]
-
         return prompt_text
 
     def _build_run_params(self, tools: list, messages: list) -> dict:
-        """
-        P1-4：建立 run() 的 API 參數。
-        整合 Interleaved Thinking + Prompt Caching + Adaptive Thinking。
-        """
-        params = dict(
-            model     = self.model,
-            max_tokens= 8192,
-            system    = self._build_system_prompt(with_tools=True),
-            tools     = tools,
-            messages  = messages,
+        """建立 run() 的 API 參數（含 Adaptive Thinking + Prompt Cache）"""
+        params: dict = dict(
+            model      = self.model,
+            max_tokens = cfg.max_output_tokens(self.model),
+            system     = self._build_system_prompt(with_tools=True),
+            tools      = tools,
+            messages   = messages,
         )
 
         is_thinking_agent = self.name in ADAPTIVE_THINKING_AGENTS
-        is_adaptive_model = any(
-            self.model.startswith(m)
-            for m in ["claude-opus-4-6", "claude-sonnet-4-6"]
-        )
+        is_adaptive_model = self.model in (ModelID.OPUS_46, ModelID.SONNET_46)
 
         if is_thinking_agent:
             if is_adaptive_model:
-                # Adaptive Thinking + Interleaved（Opus 4.6 / Sonnet 4.6）
                 params["thinking"] = {"type": "auto"}
                 params["betas"]    = ["interleaved-thinking-2025-05-14"]
             else:
-                # 手動 Extended Thinking + Interleaved（其他 Claude 4）
                 params["thinking"] = {
                     "type":          "enabled",
                     "budget_tokens": THINKING_BUDGET["normal"],
@@ -610,141 +503,95 @@ class BaseAgent:
 
         return params
 
-    # ── 對話模式（無工具）──────────────────────────────────────
+    # ── 對話模式 ──────────────────────────────────────────────────
 
     def chat(self, user_message: str, context: str = "") -> str:
-        """純對話模式 — 帶重試 + Token 追蹤"""
-        # Budget 檢查
+        """純對話模式 — 帶重試 + Token 追蹤 + Streaming"""
         self._budget.check_budget()
 
         full_msg = f"[上下文]\n{context}\n\n[問題]\n{user_message}" if context else user_message
         self.conversation_history.append({"role": "user", "content": full_msg})
-        self._trim_history()   # P0-1：主動截斷
+        self._trim_history()
         print(self._header("對話"))
 
-        response_text = ""
-        # P1-1：Adaptive Thinking（取代硬編碼 Extended Thinking）
-        # Claude Opus 4.6 / Sonnet 4.6 支援自動決定何時及用多少思考量
-        # 其他 Claude 4 模型使用手動 Extended Thinking
-        is_adaptive_model = any(
-            self.model.startswith(m) for m in
-            ["claude-opus-4-6", "claude-sonnet-4-6"]
-        )
-        use_thinking = self.name in ADAPTIVE_THINKING_AGENTS
-        thinking_budget = THINKING_BUDGET["deep"] if use_thinking else 0
+        response_text  = ""
+        is_adaptive    = self.model in (ModelID.OPUS_46, ModelID.SONNET_46)
+        use_thinking   = self.name in ADAPTIVE_THINKING_AGENTS
+        thinking_chars = 0
 
         try:
-            def _call():
-                params = dict(
-                    model    = self.model,
-                    max_tokens = 4096 + (thinking_budget if use_thinking else 0),
-                    system   = self._build_system_prompt(with_tools=False),
-                    messages = self.conversation_history,
+            stream_params: dict = dict(
+                model      = self.model,
+                max_tokens = cfg.max_output_tokens(self.model),
+                system     = self._build_system_prompt(with_tools=False),
+                messages   = self.conversation_history,
+            )
+            if use_thinking:
+                stream_params["thinking"] = (
+                    {"type": "auto"} if is_adaptive
+                    else {"type": "enabled",
+                          "budget_tokens": THINKING_BUDGET["deep"]}
                 )
-                if use_thinking:
-                    if is_adaptive_model:
-                        # P1-1：Adaptive Thinking — 讓模型自己決定
-                        params["thinking"] = {"type": "auto"}
-                    else:
-                        # 手動 Extended Thinking（Claude 4.0/4.5）
-                        params["thinking"] = {
-                            "type":          "enabled",
-                            "budget_tokens": thinking_budget,
-                        }
-                    if params["model"] == "claude-haiku-4-5":
-                        params["model"] = "claude-sonnet-4-5"
-                return self.client.messages.create(**params)
+                # Haiku 不支援 thinking → 升級到 Sonnet
+                if stream_params["model"] == ModelID.HAIKU_45:
+                    stream_params["model"] = ModelID.SONNET_46
 
-            # P0-3：Circuit Breaker 保護 chat()
-            # P1-3：chat() Streaming 輸出（和 run() 體驗一致）
-            # 用 stream_context manager 即時輸出，用戶不再等到全部完成才看到內容
-            def _call_stream():
-                params = dict(
-                    model    = self.model,
-                    max_tokens = 4096 + (thinking_budget if use_thinking else 0),
-                    system   = self._build_system_prompt(with_tools=False),
-                    messages = self.conversation_history,
-                )
-                if use_thinking:
-                    params["thinking"] = (
-                        {"type": "auto"} if is_adaptive_model
-                        else {"type": "enabled", "budget_tokens": thinking_budget}
-                    )
-                    if params["model"] == "claude-haiku-4-5":
-                        params["model"] = "claude-sonnet-4-5"
-                return params
-
-            stream_params = _call_stream()
-
-            input_tokens  = 0
-            output_tokens = 0
-            thinking_chars = 0
-
-            print(f"  {DIM}", end="", flush=True)  # 開始串流輸出
+            input_tokens = output_tokens = 0
+            cache_read   = cache_write   = 0
 
             with self.client.messages.stream(**stream_params) as stream:
                 for event in stream:
-                    import anthropic as _ant
-                    # 思考塊（顯示進度但不顯示內容）
                     if hasattr(event, "type"):
+                        # 思考塊：顯示進度點，不顯示內容
                         if event.type == "content_block_start":
-                            if hasattr(event, "content_block"):
-                                cb = event.content_block
-                                if hasattr(cb, "type") and cb.type == "thinking":
-                                    print(f"💭", end="", flush=True)
-                    # 文字串流
-                    if hasattr(event, "type") and event.type == "content_block_delta":
-                        delta = getattr(event, "delta", None)
-                        if delta:
-                            if hasattr(delta, "type") and delta.type == "text_delta":
-                                chunk = delta.text
-                                response_text += chunk
-                                print(chunk, end="", flush=True)
-                            elif hasattr(delta, "type") and delta.type == "thinking_delta":
-                                thinking_chars += len(getattr(delta, "thinking", ""))
-                    # 用量統計
-                    if hasattr(event, "type") and event.type == "message_delta":
-                        usage = getattr(event, "usage", None)
-                        if usage:
-                            output_tokens = getattr(usage, "output_tokens", 0)
+                            cb = getattr(event, "content_block", None)
+                            if cb and getattr(cb, "type", "") == "thinking":
+                                print("💭", end="", flush=True)
+                        # 文字串流
+                        if event.type == "content_block_delta":
+                            delta = getattr(event, "delta", None)
+                            if delta:
+                                if getattr(delta, "type", "") == "text_delta":
+                                    chunk = delta.text
+                                    response_text += chunk
+                                    print(chunk, end="", flush=True)
+                                elif getattr(delta, "type", "") == "thinking_delta":
+                                    thinking_chars += len(getattr(delta, "thinking", ""))
 
-                # 從最終訊息取 input tokens
                 final_msg = stream.get_final_message()
                 if hasattr(final_msg, "usage"):
-                    input_tokens  = final_msg.usage.input_tokens
-                    output_tokens = final_msg.usage.output_tokens
+                    u = final_msg.usage
+                    input_tokens  = u.input_tokens
+                    output_tokens = u.output_tokens
+                    cache_read    = getattr(u, "cache_read_input_tokens", 0)
+                    cache_write   = getattr(u, "cache_creation_input_tokens", 0)
 
-            print(f"{RESET}")  # 結束串流，換行
-
-            # 處理快取 hit 資訊
-            _cache_hit = getattr(getattr(stream.get_final_message(), "usage", None),
-                                  "cache_read_input_tokens", 0)
+            print(f"{RESET}")
 
             if use_thinking and thinking_chars:
-                self._print_system(f"💭 思考過程：{thinking_chars} 字元")
-            if _cache_hit:
-                self._print_system(f"⚡ Prompt Cache 命中：{_cache_hit:,} tokens（已節省費用）")
+                self._print_system(f"💭 思考過程：{thinking_chars:,} 字元")
+            if cache_read:
+                self._print_system(f"⚡ Cache 命中：{cache_read:,} tokens（節省費用）")
 
-            # Token 追蹤
             if input_tokens or output_tokens:
-                self._budget.record(self.name, input_tokens, output_tokens)
+                self._budget.record(self.name, input_tokens, output_tokens,
+                                    cache_read, cache_write)
+                cost = cfg.calc_cost(self.model, input_tokens, output_tokens,
+                                     cache_read, cache_write)
                 self._print_system(
                     f"tokens: {input_tokens:,}in + {output_tokens:,}out "
-                    f"= ${self._budget._calc_cost(input_tokens, output_tokens):.4f}"
+                    f"= ${cost:.4f}"
                 )
 
-            # 顯示輸出
-            print(f"{self.color}│{RESET} ", end="", flush=True)
-            for ch in response_text:
-                print(ch, end="", flush=True)
-                if ch == "\n":
-                    print(f"{self.color}│{RESET} ", end="", flush=True)
-            print()
+            logger.info("chat_done", agent=self.name,
+                        input_tokens=input_tokens, output_tokens=output_tokens,
+                        cache_read=cache_read)
 
         except BudgetExceededError:
             raise
         except Exception as e:
             response_text = f"[API 錯誤] {e}"
+            logger.error("chat_error", agent=self.name, error=str(e))
             print(f"{RED}  ✖ {response_text}{RESET}")
 
         print(self._footer())
@@ -752,11 +599,10 @@ class BaseAgent:
         self._save_memory()
         return response_text
 
-    # ── Agentic 模式（有工具）──────────────────────────────────
+    # ── Agentic 模式 ──────────────────────────────────────────────
 
     def run(self, task: str, context: str = "", max_iterations: int = 20) -> str:
         """Agentic 模式 — 帶重試 + Token 追蹤 + Budget Guard"""
-        # Budget 檢查
         self._budget.check_budget()
 
         tools     = get_tools_for_role(self.dept)
@@ -771,36 +617,34 @@ class BaseAgent:
 
         while iteration < max_iterations:
             iteration += 1
-
-            # Budget 檢查（每輪迭代都檢查）
             self._budget.check_budget()
 
             try:
-                _start_ts = time.time()
-
                 def _call():
                     return self.client.messages.create(
                         **self._build_run_params(tools=tools, messages=messages)
                     )
 
-                # P2-1：Circuit Breaker 保護
                 response = _circuit_breaker.call(
                     self.name,
                     lambda: _api_call_with_retry(_call, agent_name=self.name)
                 )
 
-                # Token 追蹤
                 if hasattr(response, "usage"):
+                    u = response.usage
                     self._budget.record(
                         self.name,
-                        response.usage.input_tokens,
-                        response.usage.output_tokens
+                        u.input_tokens,
+                        u.output_tokens,
+                        getattr(u, "cache_read_input_tokens", 0),
+                        getattr(u, "cache_creation_input_tokens", 0),
                     )
 
             except BudgetExceededError:
                 raise
             except Exception as e:
                 msg = f"[API 錯誤] {e}"
+                logger.error("run_error", agent=self.name, iteration=iteration, error=str(e))
                 print(f"{RED}  ✖ {msg}{RESET}")
                 return msg
 
@@ -830,12 +674,14 @@ class BaseAgent:
 
             if response.stop_reason == "end_turn":
                 self._print_system(f"✔ 完成（{iteration} 輪）")
+                logger.info("run_done", agent=self.name, iterations=iteration)
                 break
             elif response.stop_reason != "tool_use":
                 self._print_system(f"停止: {response.stop_reason}")
                 break
         else:
             self._print_system(f"⚠ 達到最大迭代次數 ({max_iterations})")
+            logger.warning("max_iterations", agent=self.name, max=max_iterations)
 
         print(self._footer())
         self.conversation_history.append({"role": "user",      "content": task})
@@ -843,7 +689,7 @@ class BaseAgent:
         self._save_memory()
         return final_text
 
-    # ── 快捷方法 ────────────────────────────────────────────────
+    # ── 快捷方法 ──────────────────────────────────────────────────
 
     def review(self, content: str) -> str:
         return self.chat(f"請審查以下內容，提供專業意見和改進建議：\n\n{content}")

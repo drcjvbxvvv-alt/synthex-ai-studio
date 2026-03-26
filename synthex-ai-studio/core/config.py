@@ -79,9 +79,11 @@ class Tier(Enum):
 
 
 # ── Context Window 限制（token）──────────────────────────────────
+# 2026-03-13：Opus 4.6 + Sonnet 4.6 的 1M context 正式 GA
+# 無溢價，不需要 beta header，標準費率計費
 CONTEXT_WINDOWS: dict[str, int] = {
-    ModelID.OPUS_46:   1_000_000,   # 1M GA（Max/Team/Enterprise）
-    ModelID.SONNET_46:  200_000,    # 標準；1M beta 需申請
+    ModelID.OPUS_46:   1_000_000,   # 1M GA（2026-03-13 起，全平台）
+    ModelID.SONNET_46: 1_000_000,   # 1M GA（2026-03-13 起）
     ModelID.SONNET_45:  200_000,
     ModelID.HAIKU_45:   200_000,
     ModelID.OPUS_45:    200_000,
@@ -124,7 +126,7 @@ AGENT_TIER_MAP: dict[str, Tier] = {
     "RIFT":  Tier.SONNET, "KERN": Tier.SONNET,
     # Haiku：快速輔助
     "RELAY": Tier.HAIKU, "BRIDGE":Tier.HAIKU, "WIRE": Tier.HAIKU,
-    "BOLT":  Tier.HAIKU, "ATLAS": Tier.HAIKU,
+    "BOLT":  Tier.HAIKU, "ATLAS": Tier.HAIKU, "PULSE":Tier.HAIKU,
 }
 
 # ── Adaptive Thinking Agent（使用 type=auto）───────────────────

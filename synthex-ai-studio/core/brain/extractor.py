@@ -16,6 +16,12 @@ from pathlib import Path
 from typing import Optional
 import anthropic
 
+try:
+    from core.config import cfg, ModelID
+    _DEFAULT_MODEL = cfg.model_sonnet
+except ImportError:
+    _DEFAULT_MODEL = "claude-sonnet-4-6"  # fallback
+
 
 EXTRACTION_PROMPT = """
 你是一個專業的程式碼考古學家。從以下的程式碼變更或程式碼片段中提取有價值的知識。
@@ -57,7 +63,7 @@ class KnowledgeExtractor:
             api_key=os.environ.get("ANTHROPIC_API_KEY")
         )
         # 用便宜的 Sonnet 做提取（量大但邏輯不複雜）
-        self.model = "claude-sonnet-4-5"
+        self.model = _DEFAULT_MODEL
 
     def _call(self, content: str, max_tokens: int = 1000) -> dict:
         """呼叫 Claude API 提取知識"""

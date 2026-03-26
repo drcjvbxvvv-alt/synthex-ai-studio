@@ -20,6 +20,11 @@ from datetime import datetime
 from .graph import KnowledgeGraph
 from .extractor import KnowledgeExtractor
 from .context import ContextEngineer
+
+try:
+    from core.config import cfg
+except ImportError:
+    cfg = None  # Brain 可獨立使用（無 synthex 主程式時降級）
 from .archaeologist import ProjectArchaeologist
 from .vector_memory  import VectorMemory          # v1.1
 from .temporal_graph import TemporalGraph         # v1.1
@@ -144,7 +149,7 @@ class ProjectBrain:
             "version":         "1.0",
             "auto_learn":      True,
             "extract_on_commit": True,
-            "model":           "claude-sonnet-4-5",
+            "model":           cfg.model_sonnet,  # 使用 config.py 集中管理
         }
         (self.brain_dir / self.CONFIG_FILE).write_text(
             json.dumps(config, ensure_ascii=False, indent=2)
