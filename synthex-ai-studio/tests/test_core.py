@@ -151,6 +151,40 @@ class TestConversationHistory(unittest.TestCase):
         self.assertEqual(agent.conversation_history, original)
 
 
+class TestTokenGuard(unittest.TestCase):
+    """TokenGuard Context Window 保護的 unit tests"""
+
+    def test_no_truncation_when_within_limit(self):
+        """短文件不應被截斷"""
+        from core.logging_setup import TokenGuard
+        guard = TokenGuard("claude-haiku-4-5")
+        short = "hello world " * 100
+        result = guard.truncate(short, "short_doc")
+        self.assertEqual(result, short)
+
+    def test_truncation_when_over_limit(self):
+        """超過限制的文件應被截斷"""
+        from core.logging_setup import TokenGuard
+        guard = TokenGuard("claude-haiku-4-5")
+        # 700KB > safe_limit（640KB）
+        big_doc = "x " * (350 * 1024)
+        result = guard.truncate(big_doc, "big_doc")
+        self.assertLess(len(result), len(big_doc))
+        self.assertIn("[TokenGuard", result)
+
+    def test_truncation_preserves_head_and_tail(self):
+        """截斷後應保留開頭和結尾"""
+        from core.logging_setup import TokenGuard
+        guard = TokenGuard("claude-haiku-4-5")
+        head = "HEAD_CONTENT " * 1000
+        tail = " TAIL_CONTENT" * 1000
+        middle  = "MIDDLE " * (500 * 1024 // 7)
+        big_doc = head + middle + tail
+        result = guard.truncate(big_doc, "structured_doc")
+        self.assertIn("HEAD_CONTENT", result)
+        self.assertIn("TAIL_CONTENT", result)
+
+
 # ══════════════════════════════════════════════════════════════
 # Test Group 3：StructuredOutputParser
 # ══════════════════════════════════════════════════════════════

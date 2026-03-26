@@ -563,12 +563,16 @@ class BaseAgent:
 今天日期：{datetime.now().strftime('%Y-%m-%d')}
 """
 
-        # Prompt Caching：估算 token 數（4 chars ≈ 1 token）
+        # P0-3：Context Window 保護（TokenGuard）
+        guard    = TokenGuard(self.model)
+        if not guard.check(prompt_text):
+            prompt_text = guard.truncate(prompt_text, label="system_prompt")
+
+        # Prompt Caching（1小時 TTL，已 GA）
         est_tokens = len(prompt_text) // 4
         if use_cache and est_tokens >= CACHE_MIN_TOKENS:
-            # 回傳帶 cache_control 的結構體格式
             return [{"type": "text", "text": prompt_text,
-                     "cache_control": {"type": "ephemeral"}}]
+                     "cache_control": cfg.cache_control_block()}]
 
         return prompt_text
 
