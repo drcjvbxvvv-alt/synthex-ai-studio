@@ -5,6 +5,45 @@ SYNTHEX Tool Engine
 """
 
 import os
+
+# ── 安全命令執行 ────────────────────────────────────────────────
+import shlex as _shlex, subprocess as _sub
+MAX_CMD_OUTPUT_BYTES = 1_048_576   # 1MB
+_REJECT_PATTERNS     = ["$(", "`", ";rm", "&&rm", "|rm", ">/dev", ">>/dev"]
+
+def _safe_run(cmd, cwd, timeout=60, env=None):
+    """shell=True 的安全替代方案：argv + 輸出截斷 + 危險字元過濾"""
+    from pathlib import Path
+    safe_cwd = str(Path(cwd).resolve())
+    timeout  = max(1, min(300, int(timeout)))
+    if isinstance(cmd, str):
+        for pat in _REJECT_PATTERNS:
+            if pat.replace(" ","") in cmd.replace(" ",""):
+                return {"stdout":"","stderr":f"指令含危險字元 {pat}","returncode":126,"output":""}
+        try:
+            argv = _shlex.split(cmd)
+        except ValueError as e:
+            return {"stdout":"","stderr":f"指令解析失敗:{e}","returncode":1,"output":""}
+    else:
+        argv = list(cmd)
+    try:
+        r = _sub.run(argv, shell=False, cwd=safe_cwd, capture_output=True,
+                     text=True, timeout=timeout, env=env)
+        out = (r.stdout + r.stderr)
+        if len(out.encode("utf-8","replace")) > MAX_CMD_OUTPUT_BYTES:
+            out = out[:MAX_CMD_OUTPUT_BYTES//4] + "\n[輸出已截斷]"
+        return {"stdout":r.stdout[:MAX_CMD_OUTPUT_BYTES//4],
+                "stderr":r.stderr[:MAX_CMD_OUTPUT_BYTES//8],
+                "output":out, "returncode":r.returncode}
+    except _sub.TimeoutExpired:
+        return {"stdout":"","stderr":f"超時({timeout}s)","returncode":124,"output":""}
+    except FileNotFoundError:
+        name = argv[0] if argv else "?"
+        return {"stdout":"","stderr":f"命令不存在:{name}","returncode":127,"output":""}
+    except Exception as e:
+        return {"stdout":"","stderr":str(e)[:200],"returncode":1,"output":""}
+
+
 import re
 import json
 import stat
@@ -332,17 +371,12 @@ class ToolExecutor:
         print(f"  {CYAN}$ {command}{RESET}  {DIM}(在 {work}){RESET}")
 
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=work,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            out  = result.stdout.strip()
-            err  = result.stderr.strip()
-            code = result.returncode
+            result = _safe_run(command, cwd=work, timeout=timeout)
+            # _safe_run 回傳 dict，用 .get() 存取
+
+            out  = result.get('stdout','').strip()
+            err  = result.get('stderr','').strip()
+            code = result.get('returncode',0)
 
             parts = []
             if out:
@@ -672,10 +706,11 @@ class SecurityToolExecutor:
         import subprocess
         print(f"  \033[96m$ {cmd}\033[0m")
         try:
-            r = subprocess.run(cmd, shell=True, cwd=cwd,
-                               capture_output=True, text=True, timeout=timeout)
-            out = (r.stdout + r.stderr).strip()
-            return f"{out}\n[exit {r.returncode}]"
+            r = _safe_run(cmd, cwd=cwd, timeout=timeout)
+            # _safe_run 回傳 dict，用 .get() 存取
+
+            out = (r.get('stdout','') + r.get('stderr','')).strip()
+            return f"{out}\n[exit {r.get('returncode',0)}]"
         except subprocess.TimeoutExpired:
             return f"[超時]"
         except Exception as e:
@@ -752,14 +787,15 @@ class SystemsToolExecutor:
         work = cwd or self.workdir
         print(f"  \033[96m$ {cmd}\033[0m  \033[2m(在 {work})\033[0m")
         try:
-            r = subprocess.run(cmd, shell=True, cwd=work,
-                               capture_output=True, text=True, timeout=timeout)
-            out = (r.stdout + r.stderr).strip()
+            r = _safe_run(cmd, cwd=work, timeout=timeout)
+            # _safe_run 回傳 dict，用 .get() 存取
+
+            out = (r.get('stdout','') + r.get('stderr','')).strip()
             for line in out.splitlines()[-20:]:
                 print(f"  \033[2m{line}\033[0m")
-            icon = "\033[92m✔\033[0m" if r.returncode == 0 else f"\033[93m⚠ exit {r.returncode}\033[0m"
+            icon = "\033[92m✔\033[0m" if r.get('returncode',0) == 0 else f"\033[93m⚠ exit {r.get('returncode',0)}\033[0m"
             print(f"  {icon}")
-            return f"{out}\n[exit {r.returncode}]"
+            return f"{out}\n[exit {r.get('returncode',0)}]"
         except subprocess.TimeoutExpired:
             return f"[超時 >{timeout}s]"
         except Exception as e:
@@ -993,10 +1029,11 @@ class WebDevToolExecutor(ToolExecutor):
 
     def _sh(self, cmd: str, timeout: int = 120) -> dict:
         import subprocess
-        r = subprocess.run(cmd, shell=True, cwd=self.workdir,
-                           capture_output=True, text=True, timeout=timeout)
-        return {"stdout": r.stdout.strip(), "stderr": r.stderr.strip(),
-                "returncode": r.returncode, "success": r.returncode == 0}
+        r = _safe_run(cmd, cwd=self, timeout=timeout)
+        # _safe_run 回傳 dict，用 .get() 存取
+
+        return {"stdout": r.get('stdout','').strip(), "stderr": r.get('stderr','').strip(),
+                "returncode": r.get('returncode',0), "success": r.get('returncode',0) == 0}
 
     def _git_commit(self, inp: dict) -> str:
         msg      = inp["message"]
@@ -1340,14 +1377,15 @@ class HighFreqToolExecutor:
         import subprocess
         print(f"  \033[96m$ {cmd}\033[0m")
         try:
-            r = subprocess.run(cmd, shell=True, cwd=self.workdir,
-                               capture_output=True, text=True, timeout=timeout)
-            out = (r.stdout + r.stderr).strip()
+            r = _safe_run(cmd, cwd=self, timeout=timeout)
+            # _safe_run 回傳 dict，用 .get() 存取
+
+            out = (r.get('stdout','') + r.get('stderr','')).strip()
             for line in out.splitlines()[-8:]:
                 print(f"  \033[2m{line}\033[0m")
-            ok = r.returncode == 0
-            print(f"  \033[{'92' if ok else '93'}m{'✔' if ok else '⚠'} exit {r.returncode}\033[0m")
-            return {"success": ok, "output": out, "exit_code": r.returncode}
+            ok = r.get('returncode',0) == 0
+            print(f"  \033[{'92' if ok else '93'}m{'✔' if ok else '⚠'} exit {r.get('returncode',0)}\033[0m")
+            return {"success": ok, "output": out, "exit_code": r.get('returncode',0)}
         except subprocess.TimeoutExpired:
             return {"success": False, "output": "timeout", "exit_code": -1}
         except Exception as e:

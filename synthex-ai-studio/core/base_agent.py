@@ -44,6 +44,11 @@ THINKING_BUDGET = {
 # system prompt 超過此 token 閾值才加快取（短 prompt 加快取沒意義）
 CACHE_MIN_TOKENS = 1024
 
+# P0-1：記憶體管理 — 對話歷史最大長度
+# 超過此長度時自動截斷（保留最新 N 輪），防止長對話 OOM
+MAX_HISTORY_LEN = 40   # 20 輪對話（user + assistant × 20）
+
+
 # P1：Adaptive Thinking 設定
 # 使用 type="auto" 讓 Claude 自己決定要不要思考，取代硬編碼 budget
 ADAPTIVE_THINKING_AGENTS = EXTENDED_THINKING_AGENTS  # 同一批 Agent
@@ -504,6 +509,15 @@ class BaseAgent:
 
     # ── System Prompt ──────────────────────────────────────────
 
+    def _trim_history(self) -> None:
+        """
+        P0-1 記憶體管理：主動截斷 conversation_history。
+        在每次 append 後呼叫，確保不超過 MAX_HISTORY_LEN 輪。
+        保留最新的 N 條記錄（不是丟棄最舊的 system 消息）。
+        """
+        if len(self.conversation_history) > MAX_HISTORY_LEN:
+            self.conversation_history = self.conversation_history[-MAX_HISTORY_LEN:]
+
     def _build_system_prompt(
         self,
         with_tools:    bool = False,
@@ -601,6 +615,7 @@ class BaseAgent:
 
         full_msg = f"[上下文]\n{context}\n\n[問題]\n{user_message}" if context else user_message
         self.conversation_history.append({"role": "user", "content": full_msg})
+        self._trim_history()   # P0-1：主動截斷
         print(self._header("對話"))
 
         response_text = ""

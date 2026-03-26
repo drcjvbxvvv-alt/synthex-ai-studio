@@ -53,6 +53,9 @@ class KnowledgeGraph:
         self._setup_schema()
 
     def _setup_schema(self):
+        # P1-1：WAL 模式（多進程並發安全）
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript("""
         CREATE TABLE IF NOT EXISTS nodes (
             id          TEXT PRIMARY KEY,
