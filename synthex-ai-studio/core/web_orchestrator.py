@@ -380,6 +380,7 @@ class GeneratorCritic:
 
         print(f"\n{PURPLE}🎯 Generator-Critic：ARIA 評審 {doc_name}...{RESET}")
 
+        # P1-2：Structured Output — 強制 JSON 格式，取代脆弱的 regex
         review = self.orc._chat("ARIA", f"""
 以「全局品質守門人」角色評審以下 {doc_name} 文件。
 
@@ -394,11 +395,10 @@ class GeneratorCritic:
 - 5-6：基本可用，有改善空間
 - 1-4：不足，需要重做
 
-嚴格按以下格式輸出（不要加其他內容）：
-SCORE: [1-10]
-GATE: [PASS/FAIL]  （分數 >= {threshold} 才 PASS）
-SUMMARY: [一句話評語]
-TOP_ISSUE: [最重要的一個問題，或「無」]
+輸出純 JSON（不加程式碼塊，不加說明）：
+{{"score": <1-10整數>, "gate": "<PASS|FAIL>", "summary": "<一句評語>", "top_issue": "<最重要問題或null>"}}
+
+PASS 條件：score >= {threshold}
 """)
 
         import re, json as _json
@@ -1232,11 +1232,11 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
 
         # ── Phase 9 + 10：BYTE 前端 + STACK 後端（並行執行）─────
         # P0-1：動態路由 Phase 9+10 的外層跳過
-        if 9 not in active_phases and 10 not in active_phases and            not (ckpt.is_done(9) and ckpt.is_done(10)):
-            _ok("Phase 9+10（BYTE+STACK 並行實作）已被動態路由跳過")
-        else:
-            pass  # 繼續執行並行實作
-        both_done = (resume and ckpt.is_done(9) and ckpt.is_done(10))
+        # P0-1 修復：Phase 9/10 各自獨立路由（api_only 跳 9，frontend_only 跳 10）
+        skip_9  = (9  not in active_phases) and not ckpt.is_done(9)
+        skip_10 = (10 not in active_phases) and not ckpt.is_done(10)
+        if skip_9:  _ok("Phase 9（BYTE 前端）已被動態路由跳過")
+        if skip_10: _ok("Phase 10（STACK 後端）已被動態路由跳過")
         if both_done:
             _ok("Phase 7 + 8 已完成，跳過")
             frontend = ctx.read("FRONTEND_IMPL")

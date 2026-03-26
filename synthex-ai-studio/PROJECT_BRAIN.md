@@ -1017,10 +1017,8 @@ core/brain/
 │
 ~/.brain_shared/                  ← 全域共享目錄（v2.0 新增）
 └── registry.db                  ← 跨 repo 共享知識庫
-```
 
 ### v3.0（未來展望）
-
 - [ ] 知識圖譜的視覺化 Web UI（即時圖譜瀏覽）
 - [ ] 多模型知識蒸餾（把整個專案的知識壓縮成 fine-tune adapter）
 - [ ] 跨組織匿名知識共享（業界共同踩坑的聯邦學習）
@@ -1035,3 +1033,4 @@ core/brain/
 - [pgvector: Vector Search for PostgreSQL](https://github.com/pgvector/pgvector)
 - [Kuzu: Embedded Graph Database](https://kuzudb.com/)
 - [Anthropic: Building Effective Agents](https://anthropic.com/research/building-effective-agents)
+```

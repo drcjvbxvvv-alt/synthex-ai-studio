@@ -1093,7 +1093,21 @@ class WebDevToolExecutor(ToolExecutor):
     def _fetch_url(self, inp: dict) -> str:
         import urllib.request, urllib.parse, json as _json
 
-        url     = inp["url"]
+        url = inp["url"]
+        # 安全驗證：scheme + SSRF 防護 + 長度限制
+        if not isinstance(url, str) or not url.strip():
+            return "✖ URL 不能為空"
+        url = url.strip()[:2048]
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return f"✖ 不允許的 URL scheme：{parsed.scheme!r}（只允許 http/https）"
+        host = parsed.hostname or ""
+        _blocked = {"localhost","127.0.0.1","0.0.0.0","169.254.169.254","metadata.google.internal"}
+        if host.lower() in _blocked:
+            return f"✖ 不允許存取此主機：{host!r}"
+        if re.match(r"^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)", host):
+            return f"✖ 不允許存取私有 IP：{host!r}"
+
         method  = inp.get("method", "GET").upper()
         headers = inp.get("headers", {})
         body    = inp.get("body")

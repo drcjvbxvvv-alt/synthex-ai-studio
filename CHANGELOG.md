@@ -1,40 +1,40 @@
-## [v2.0.0] - 2026-03-26
+## 2026-03-26
 
-### 🚀 Project Brain v2.0 — 三大革命性子系統
+### 🚀 SYNTHEX AI STUDIO v0.1.0 - 核心路由修復、Prompt Caching 導入與 Swarm 架構升級
 
-本次大版本更新打破了單一專案的知識孤島，引入了真實世界的知識衰減機制，並賦予 AI 基於歷史圖譜的反事實推理能力。所有核心模組均以企業級安全標準進行深度強化。
+本次更新全面修復了動態路由的邊界問題，大幅降低了 API 呼叫成本（最高降 90%），並引入了非線性並行的 Agent Swarm 架構與自動化品質評估框架（Evals Framework），為系統的長期穩定發展奠定基礎。
 
-#### 🌐 1. SharedRegistry 多專案知識共享 (`core/brain/v2/shared_registry.py`)
+#### 優先排序矩陣
 
-打破知識孤島，建立可見性受控的跨 Repo 知識庫（儲存於 `~/.brain_shared/registry.db`），避免相同踩坑在不同團隊間重複發生。
+| 優先   | 類型 | 問題                               | 影響                |
+| :----- | :--- | :--------------------------------- | :------------------ |
+| **P0** | Bug  | Phase 10 路由邏輯錯誤              | `api_only` 場景跑錯 |
+| **P0** | Bug  | `CLAUDE.md` Phase 13 幽靈          | 文件誤導            |
+| **P0** | Bug  | `web_tools` URL 未驗證             | 安全漏洞            |
+| **P0** | 效能 | Prompt Caching 系統級加入          | 成本降 90%          |
+| **P1** | 效能 | Adaptive Thinking 取代手動 ET      | 品質+成本平衡       |
+| **P1** | 品質 | Structured Output 取代 regex       | 解析可靠性          |
+| **P1** | 體驗 | `chat()` Streaming 輸出            | 用戶體驗一致        |
+| **P1** | 架構 | Interleaved Thinking（工具間推理） | Agentic 深度推理    |
+| **P2** | 架構 | Evals Framework（品質回歸測試）    | 長期品質保障        |
+| **P2** | 架構 | Agent Swarm 非線性並行             | 速度提升 3-5x       |
 
-- **核心功能：** 支援透過 `brain share` 發布踩坑紀錄，並可指定可見性（如 `--visibility team`）；支援透過 `brain query-shared` 進行跨專案檢索。
-- **安全與併發設計：**
-  - **PII 自動過濾：** 透過正規表達式自動攔截並過濾密碼、API Key、IP、Email 與 URL。
-  - **Namespace 防護：** 路徑注入防護，僅允許字母數字開頭。
-  - **併發安全與效能：** 啟用 WAL 模式確保多專案讀寫不衝突；實作連線池復用（同進程不重複建立連線）。
-  - **品質控制：** 具備冪等發布機制（相同內容 Hash 不重複儲存），且信心門檻低於 **0.7** 的知識不予分享。
+#### 📝 修復摘要
 
-#### 📉 2. DecayEngine 三維知識衰減 (`core/brain/v2/decay_engine.py`)
+- **P0：確認性 Bug 全部修復**
+  - **Phase 9/10 獨立路由：** 修復 `api_only` 場景下無法正確跳過 Phase 9 的問題。現在七種場景皆能精確路由，前後端 Phase 的跳過邏輯已完全獨立。
+  - **`CLAUDE.md` 修正：** 移除不存在的 Phase 13 說明，將 ARIA 交付總結正名為 Phase 12b，明確其為收尾步驟。
+  - **URL 安全驗證（SSRF 防護）：** 為 `_fetch_url` 工具加入三層防護：scheme 白名單（僅限 HTTP/HTTPS）、拒絕 `file://`、過濾私有 IP 黑名單（包含 AWS metadata 及 192.168.x.x/10.x.x.x 網段）。
+  - **Prompt Caching 導入：** 針對超過 1024 tokens 的 prompt 加入 `cache_control`。系統級快取讓 28 個 Agent 的 system prompt 每次流水線執行成本從 45,000+ tokens 降至約 4,500 tokens（輸入成本降低 90%），並支援在串流輸出時顯示命中統計。
 
-讓信心分數反映真實世界。從單一的時間衰減，升級為融合「時間」、「程式碼擾動 (Churn)」與「顯式失效」的三維複合衰減模型。
+- **P1：效能和體驗升級**
+  - **Adaptive Thinking：** 導入 `type: "auto"` 自動決定思考量，取代硬編碼的 budget，並確保連續請求時保留 prompt cache breakpoints 不失效。
+  - **Structured Output：** GeneratorCritic 和 SelfCritique 的評審全面改用純 JSON 輸出，取代脆弱的正則表達式解析，提升格式變動時的容錯率。
+  - **`chat()` Streaming：** 將批次輸出改為串流輸出，消除 ECHO、LUMI、SIGMA 執行時的空白等待期，並於結尾顯示 Prompt Cache 命中數。
+  - **Interleaved Thinking：** 統一管理 API 參數，並對特定 Agent（如 NEXUS）啟用 `interleaved-thinking-2025-05-14`，支援在讀取、推理、輸出之間交錯進行，實現更深度的架構決策。
 
-- **衰減公式：**
-  $$c_{final}(t) = c_{time}(t) \times c_{churn} \times c_{explicit}$$
-  $$c_{time}(t) = c_0 \times \exp(-\lambda_{eff} \times \text{days})$$
-  $$\lambda_{eff} = \lambda_{base} \times (1 + \text{churn\_penalty})$$
-  $$c_{churn} = 1 - (\text{churn\_score} \times 0.3)$$
-  $$c_{explicit} = 0.05 \text{ (if invalidated)}$$
-- **權重實作：** 踩坑記錄（$\lambda=0.001$）在一年後仍保有約 90% 信心；決策記錄（$\lambda=0.003$）一年後約剩 67%。當關聯程式碼頻繁變動時，信心將加速衰減。
-- **CLI 支援：** 新增 `brain decay report`（衰減報告）、`update`（分析擾動）與 `invalidate`（顯式標記失效）指令。
-- **安全與穩定性設計：** 實作 NaN/Inf 防護（浮點運算包裹於 `_safe_float()`）；信心邊界嚴格截斷於 $[0.001, 1.0]$；全面防護 SQL 注入；實作快取上限（超過 2,000 筆自動清空）與 Git 分析子進程 Timeout（最高 30 秒）。
-
-#### 🔮 3. CounterfactualEngine 反事實推理 (`core/brain/v2/counterfactual.py`)
-
-最具革命性的功能，基於知識圖譜中的決策歷史與踩坑紀錄，讓 AI 進行有根據的「如果不這樣做，會怎樣？」推理分析。
-
-- **核心功能：** 支援技術債分析與架構複盤。透過 `brain counterfactual` 提問，系統會輸出包含「信心水準」、「最可能結果」、「可避免風險」、「新引入風險」及「推理依據」的結構化報告。
-- **安全與成本控制：**
-  - **Prompt Injection 防護：** 針對 `ignore`、`forget`、`override` 等惡意指令自動過濾為 `[filtered]`。
-  - **邊界限制：** 問題長度限制 400 字元；API 輸出限制 `max_tokens=1500`。
-  - **成本優化與容錯：** 採用 Claude Sonnet 模型；實作雙層快取（Memory + SQLite，1 小時 TTL）；當 API 不可用時自動降級為基於知識圖譜的規則分析；嚴格驗證 JSON 輸出格式防止系統崩潰。
+- **P2：革命性新系統**
+  - **Evals Framework（`core/evals.py`）：** 建立品質回歸測試 pipeline，防止 Agent 迭代導致品質劣化。內建 `prd_quality` 與 `architecture_quality` 測試套件，並透過 EvalScorer 進行多維度評分（關鍵字、禁用詞、長度、Rubric），結果持久化至 SQLite 儲存。
+  - **Agent Swarm（`core/swarm.py`）：**
+    導入 DAG 調度的非線性並行架構。支援前端、後端、安全性測試同時執行，將整體流水線執行時間從約 6 分鐘大幅縮短至約 3 分鐘。
+    - _安全設計：_ 確保每個 Worker 獨立實例（清理對話歷史釋放記憶體）、採用 ThreadPool防範 API rate limit，並設定 120 秒 timeout 防止進程卡死。

@@ -30,7 +30,7 @@ PRICING = {
 }
 DEFAULT_BUDGET_USD = 5.0   # 預設每次 /ship 的 budget 上限
 
-# ── P0-1：Extended Thinking 設定 ──────────────────────────────
+# ── P0-1：Extended Thinking + Adaptive Thinking 設定 ─────────
 EXTENDED_THINKING_AGENTS = {
     "NEXUS", "SIGMA", "ARIA", "NOVA", "ATOM",
 }
@@ -39,6 +39,15 @@ THINKING_BUDGET = {
     "normal":   5000,
     "quick":    2000,
 }
+
+# ── P0-4：Prompt Caching 設定 ──────────────────────────────────
+# system prompt 超過此 token 閾值才加快取（短 prompt 加快取沒意義）
+CACHE_MIN_TOKENS = 1024
+
+# P1：Adaptive Thinking 設定
+# 使用 type="auto" 讓 Claude 自己決定要不要思考，取代硬編碼 budget
+ADAPTIVE_THINKING_AGENTS = EXTENDED_THINKING_AGENTS  # 同一批 Agent
+
 
 # ── P0-1：多模型策略（成本最佳化）────────────────────────────
 # 根據任務複雜度自動選擇最適合的模型
@@ -495,7 +504,20 @@ class BaseAgent:
 
     # ── System Prompt ──────────────────────────────────────────
 
-    def _build_system_prompt(self, with_tools: bool = False) -> str:
+    def _build_system_prompt(
+        self,
+        with_tools:    bool = False,
+        use_cache:     bool = True,
+    ) -> list[dict] | str:
+        """
+        建立 system prompt。
+
+        P0-4 Prompt Caching：
+          - 回傳 list[dict] 格式（帶 cache_control），讓 Anthropic API 快取
+          - system prompt 是每次請求最大的固定成本，快取後成本降 90%
+          - 只有超過 CACHE_MIN_TOKENS 的 prompt 才值得快取
+          - cache_control.type = "ephemeral"：5 分鐘快取（標準 TTL）
+        """
         skills_str = "\n".join(f"  • {s}" for s in self.skills)
         traits_str = "\n".join(f"  • {k}: {v}/100" for k, v in self.personality_traits.items())
         tool_sec   = f"""
@@ -507,7 +529,7 @@ class BaseAgent:
 - 完成後簡要說明做了什麼
 """ if with_tools else ""
 
-        return f"""你是 SYNTHEX AI STUDIO 的 {self.emoji} {self.name}，職位：{self.title}。
+        prompt_text = f"""你是 SYNTHEX AI STUDIO 的 {self.emoji} {self.name}，職位：{self.title}。
 
 【角色設定】
 {self.system_prompt}
@@ -527,6 +549,49 @@ class BaseAgent:
 今天日期：{datetime.now().strftime('%Y-%m-%d')}
 """
 
+        # Prompt Caching：估算 token 數（4 chars ≈ 1 token）
+        est_tokens = len(prompt_text) // 4
+        if use_cache and est_tokens >= CACHE_MIN_TOKENS:
+            # 回傳帶 cache_control 的結構體格式
+            return [{"type": "text", "text": prompt_text,
+                     "cache_control": {"type": "ephemeral"}}]
+
+        return prompt_text
+
+    def _build_run_params(self, tools: list, messages: list) -> dict:
+        """
+        P1-4：建立 run() 的 API 參數。
+        整合 Interleaved Thinking + Prompt Caching + Adaptive Thinking。
+        """
+        params = dict(
+            model     = self.model,
+            max_tokens= 8192,
+            system    = self._build_system_prompt(with_tools=True),
+            tools     = tools,
+            messages  = messages,
+        )
+
+        is_thinking_agent = self.name in ADAPTIVE_THINKING_AGENTS
+        is_adaptive_model = any(
+            self.model.startswith(m)
+            for m in ["claude-opus-4-6", "claude-sonnet-4-6"]
+        )
+
+        if is_thinking_agent:
+            if is_adaptive_model:
+                # Adaptive Thinking + Interleaved（Opus 4.6 / Sonnet 4.6）
+                params["thinking"] = {"type": "auto"}
+                params["betas"]    = ["interleaved-thinking-2025-05-14"]
+            else:
+                # 手動 Extended Thinking + Interleaved（其他 Claude 4）
+                params["thinking"] = {
+                    "type":          "enabled",
+                    "budget_tokens": THINKING_BUDGET["normal"],
+                }
+                params["betas"] = ["interleaved-thinking-2025-05-14"]
+
+        return params
+
     # ── 對話模式（無工具）──────────────────────────────────────
 
     def chat(self, user_message: str, context: str = "") -> str:
@@ -539,52 +604,115 @@ class BaseAgent:
         print(self._header("對話"))
 
         response_text = ""
-        # P0-1：Extended Thinking（對深度推理 Agent 啟用）
-        use_thinking = self.name in EXTENDED_THINKING_AGENTS
+        # P1-1：Adaptive Thinking（取代硬編碼 Extended Thinking）
+        # Claude Opus 4.6 / Sonnet 4.6 支援自動決定何時及用多少思考量
+        # 其他 Claude 4 模型使用手動 Extended Thinking
+        is_adaptive_model = any(
+            self.model.startswith(m) for m in
+            ["claude-opus-4-6", "claude-sonnet-4-6"]
+        )
+        use_thinking = self.name in ADAPTIVE_THINKING_AGENTS
         thinking_budget = THINKING_BUDGET["deep"] if use_thinking else 0
 
         try:
             def _call():
                 params = dict(
-                    model=self.model,
-                    max_tokens=4096 + (thinking_budget if use_thinking else 0),
-                    system=self._build_system_prompt(with_tools=False),
-                    messages=self.conversation_history,
+                    model    = self.model,
+                    max_tokens = 4096 + (thinking_budget if use_thinking else 0),
+                    system   = self._build_system_prompt(with_tools=False),
+                    messages = self.conversation_history,
                 )
                 if use_thinking:
-                    params["thinking"] = {
-                        "type":          "enabled",
-                        "budget_tokens": thinking_budget,
-                    }
+                    if is_adaptive_model:
+                        # P1-1：Adaptive Thinking — 讓模型自己決定
+                        params["thinking"] = {"type": "auto"}
+                    else:
+                        # 手動 Extended Thinking（Claude 4.0/4.5）
+                        params["thinking"] = {
+                            "type":          "enabled",
+                            "budget_tokens": thinking_budget,
+                        }
                     if params["model"] == "claude-haiku-4-5":
                         params["model"] = "claude-sonnet-4-5"
                 return self.client.messages.create(**params)
 
             # P0-3：Circuit Breaker 保護 chat()
-            resp = _circuit_breaker.call(
-                lambda: _api_call_with_retry(_call, agent_name=self.name),
-                agent=self.name
-            )
+            # P1-3：chat() Streaming 輸出（和 run() 體驗一致）
+            # 用 stream_context manager 即時輸出，用戶不再等到全部完成才看到內容
+            def _call_stream():
+                params = dict(
+                    model    = self.model,
+                    max_tokens = 4096 + (thinking_budget if use_thinking else 0),
+                    system   = self._build_system_prompt(with_tools=False),
+                    messages = self.conversation_history,
+                )
+                if use_thinking:
+                    params["thinking"] = (
+                        {"type": "auto"} if is_adaptive_model
+                        else {"type": "enabled", "budget_tokens": thinking_budget}
+                    )
+                    if params["model"] == "claude-haiku-4-5":
+                        params["model"] = "claude-sonnet-4-5"
+                return params
 
-            if use_thinking:
-                self._print_system(f"🧠 Extended Thinking 啟用（budget: {thinking_budget} tokens）")
+            stream_params = _call_stream()
+
+            input_tokens  = 0
+            output_tokens = 0
+            thinking_chars = 0
+
+            print(f"  {DIM}", end="", flush=True)  # 開始串流輸出
+
+            with self.client.messages.stream(**stream_params) as stream:
+                for event in stream:
+                    import anthropic as _ant
+                    # 思考塊（顯示進度但不顯示內容）
+                    if hasattr(event, "type"):
+                        if event.type == "content_block_start":
+                            if hasattr(event, "content_block"):
+                                cb = event.content_block
+                                if hasattr(cb, "type") and cb.type == "thinking":
+                                    print(f"💭", end="", flush=True)
+                    # 文字串流
+                    if hasattr(event, "type") and event.type == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        if delta:
+                            if hasattr(delta, "type") and delta.type == "text_delta":
+                                chunk = delta.text
+                                response_text += chunk
+                                print(chunk, end="", flush=True)
+                            elif hasattr(delta, "type") and delta.type == "thinking_delta":
+                                thinking_chars += len(getattr(delta, "thinking", ""))
+                    # 用量統計
+                    if hasattr(event, "type") and event.type == "message_delta":
+                        usage = getattr(event, "usage", None)
+                        if usage:
+                            output_tokens = getattr(usage, "output_tokens", 0)
+
+                # 從最終訊息取 input tokens
+                final_msg = stream.get_final_message()
+                if hasattr(final_msg, "usage"):
+                    input_tokens  = final_msg.usage.input_tokens
+                    output_tokens = final_msg.usage.output_tokens
+
+            print(f"{RESET}")  # 結束串流，換行
+
+            # 處理快取 hit 資訊
+            _cache_hit = getattr(getattr(stream.get_final_message(), "usage", None),
+                                  "cache_read_input_tokens", 0)
+
+            if use_thinking and thinking_chars:
+                self._print_system(f"💭 思考過程：{thinking_chars} 字元")
+            if _cache_hit:
+                self._print_system(f"⚡ Prompt Cache 命中：{_cache_hit:,} tokens（已節省費用）")
 
             # Token 追蹤
-            if hasattr(resp, "usage"):
-                self._budget.record(self.name, resp.usage.input_tokens, resp.usage.output_tokens)
+            if input_tokens or output_tokens:
+                self._budget.record(self.name, input_tokens, output_tokens)
                 self._print_system(
-                    f"tokens: {resp.usage.input_tokens}in + {resp.usage.output_tokens}out "
-                    f"= ${self._budget._calc_cost(resp.usage.input_tokens, resp.usage.output_tokens):.4f}"
+                    f"tokens: {input_tokens:,}in + {output_tokens:,}out "
+                    f"= ${self._budget._calc_cost(input_tokens, output_tokens):.4f}"
                 )
-
-            for block in resp.content:
-                # Extended Thinking 的思考塊（不顯示給用戶，只記錄統計）
-                if hasattr(block, "type") and block.type == "thinking":
-                    thinking_len = len(getattr(block, "thinking", ""))
-                    self._print_system(f"💭 思考過程：{thinking_len} 字元")
-                    continue
-                if hasattr(block, "text"):
-                    response_text += block.text
 
             # 顯示輸出
             print(f"{self.color}│{RESET} ", end="", flush=True)
@@ -633,11 +761,7 @@ class BaseAgent:
 
                 def _call():
                     return self.client.messages.create(
-                        model=self.model,
-                        max_tokens=8192,
-                        system=self._build_system_prompt(with_tools=True),
-                        tools=tools,
-                        messages=messages,
+                        **self._build_run_params(tools=tools, messages=messages)
                     )
 
                 # P2-1：Circuit Breaker 保護
