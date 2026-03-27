@@ -198,7 +198,14 @@ class KnowledgeDistiller:
 
             entry = f"### {title} ({conf:.0%})\n{content}"
             if tags:
-                entry += f"\n`{tags}`"
+                import json as _json
+                try:
+                    _tlist = _json.loads(tags) if isinstance(tags, str) and tags.startswith('[') else (tags if isinstance(tags, list) else [])
+                    _tstr = ", ".join(str(t) for t in _tlist)
+                except Exception:
+                    _tstr = ""
+                if _tstr:
+                    entry += f"\n`{_tstr}`"
             sections[kind].append(entry)
             token_budget -= len(entry) // 4
 

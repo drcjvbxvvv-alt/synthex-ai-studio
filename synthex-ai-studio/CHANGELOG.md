@@ -431,3 +431,53 @@ Graphiti ✗ + Memory Tool ✗ → 純 L3（Project Brain v2.0，向後相容）
 | TestBrainV4Integration | 4 | 三個屬性懶初始化、版本號 v4.0.0 |
 
 **全部 139 tests 通過（4.70s）**
+
+## v0.16.0（第十六輪 — CLI 運行驗證 + Bug 修復，2026-03-28）
+
+### 問題根因與修復
+
+**原始問題：**
+```
+synthex: error: argument command: invalid choice: 'brain'
+```
+
+**根因分析：**  
+`synthex.py` 中存在**三個 `main()` 函數**（分別在第 212、548、1055 行），Python 只執行最後一個（第三個）。
+`brain` 命令的 parser 定義和 dispatch 字典只加進了第二個 `main()`，第三個完全沒有 `brain`，導致 CLI 無法識別。
+
+**修復清單：**
+
+1. **CLI parser 修復（主修）**  
+   在第三個（真正執行的）`main()` 加入完整 `brain` subparser：  
+   - 14 個子命令：`init / scan / status / context / learn / add / export / share / query-shared / decay / counterfactual / validate / distill / webui`  
+   - 所有 v4.0 參數：`--max-api-calls / --dry-run / --layers / --port` 等
+
+2. **cmd_brain dispatcher 修復**  
+   `cmd_brain()` 讀取的是 `subcmd`（舊屬性名），改為 `subcommand`（與 parser `dest` 一致）。  
+   新增三個 v4.0 子命令分派：`validate / distill / webui`。
+
+3. **cmd_brain_decay 修復**  
+   `decay_report()` 不存在 → 改用 `decay_summary()` + `deprecated_knowledge()`。  
+   函數注入時含有原始換行字元（embedded newline in string literal），導致 SyntaxError，以位元組級操作修復。
+
+4. **cmd_brain_webui / cmd_brain_validate / cmd_brain_distill 新增**  
+   三個 v4.0 新命令函數補充完整，對應 `brain webui / brain validate / brain distill`。
+
+### 驗證通過的 brain 命令（9/9）
+
+| 命令 | 功能 |
+|------|------|
+| `brain init` | 初始化 `.brain/` 目錄、Git Hook、知識圖譜 |
+| `brain status` | 顯示節點數、類別分布、最近新增 |
+| `brain add` | 手動加入知識（Decision/Pitfall/Rule/ADR/Component）|
+| `brain validate` | 三階段知識驗證（支援 --dry-run / --max-api-calls）|
+| `brain decay` | 衰減報告（report/update/invalidate）|
+| `brain distill` | 知識蒸餾（context/prompts/lora 三層）|
+| `brain export` | 匯出 Mermaid 圖譜到 `.brain/graph.md` |
+| `brain scan` | 深度考古掃描（需要 API key）|
+| `brain webui` | 啟動 D3.js 知識圖譜 Web UI（port 7890）|
+
+### 測試結果
+
+**139/139 測試通過（4.97s）**
+**9/9 CLI 煙霧測試通過**

@@ -252,8 +252,7 @@ def main():
     else:
         print(f"{RED}✖ 未知命令: {args.command}{RESET}"); cmd_help()
 
-if __name__ == "__main__":
-    main()
+# (entry point moved to end of file)
 
 
 # ── Web Dev Commands (appended) ───────────────────────────────
@@ -596,6 +595,52 @@ def main():
     p.add_argument("--url", default="http://localhost:3000")
     p.add_argument("--headed", action="store_true")
 
+    # ── Project Brain 命令 ──────────────────────────────────
+    p = mkp("brain")
+    p.add_argument("subcommand", nargs="?", default="status",
+                   choices=["init","scan","status","context","learn",
+                            "add","export","share","query-shared",
+                            "decay","counterfactual","validate",
+                            "distill","webui"],
+                   help="Brain 子命令")
+    # init
+    p.add_argument("--name",       default="",  help="專案名稱（init 用）")
+    # context
+    p.add_argument("--task",       nargs="+",   help="任務描述（context 用）")
+    p.add_argument("--file",       default="",  help="相關檔案（context 用）")
+    # learn
+    p.add_argument("--commit",     default="HEAD", help="commit hash（learn 用）")
+    # add
+    p.add_argument("--title",      nargs="+",   help="知識標題（add/share 用）")
+    p.add_argument("--content",    default="",  help="知識內容（add 用）")
+    p.add_argument("--kind",       default="Decision",
+                   choices=["Decision","Pitfall","Rule","ADR","Component"],
+                   help="知識類型（add/share 用）")
+    p.add_argument("--tags",       nargs="+",   default=[])
+    # share
+    p.add_argument("--visibility", default="team",
+                   choices=["team","org","public"])
+    # query-shared
+    p.add_argument("--query",      nargs="+",   help="查詢關鍵字（query-shared 用）")
+    # decay
+    p.add_argument("--action",     default="report",
+                   choices=["report","update","invalidate"])
+    p.add_argument("--node-id",    default="",  help="節點 ID（decay invalidate 用）")
+    p.add_argument("--reason",     default="",  help="失效原因（decay invalidate 用）")
+    # counterfactual
+    p.add_argument("--question",   nargs="+",   help="反事實問題")
+    p.add_argument("--component",  default="",  help="目標組件")
+    p.add_argument("--depth",      default="brief",
+                   choices=["brief","detailed"])
+    # validate
+    p.add_argument("--max-api-calls", type=int, default=20)
+    p.add_argument("--dry-run",    action="store_true")
+    # distill
+    p.add_argument("--layers",     nargs="+",
+                   default=["context","prompts","lora"])
+    # webui
+    p.add_argument("--port",       type=int, default=7890)
+
     args = parser.parse_args()
     if args.command is None or args.command == "help":
         cmd_help()
@@ -636,6 +681,8 @@ def main():
         "feature":cmd_feature,"fixbug":cmd_fix,"codereview":cmd_review_project,
         # 弱項補強
         "retro":cmd_retro,"qa-browser":cmd_qa_browser,"investigate":cmd_investigate,
+        # Project Brain
+        "brain":cmd_brain,
     }
     fn = cmds.get(args.command)
     if fn:
@@ -644,8 +691,7 @@ def main():
     else:
         print(f"{RED}✖ 未知命令: {args.command}{RESET}")
 
-if __name__ == "__main__":
-    main()
+# (entry point moved to end of file)
 
 
 
@@ -658,31 +704,24 @@ if __name__ == "__main__":
 
 def cmd_brain(args):
     """Project Brain — 知識積累主命令（分派子命令）"""
-    subcmd = getattr(args, "subcmd", None)
-    if subcmd == "init":
-        cmd_brain_init(args)
-    elif subcmd == "scan":
-        cmd_brain_scan(args)
-    elif subcmd == "context":
-        cmd_brain_context(args)
-    elif subcmd == "learn":
-        cmd_brain_learn(args)
-    elif subcmd == "status":
-        cmd_brain_status(args)
-    elif subcmd == "export":
-        cmd_brain_export(args)
-    elif subcmd == "add":
-        cmd_brain_add(args)
-    elif subcmd == "share":
-        cmd_brain_share(args)
-    elif subcmd == "query-shared":
-        cmd_brain_query_shared(args)
-    elif subcmd == "decay":
-        cmd_brain_decay(args)
-    elif subcmd == "counterfactual":
-        cmd_brain_counterfactual(args)
+    subcmd = getattr(args, "subcommand", None) or "status"
+    if   subcmd == "init":          cmd_brain_init(args)
+    elif subcmd == "scan":          cmd_brain_scan(args)
+    elif subcmd == "context":       cmd_brain_context(args)
+    elif subcmd == "learn":         cmd_brain_learn(args)
+    elif subcmd == "status":        cmd_brain_status(args)
+    elif subcmd == "export":        cmd_brain_export(args)
+    elif subcmd == "add":           cmd_brain_add(args)
+    elif subcmd == "share":         cmd_brain_share(args)
+    elif subcmd == "query-shared":  cmd_brain_query_shared(args)
+    elif subcmd == "decay":         cmd_brain_decay(args)
+    elif subcmd == "counterfactual":cmd_brain_counterfactual(args)
+    elif subcmd == "validate":      cmd_brain_validate(args)
+    elif subcmd == "distill":       cmd_brain_distill(args)
+    elif subcmd == "webui":         cmd_brain_webui(args)
     else:
-        print("用法：synthex brain <init|scan|context|learn|status|export|add|share|query-shared|decay|counterfactual>")
+        print("用法：synthex brain <init|scan|status|context|learn|add|export|"
+              "share|query-shared|decay|counterfactual|validate|distill|webui>")
 
 
 def cmd_brain_init(args):
@@ -801,18 +840,30 @@ def cmd_brain_decay(args):
     workdir = get_workdir(getattr(args, "workdir", None))
     brain   = ProjectBrain(workdir)
     de      = brain.decay_engine
-
-    action = getattr(args, "action", "report")
+    action  = getattr(args, "action", "report")
     if action == "report":
-        print(de.decay_report())
+        summary = de.decay_summary()
+        print("## 知識衰減報告")
+        for k, v in summary.items():
+            print(f"  {k}: {v}")
+        deprecated = de.deprecated_knowledge(limit=10)
+        if deprecated:
+            print("\n低信心知識前" + str(len(deprecated)) + "筆：")
+
+
+            for node in deprecated:
+                conf  = node.get("confidence", 0)
+                kind  = node.get("kind", "?")
+                title = node.get("title", "")
+                print(f"  [{kind}] {title} (conf={conf:.2f})")
     elif action == "update":
-        n = de.update_churn_scores()
-        print(f"✓ 已更新 {n} 個節點的程式碼擾動分數")
+        result = de.run()
+        print(f"✓ 衰減掃描完成，更新 {len(result)} 筆知識")
     elif action == "invalidate":
-        node_id = getattr(args, "node_id", "")
-        reason  = getattr(args, "reason", "") or ""
-        de.invalidate(node_id, reason)
-        print(f"✓ 已標記節點 {node_id} 為失效（信心降至 5%）")
+        node_id = getattr(args, "node_id", "") or ""
+        ok = de.restore(node_id, confidence=0.05)
+        status = "✓ 已標記節點失效" if ok else "✗ 節點不存在"
+        print(f"{status}：{node_id}")
 
 
 def cmd_brain_counterfactual(args):
@@ -1070,6 +1121,40 @@ def main():
     p.add_argument("--runs", type=int, default=3)
     p=mkp("cross-device"); p.add_argument("url", nargs="?", default="http://localhost:3000")
 
+    # ── Project Brain v4.0 ─────────────────────────────────
+    p = mkp("brain")
+    p.add_argument("subcommand", nargs="?", default="status",
+                   choices=["init","scan","status","context","learn",
+                            "add","export","share","query-shared",
+                            "decay","counterfactual","validate",
+                            "distill","webui"],
+                   help="Brain 子命令")
+    p.add_argument("--name",          default="",     help="專案名稱（init）")
+    p.add_argument("--task",          nargs="+",      help="任務描述（context）")
+    p.add_argument("--file",          default="",     help="相關檔案（context）")
+    p.add_argument("--commit",        default="HEAD", help="commit hash（learn）")
+    p.add_argument("--title",         nargs="+",      help="知識標題（add/share）")
+    p.add_argument("--content",       default="",     help="知識內容（add）")
+    p.add_argument("--kind",          default="Decision",
+                   choices=["Decision","Pitfall","Rule","ADR","Component"])
+    p.add_argument("--tags",          nargs="+",      default=[])
+    p.add_argument("--visibility",    default="team",
+                   choices=["team","org","public"])
+    p.add_argument("--query",         nargs="+",      help="查詢關鍵字（query-shared）")
+    p.add_argument("--action",        default="report",
+                   choices=["report","update","invalidate"])
+    p.add_argument("--node-id",       default="")
+    p.add_argument("--reason",        default="")
+    p.add_argument("--question",      nargs="+",      help="反事實問題")
+    p.add_argument("--component",     default="")
+    p.add_argument("--depth",         default="brief",
+                   choices=["brief","detailed"])
+    p.add_argument("--max-api-calls", type=int, default=20)
+    p.add_argument("--dry-run",       action="store_true")
+    p.add_argument("--layers",        nargs="+",
+                   default=["context","prompts","lora"])
+    p.add_argument("--port",          type=int, default=7890)
+
     args = parser.parse_args()
 
     if args.command is None or args.command == "help":
@@ -1103,7 +1188,18 @@ def main():
 """)
         return
 
-    check_api_key()
+    # brain 的部分子命令不需要 API Key（純本地操作）
+    _BRAIN_NO_API_KEY = {
+        "init", "status", "add", "export", "decay",
+        "distill", "webui", "query-shared", "validate",
+    }
+    _skip_api_check = (
+        args.command == "brain"
+        and getattr(args, "subcommand", "status") in _BRAIN_NO_API_KEY
+    ) or args.command in ("list", "clear", "workdir")
+
+    if not _skip_api_check:
+        check_api_key()
 
     cmds = {
         "ask":cmd_ask, "agent":cmd_agent, "chat":cmd_chat,
@@ -1116,6 +1212,8 @@ def main():
         # 弱項補強第二批
         "init":cmd_init, "deploy":cmd_deploy,
         "vitals":cmd_vitals, "cross-device":cmd_cross_device,
+        # Project Brain v4.0
+        "brain":cmd_brain,
     }
     fn = cmds.get(args.command)
     if fn:
@@ -1123,6 +1221,60 @@ def main():
         except KeyboardInterrupt: print(f"\n{DIM}  已中止{RESET}\n")
     else:
         print(f"{RED}✖ 未知命令：{args.command}{RESET}")
+
+
+# ══════════════════════════════════════════════════════════════
+#  Project Brain v4.0 命令
+# ══════════════════════════════════════════════════════════════
+
+def cmd_brain_validate(args):
+    """知識自主驗證（v4.0）"""
+    from core.brain import ProjectBrain
+    workdir      = get_workdir(getattr(args, "workdir", None))
+    max_api      = getattr(args, "max_api_calls", 20)
+    dry_run      = getattr(args, "dry_run", False)
+    brain        = ProjectBrain(workdir)
+    print(f"\n🔍 知識驗證（max_api_calls={max_api}, dry_run={dry_run}）")
+    try:
+        validator = brain.validator
+        report    = validator.run(max_api_calls=max_api, dry_run=dry_run)
+        print(f"\n{report.summary()}")
+    except Exception as e:
+        print(f"{RED}✖ 驗證失敗：{e}{RESET}")
+
+
+def cmd_brain_distill(args):
+    """知識蒸餾（v4.0）"""
+    from core.brain import ProjectBrain
+    workdir = get_workdir(getattr(args, "workdir", None))
+    layers  = getattr(args, "layers", ["context", "prompts", "lora"]) or ["context", "prompts", "lora"]
+    brain   = ProjectBrain(workdir)
+    print(f"\n⚗ 知識蒸餾（layers={layers}）")
+    try:
+        distiller = brain.distiller
+        result    = distiller.distill_all(layers=layers)
+        print(f"\n{result.summary()}")
+    except Exception as e:
+        print(f"{RED}✖ 蒸餾失敗：{e}{RESET}")
+
+
+def cmd_brain_webui(args):
+    """啟動知識圖譜 Web UI（v4.0，預設 port 7890）"""
+    from core.brain import ProjectBrain
+    from core.brain.web_ui.server import run_server
+    workdir = get_workdir(getattr(args, "workdir", None))
+    port    = getattr(args, "port", 7890)
+    from pathlib import Path
+    brain_dir = Path(workdir) / ".brain"
+    if not brain_dir.exists():
+        print(f"{RED}✖ 找不到 .brain 目錄，請先執行：{RESET}")
+        print(f"  python synthex.py brain init --workdir {workdir}")
+        return
+    try:
+        run_server(Path(workdir), port=port)
+    except Exception as e:
+        print(f"{RED}✖ Web UI 啟動失敗：{e}{RESET}")
+        print("  請確認已安裝：pip install flask flask-cors")
 
 if __name__ == "__main__":
     main()
