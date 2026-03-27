@@ -1,0 +1,198 @@
+<svg width="100%" viewBox="0 0 680 654" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- 標題 -->
+<text x="340" y="28" text-anchor="middle" style="fill:rgb(20,20,19);font-family:'Anthropic Sans',-apple-system,'system-ui',sans-serif;font-size:14px;font-weight:500">Project Brain v3.0 — 三層認知記憶架構</text>
+
+<!-- 知識來源層 label -->
+<text x="340" y="54" text-anchor="middle" opacity="0.6" style="fill:rgb(61,61,58);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px">知識來源層</text>
+
+<!-- Source box 1: Git Commits -->
+<g onclick="sendPrompt('Git commit 如何被 Brain 的三層記憶自動學習？')">
+  <rect x="40" y="64" width="108" height="48" rx="8" stroke-width="0.5" style="fill:rgb(241,239,232);stroke:rgb(95,94,90)"/>
+  <text x="94" y="81" text-anchor="middle" dominant-baseline="central" style="fill:rgb(68,68,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">Git Commits</text>
+  <text x="94" y="99" text-anchor="middle" dominant-baseline="central" style="fill:rgb(95,94,90);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">diff + message</text>
+</g>
+
+<!-- Source box 2: ship() 流水線 -->
+<g onclick="sendPrompt('ship() 的每個 Phase 輸出如何流入 L2 情節記憶？')">
+  <rect x="156" y="64" width="108" height="48" rx="8" stroke-width="0.5" style="fill:rgb(241,239,232);stroke:rgb(95,94,90)"/>
+  <text x="210" y="81" text-anchor="middle" dominant-baseline="central" style="fill:rgb(68,68,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">ship() 流水線</text>
+  <text x="210" y="99" text-anchor="middle" dominant-baseline="central" style="fill:rgb(95,94,90);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">Phase 輸出</text>
+</g>
+
+<!-- Source box 3: ADR 文件 -->
+<g onclick="sendPrompt('ADR 文件如何通過 episode_from_adr() 轉化為 L2 時序知識？')">
+  <rect x="272" y="64" width="108" height="48" rx="8" stroke-width="0.5" style="fill:rgb(241,239,232);stroke:rgb(95,94,90)"/>
+  <text x="326" y="81" text-anchor="middle" dominant-baseline="central" style="fill:rgb(68,68,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">ADR 文件</text>
+  <text x="326" y="99" text-anchor="middle" dominant-baseline="central" style="fill:rgb(95,94,90);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">架構決策記錄</text>
+</g>
+
+<!-- Source box 4: 考古掃描 -->
+<g onclick="sendPrompt('考古掃描如何重建舊專案的三層知識庫？')">
+  <rect x="388" y="64" width="108" height="48" rx="8" stroke-width="0.5" style="fill:rgb(241,239,232);stroke:rgb(95,94,90)"/>
+  <text x="442" y="81" text-anchor="middle" dominant-baseline="central" style="fill:rgb(68,68,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">考古掃描</text>
+  <text x="442" y="99" text-anchor="middle" dominant-baseline="central" style="fill:rgb(95,94,90);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">舊專案重建</text>
+</g>
+
+<!-- Source box 5: 跨 Repo 知識 -->
+<g onclick="sendPrompt('SharedRegistry 如何讓多個 Repo 的知識安全流動？')">
+  <rect x="504" y="64" width="136" height="48" rx="8" stroke-width="0.5" style="fill:rgb(241,239,232);stroke:rgb(95,94,90)"/>
+  <text x="572" y="81" text-anchor="middle" dominant-baseline="central" style="fill:rgb(68,68,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">跨 Repo 知識</text>
+  <text x="572" y="99" text-anchor="middle" dominant-baseline="central" style="fill:rgb(95,94,90);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">SharedRegistry v2.0</text>
+</g>
+
+<!-- Arrows: sources → BrainRouter -->
+<line x1="94" y1="112" x2="94" y2="132" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<line x1="210" y1="112" x2="210" y2="132" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<line x1="326" y1="112" x2="326" y2="132" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<line x1="442" y1="112" x2="442" y2="132" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<line x1="572" y1="112" x2="572" y2="132" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+
+<!-- BrainRouter v3.0 (Purple) — 智能路由層 -->
+<g onclick="sendPrompt('BrainRouter 如何決定知識寫入哪一層？三層查詢如何並行？')">
+  <rect x="40" y="132" width="600" height="60" rx="10" stroke-width="0.5" style="fill:rgb(238,237,254);stroke:rgb(83,74,183)"/>
+  <text x="340" y="154" text-anchor="middle" dominant-baseline="central" style="fill:rgb(60,52,137);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:14px;font-weight:500">BrainRouter v3.0 — 智能路由層</text>
+  <text x="340" y="174" text-anchor="middle" dominant-baseline="central" style="fill:rgb(83,74,183);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px">寫入路由 · 三層並行查詢（&lt;500ms）· 降級策略管理</text>
+</g>
+
+<!-- 三層認知記憶 label -->
+<text x="340" y="210" text-anchor="middle" opacity="0.6" style="fill:rgb(61,61,58);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px">三層認知記憶</text>
+
+<!-- Arrows: Router → Memory Layers (diverging) -->
+<path d="M 210 192 L 136 218" fill="none" marker-end="url(#arrow)" opacity="0.4" style="stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<line x1="340" y1="192" x2="340" y2="218" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<path d="M 470 192 L 544 218" fill="none" marker-end="url(#arrow)" opacity="0.4" style="stroke:rgb(115,114,108);stroke-width:1.5px"/>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- L1 — 工作記憶 (Teal) x=40, w=192, y=218, h=190 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<g onclick="sendPrompt('L1 工作記憶如何用 Anthropic Memory Tool 實作？BrainMemoryBackend 的 SQLite 後端有什麼優勢？')">
+  <!-- Main box -->
+  <rect x="40" y="218" width="192" height="190" rx="8" stroke-width="0.5" style="fill:rgb(225,245,238);stroke:rgb(15,110,86)"/>
+  <!-- Header band (top corners rounded) -->
+  <path d="M 48,218 Q 40,218 40,226 L 40,246 L 232,246 L 232,226 Q 232,218 224,218 Z" style="fill:rgb(159,225,203)"/>
+  <text x="136" y="232" text-anchor="middle" dominant-baseline="central" style="fill:rgb(4,52,44);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">L1 — 工作記憶</text>
+  <!-- Tech name -->
+  <text x="136" y="262" text-anchor="middle" dominant-baseline="central" style="fill:rgb(8,80,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">Anthropic Memory Tool</text>
+  <text x="136" y="278" text-anchor="middle" dominant-baseline="central" style="fill:rgb(15,110,86);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">memory_20250818</text>
+  <!-- Separator -->
+  <line x1="56" y1="292" x2="216" y2="292" style="stroke:rgb(15,110,86);stroke-width:0.5;opacity:0.3"/>
+  <!-- Details -->
+  <text x="136" y="305" text-anchor="middle" dominant-baseline="central" style="fill:rgb(8,80,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">5 分類目錄</text>
+  <text x="136" y="320" text-anchor="middle" dominant-baseline="central" style="fill:rgb(15,110,86);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">pitfalls · decisions</text>
+  <text x="136" y="335" text-anchor="middle" dominant-baseline="central" style="fill:rgb(15,110,86);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">progress · context · notes</text>
+  <!-- Separator -->
+  <line x1="56" y1="348" x2="216" y2="348" style="stroke:rgb(15,110,86);stroke-width:0.5;opacity:0.3"/>
+  <!-- Footer -->
+  <text x="136" y="361" text-anchor="middle" dominant-baseline="central" style="fill:rgb(8,80,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">查詢：&lt;10ms（FTS5）</text>
+  <text x="136" y="379" text-anchor="middle" dominant-baseline="central" style="fill:rgb(4,52,44);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px;font-weight:500">✓ 84% token 節省</text>
+  <!-- Backend strip (bottom corners rounded) -->
+  <path d="M 40,392 L 232,392 L 232,400 Q 232,408 224,408 L 48,408 Q 40,408 40,400 Z" style="fill:rgb(159,225,203)"/>
+  <text x="136" y="400" text-anchor="middle" dominant-baseline="central" style="fill:rgb(8,80,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:10px">SQLite WAL · FTS5 · ACID</text>
+</g>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- L2 — 情節記憶 (Amber) x=244, w=192, y=218, h=190 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<g onclick="sendPrompt('Graphiti 的雙時態模型如何讓 Brain 知道決策是否仍然有效？')">
+  <!-- Main box -->
+  <rect x="244" y="218" width="192" height="190" rx="8" stroke-width="0.5" style="fill:rgb(250,238,218);stroke:rgb(133,79,11)"/>
+  <!-- Header band -->
+  <path d="M 252,218 Q 244,218 244,226 L 244,246 L 436,246 L 436,226 Q 436,218 428,218 Z" style="fill:rgb(250,199,117)"/>
+  <text x="340" y="232" text-anchor="middle" dominant-baseline="central" style="fill:rgb(65,36,2);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">L2 — 情節記憶</text>
+  <!-- Tech name -->
+  <text x="340" y="262" text-anchor="middle" dominant-baseline="central" style="fill:rgb(99,56,6);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">Graphiti 時序知識圖譜</text>
+  <text x="340" y="278" text-anchor="middle" dominant-baseline="central" style="fill:rgb(133,79,11);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">FalkorDB · Neo4j · Kuzu</text>
+  <!-- Separator -->
+  <line x1="260" y1="292" x2="420" y2="292" style="stroke:rgb(133,79,11);stroke-width:0.5;opacity:0.3"/>
+  <!-- Details -->
+  <text x="340" y="305" text-anchor="middle" dominant-baseline="central" style="fill:rgb(99,56,6);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">雙時態（t_valid / t_invalid）</text>
+  <text x="340" y="320" text-anchor="middle" dominant-baseline="central" style="fill:rgb(133,79,11);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">衝突自動 invalidate</text>
+  <text x="340" y="335" text-anchor="middle" dominant-baseline="central" style="fill:rgb(133,79,11);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">混合搜尋：語義＋BM25＋圖</text>
+  <!-- Separator -->
+  <line x1="260" y1="348" x2="420" y2="348" style="stroke:rgb(133,79,11);stroke-width:0.5;opacity:0.3"/>
+  <!-- Footer -->
+  <text x="340" y="361" text-anchor="middle" dominant-baseline="central" style="fill:rgb(99,56,6);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">查詢：&lt;100ms</text>
+  <text x="340" y="379" text-anchor="middle" dominant-baseline="central" style="fill:rgb(65,36,2);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px;font-weight:500">降級 → TemporalGraph</text>
+  <!-- Backend strip -->
+  <path d="M 244,392 L 436,392 L 436,400 Q 436,408 428,408 L 252,408 Q 244,408 244,400 Z" style="fill:rgb(250,199,117)"/>
+  <text x="340" y="400" text-anchor="middle" dominant-baseline="central" style="fill:rgb(99,56,6);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:10px">開源 · MIT · Zep 出品</text>
+</g>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- L3 — 語義記憶 (Coral) x=448, w=192, y=218, h=190 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<g onclick="sendPrompt('Project Brain v2.0 的反事實推理和三維衰減模型如何運作？')">
+  <!-- Main box -->
+  <rect x="448" y="218" width="192" height="190" rx="8" stroke-width="0.5" style="fill:rgb(250,236,231);stroke:rgb(153,60,29)"/>
+  <!-- Header band -->
+  <path d="M 456,218 Q 448,218 448,226 L 448,246 L 640,246 L 640,226 Q 640,218 632,218 Z" style="fill:rgb(245,196,179)"/>
+  <text x="544" y="232" text-anchor="middle" dominant-baseline="central" style="fill:rgb(74,27,12);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">L3 — 語義記憶</text>
+  <!-- Tech name -->
+  <text x="544" y="262" text-anchor="middle" dominant-baseline="central" style="fill:rgb(113,43,19);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">Project Brain v2.0</text>
+  <text x="544" y="278" text-anchor="middle" dominant-baseline="central" style="fill:rgb(153,60,29);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">SQLite + Chroma</text>
+  <!-- Separator -->
+  <line x1="464" y1="292" x2="624" y2="292" style="stroke:rgb(153,60,29);stroke-width:0.5;opacity:0.3"/>
+  <!-- Details -->
+  <text x="544" y="305" text-anchor="middle" dominant-baseline="central" style="fill:rgb(113,43,19);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">知識圖譜（7節點·8關係）</text>
+  <text x="544" y="320" text-anchor="middle" dominant-baseline="central" style="fill:rgb(153,60,29);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">三維衰減模型</text>
+  <text x="544" y="335" text-anchor="middle" dominant-baseline="central" style="fill:rgb(153,60,29);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">反事實推理引擎</text>
+  <!-- Separator -->
+  <line x1="464" y1="348" x2="624" y2="348" style="stroke:rgb(153,60,29);stroke-width:0.5;opacity:0.3"/>
+  <!-- Footer -->
+  <text x="544" y="361" text-anchor="middle" dominant-baseline="central" style="fill:rgb(113,43,19);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">跨 Repo 聯邦知識</text>
+  <text x="544" y="379" text-anchor="middle" dominant-baseline="central" style="fill:rgb(74,27,12);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px;font-weight:500">永久保留 · 向後相容</text>
+  <!-- Backend strip -->
+  <path d="M 448,392 L 640,392 L 640,400 Q 640,408 632,408 L 456,408 Q 448,408 448,400 Z" style="fill:rgb(245,196,179)"/>
+  <text x="544" y="400" text-anchor="middle" dominant-baseline="central" style="fill:rgb(113,43,19);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:10px">SQLite WAL · Chroma · v2.0</text>
+</g>
+
+<!-- Arrows: Memory Layers → Assembler (converging) -->
+<line x1="136" y1="408" x2="200" y2="436" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<line x1="340" y1="408" x2="340" y2="436" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+<line x1="544" y1="408" x2="480" y2="436" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+
+<!-- BrainContextAssembler (Blue) -->
+<g onclick="sendPrompt('BrainContextAssembler 如何聚合三層結果並控制 Token Budget？')">
+  <rect x="40" y="436" width="600" height="56" rx="10" stroke-width="0.5" style="fill:rgb(230,241,251);stroke:rgb(24,95,165)"/>
+  <text x="340" y="458" text-anchor="middle" dominant-baseline="central" style="fill:rgb(12,68,124);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:14px;font-weight:500">BrainContextAssembler — 多層結果聚合</text>
+  <text x="340" y="477" text-anchor="middle" dominant-baseline="central" style="fill:rgb(24,95,165);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px">L1 即時 &gt; L2 時序 &gt; L3 語義 · Token Budget &lt;3,000 · 去重</text>
+</g>
+
+<!-- Arrow: Assembler → Context Injection -->
+<line x1="340" y1="492" x2="340" y2="510" marker-end="url(#arrow)" opacity="0.4" style="fill:none;stroke:rgb(115,114,108);stroke-width:1.5px"/>
+
+<!-- Agent Context 注入 (Green) -->
+<g onclick="sendPrompt('三層 Context 注入的格式是什麼？L1⚡ L2🕰 L3📚 各自代表什麼？')">
+  <rect x="40" y="510" width="600" height="52" rx="10" stroke-width="0.5" style="fill:rgb(234,243,222);stroke:rgb(59,109,17)"/>
+  <text x="340" y="530" text-anchor="middle" dominant-baseline="central" style="fill:rgb(39,80,10);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:14px;font-weight:500">Agent Context 注入</text>
+  <text x="340" y="549" text-anchor="middle" dominant-baseline="central" style="fill:rgb(59,109,17);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:12px">⚡ L1 即時工作記憶 · 🕰 L2 歷史時序決策 · 📚 L3 深度語義知識</text>
+</g>
+
+<!-- 持續回饋 feedback loop (right side, dashed) -->
+<path d="M 640 536 Q 664 536 664 340 Q 664 130 640 112" fill="none" stroke="rgba(50,50,40,0.3)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arrow)" opacity="0.6" style="fill:none"/>
+<text x="672" y="340" text-anchor="middle" transform="rotate(90,672,340)" opacity="0.55" style="fill:rgb(61,61,58);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">持續回饋</text>
+
+<!-- Bottom legend -->
+<rect x="40" y="576" width="600" height="30" rx="6" style="fill:rgb(245,244,237)"/>
+<text x="340" y="595" text-anchor="middle" dominant-baseline="central" opacity="0.7" style="fill:rgb(61,61,58);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">降級：Graphiti 不可用 → TemporalGraph · Memory Tool 不可用 → 直接注入 · L3 始終可用</text>
+
+<!-- MCP Server box -->
+<g onclick="sendPrompt('MCP Server 如何讓 Claude Code 直接呼叫 Project Brain？')">
+  <rect x="40" y="614" width="290" height="42" rx="8" stroke-width="0.5" style="fill:rgb(241,239,232);stroke:rgb(95,94,90)"/>
+  <text x="58" y="630" dominant-baseline="central" style="fill:rgb(68,68,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">MCP Server（Claude Code 整合）</text>
+  <text x="58" y="646" dominant-baseline="central" style="fill:rgb(95,94,90);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">brain_query · brain_add · brain_status</text>
+</g>
+
+<!-- VS Code box -->
+<g onclick="sendPrompt('VS Code 擴充套件如何在編輯器中顯示三層記憶內容？')">
+  <rect x="350" y="614" width="290" height="42" rx="8" stroke-width="0.5" style="fill:rgb(241,239,232);stroke:rgb(95,94,90)"/>
+  <text x="368" y="630" dominant-baseline="central" style="fill:rgb(68,68,65);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:13px;font-weight:500">VS Code 擴充套件</text>
+  <text x="368" y="646" dominant-baseline="central" style="fill:rgb(95,94,90);font-family:'Anthropic Sans',-apple-system,sans-serif;font-size:11px">側欄 Tree View · Hover · 命令面板</text>
+</g>
+</svg>

@@ -35,3 +35,19 @@ mcp>=1.26.0                  # pip install mcp
 # Project Brain MCP Server 啟動：
 #   python -m core.brain.mcp_server --workdir /your/project
 #   或設定環境變數：BRAIN_WORKDIR=/your/project python -m core.brain.mcp_server
+
+# ── Project Brain v3.0 ────────────────────────────────────────
+# L1 工作記憶（Anthropic Memory Tool — 需要 SDK >= 0.74.0）
+# anthropic>=0.74.0  # 已在核心依賴中
+
+# L2 情節記憶（Graphiti 時序知識圖譜，選填）
+# pip install graphiti-core falkordb
+# graphiti-core>=0.3.0       # 時序知識圖譜引擎
+# falkordb>=1.0.0             # 輕量 graph DB（推薦）
+
+# 若使用 Neo4j（更完整）：
+# neo4j>=5.0.0
+
+# 安裝指令（最小 L2 配置）：
+#   pip install graphiti-core falkordb
+#   docker run -p 6379:6379 falkordb/falkordb

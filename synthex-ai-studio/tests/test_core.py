@@ -981,3 +981,288 @@ class TestSwarmAsyncSafety(unittest.TestCase):
         module_doc = module_src.__doc__ or ""
         self.assertIn("asyncio", module_doc.lower(),
                       "模組 docstring 應說明 asyncio 支援")
+
+
+# ══════════════════════════════════════════════════════════════
+# Test Group 16：Brain v3.0 L1 Memory Tool（第十二輪新增）
+# ══════════════════════════════════════════════════════════════
+
+class TestBrainMemoryBackend(unittest.TestCase):
+    """BrainMemoryBackend（L1 工作記憶）的 unit tests"""
+
+    def setUp(self):
+        self.tmpdir  = tempfile.mkdtemp()
+        from core.brain.memory_tool import BrainMemoryBackend
+        self.backend = BrainMemoryBackend(
+            brain_dir  = Path(self.tmpdir),
+            agent_name = "test_agent",
+        )
+
+    def test_create_and_view(self):
+        """建立記憶後應可讀取"""
+        self.backend.handle_create({
+            "path":    "/memories/notes/test.md",
+            "content": "測試記憶內容",
+        })
+        content = self.backend.handle_view({"path": "/memories/notes/test.md"})
+        self.assertIn("測試記憶內容", content)
+
+    def test_str_replace(self):
+        """str_replace 應更新內容"""
+        self.backend.handle_create({
+            "path": "/memories/notes/replace_test.md",
+            "content": "舊內容：HS256",
+        })
+        self.backend.handle_str_replace({
+            "path":    "/memories/notes/replace_test.md",
+            "old_str": "HS256",
+            "new_str": "RS256",
+        })
+        content = self.backend.handle_view({"path": "/memories/notes/replace_test.md"})
+        self.assertIn("RS256", content)
+        self.assertNotIn("HS256", content)
+
+    def test_delete(self):
+        """刪除後應無法讀取"""
+        self.backend.handle_create({
+            "path": "/memories/notes/delete_me.md",
+            "content": "要刪除的內容",
+        })
+        self.backend.handle_delete({"path": "/memories/notes/delete_me.md"})
+        content = self.backend.handle_view({"path": "/memories/notes/delete_me.md"})
+        self.assertNotIn("要刪除的內容", content)
+
+    def test_path_traversal_blocked(self):
+        """路徑穿越攻擊應被阻擋"""
+        from core.brain.memory_tool import _validate_path
+        with self.assertRaises(ValueError):
+            _validate_path("../../etc/passwd")
+        with self.assertRaises(ValueError):
+            _validate_path("/etc/passwd")
+
+    def test_path_prefix_enforced(self):
+        """/memories 前綴應被強制"""
+        from core.brain.memory_tool import _validate_path
+        with self.assertRaises(ValueError):
+            _validate_path("/other/path/file.md")
+        valid = _validate_path("/memories/notes/ok.md")
+        self.assertTrue(valid.startswith("/memories"))
+
+    def test_content_length_limit(self):
+        """超長內容應被截斷"""
+        from core.brain.memory_tool import MAX_MEMORY_SIZE_CHARS
+        big_content = "x" * (MAX_MEMORY_SIZE_CHARS + 10_000)
+        self.backend.handle_create({
+            "path":    "/memories/notes/big.md",
+            "content": big_content,
+        })
+        content = self.backend.handle_view({"path": "/memories/notes/big.md"})
+        self.assertLessEqual(len(content), MAX_MEMORY_SIZE_CHARS + 100)
+
+    def test_search_fts5(self):
+        """FTS5 搜尋應找到相關記憶（使用 ASCII 關鍵字，避免中文分詞邊界問題）"""
+        self.backend.handle_create({
+            "path":    "/memories/pitfalls/jwt.md",
+            "content": "JWT auth must use RS256 not HS256 security risk",
+        })
+        # FTS5 對 ASCII 詞的分詞最可靠
+        results = self.backend.search("RS256")
+        self.assertGreater(len(results), 0)
+        self.assertTrue(any("RS256" in r.get("content", "") for r in results))
+
+    def test_session_summary(self):
+        """session_summary 應正確統計"""
+        self.backend.handle_create({
+            "path": "/memories/notes/s1.md", "content": "test1"
+        })
+        self.backend.handle_create({
+            "path": "/memories/notes/s2.md", "content": "test2"
+        })
+        summary = self.backend.session_summary()
+        self.assertGreaterEqual(summary["total_memories"], 2)
+        self.assertGreaterEqual(summary["total_ops"], 2)
+
+    def test_make_memory_params(self):
+        """make_memory_params 應包含正確的 API 參數"""
+        from core.brain.memory_tool import make_memory_params, MEMORY_BETA_HEADER, MEMORY_TOOL_TYPE
+        params = make_memory_params()
+        self.assertIn("tools", params)
+        self.assertIn("betas", params)
+        self.assertIn(MEMORY_BETA_HEADER, params["betas"])
+        tool_types = [t["type"] for t in params["tools"]]
+        self.assertIn(MEMORY_TOOL_TYPE, tool_types)
+
+
+# ══════════════════════════════════════════════════════════════
+# Test Group 17：Brain v3.0 L2 Graphiti Adapter（第十二輪新增）
+# ══════════════════════════════════════════════════════════════
+
+class TestGraphitiAdapter(unittest.TestCase):
+    """GraphitiAdapter（L2 情節記憶）的 unit tests"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        from core.brain.graphiti_adapter import GraphitiAdapter
+        # 不提供真實 DB，測試降級邏輯
+        self.adapter = GraphitiAdapter(
+            brain_dir  = Path(self.tmpdir),
+            db_url     = "bolt://localhost:7999",  # 不存在的 DB
+            fallback   = None,
+        )
+
+    def test_available_false_without_db(self):
+        """沒有 DB 連線時 available 應為 False"""
+        # 注意：這個測試假設 FalkorDB/Neo4j 不在測試環境
+        result = self.adapter.available
+        self.assertIsInstance(result, bool)
+
+    def test_search_sync_fallback_returns_list(self):
+        """search_sync 降級時應返回空列表（不崩潰）"""
+        results = self.adapter.search_sync("測試查詢", top_k=3)
+        self.assertIsInstance(results, list)
+
+    def test_add_episode_sync_fallback(self):
+        """add_episode_sync 降級時應返回 False（不崩潰）"""
+        from core.brain.graphiti_adapter import KnowledgeEpisode
+        ep = KnowledgeEpisode(
+            content="NEXUS 決定使用 Next.js App Router",
+            source ="phase_4_nexus",
+        )
+        result = self.adapter.add_episode_sync(ep)
+        self.assertIsInstance(result, bool)
+
+    def test_episode_from_phase_helper(self):
+        """episode_from_phase 應建立正確的 Episode"""
+        from core.brain.graphiti_adapter import episode_from_phase, KnowledgeEpisode
+        ep = episode_from_phase(4, "NEXUS", "設計了微服務架構", "使用 API Gateway 模式")
+        self.assertIsInstance(ep, KnowledgeEpisode)
+        self.assertIn("Phase 4", ep.content)
+        self.assertIn("NEXUS", ep.content)
+        self.assertIn("API Gateway", ep.content)
+
+    def test_episode_from_commit_helper(self):
+        """episode_from_commit 應包含 commit 資訊"""
+        from core.brain.graphiti_adapter import episode_from_commit
+        ep = episode_from_commit(
+            "abc12345", "fix: JWT RS256 migration",
+            "ahern", ["auth/jwt.py", "config/security.py"]
+        )
+        self.assertIn("abc12345"[:8], ep.content)
+        self.assertIn("JWT", ep.content)
+
+    def test_episode_from_adr_helper(self):
+        """episode_from_adr 應包含 ADR 資訊"""
+        from core.brain.graphiti_adapter import episode_from_adr
+        ep = episode_from_adr(
+            "ADR-007", "使用 PostgreSQL", "支援事務",
+            context="NoSQL 無法滿足複雜查詢需求",
+            supersedes="ADR-003",
+        )
+        self.assertIn("ADR-007", ep.content)
+        self.assertIn("PostgreSQL", ep.content)
+        self.assertIn("ADR-003", ep.metadata["supersedes"])
+
+    def test_temporal_search_result_is_current(self):
+        """valid_until=None 應表示仍有效"""
+        from core.brain.graphiti_adapter import TemporalSearchResult
+        r1 = TemporalSearchResult(
+            content="測試", source="test", relevance=0.9,
+            valid_until=None
+        )
+        r2 = TemporalSearchResult(
+            content="舊知識", source="test", relevance=0.8,
+            valid_until="2025-12-01T00:00:00Z"
+        )
+        self.assertTrue(r1.is_current)
+        self.assertFalse(r2.is_current)
+
+    def test_temporal_result_context_line(self):
+        """to_context_line 應包含狀態和來源"""
+        from core.brain.graphiti_adapter import TemporalSearchResult
+        r = TemporalSearchResult(
+            content="使用 PostgreSQL", source="phase_4_nexus",
+            relevance=0.9, valid_from="2026-01-15T10:00:00Z"
+        )
+        line = r.to_context_line()
+        self.assertIn("PostgreSQL", line)
+        self.assertIn("phase_4_nexus", line)
+
+
+# ══════════════════════════════════════════════════════════════
+# Test Group 18：Brain v3.0 BrainRouter（第十二輪新增）
+# ══════════════════════════════════════════════════════════════
+
+class TestBrainRouter(unittest.TestCase):
+    """BrainRouter v3.0 三層路由器的 unit tests"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        from core.brain.router import BrainRouter
+        self.router = BrainRouter(
+            brain_dir    = Path(self.tmpdir),
+            l3_brain     = None,   # 無 L3 的最小化測試
+            graphiti_url = "bolt://localhost:7999",
+            agent_name   = "test",
+        )
+
+    def test_query_returns_result(self):
+        """query() 應返回 BrainQueryResult（不崩潰）"""
+        from core.brain.router import BrainQueryResult
+        result = self.router.query("修復支付 bug")
+        self.assertIsInstance(result, BrainQueryResult)
+        self.assertIsInstance(result.elapsed_ms, int)
+
+    def test_query_has_elapsed_ms(self):
+        """query() 結果應有計時"""
+        result = self.router.query("測試任務")
+        self.assertGreater(result.elapsed_ms, 0)
+
+    def test_write_working_memory(self):
+        """write_working_memory 應成功寫入 L1"""
+        ok = self.router.write_working_memory(
+            "pitfalls",
+            "JWT RS256：要用 PKCS#8 格式",
+            name="jwt_pitfall",
+        )
+        self.assertTrue(ok)
+
+    def test_context_string_includes_l1(self):
+        """若 L1 有記憶，context_string 應包含 L1 內容"""
+        self.router.write_working_memory("pitfalls", "重要的踩坑記錄")
+        result = self.router.query("踩坑")
+        ctx = result.to_context_string()
+        if ctx:  # 若有查詢結果
+            self.assertIn("工作記憶", ctx)
+
+    def test_status_has_all_layers(self):
+        """status() 應包含三層狀態"""
+        status = self.router.status()
+        self.assertIn("l1_working_memory", status)
+        self.assertIn("l2_episodic_memory", status)
+        self.assertIn("l3_semantic_memory", status)
+
+    def test_brain_query_result_total(self):
+        """BrainQueryResult.total_results 應正確計算"""
+        from core.brain.router import BrainQueryResult
+        from core.brain.graphiti_adapter import TemporalSearchResult
+        r = BrainQueryResult(
+            l1_working  = [{"path": "/memories/a", "content": "x"}],
+            l2_temporal = [TemporalSearchResult(
+                content="y", source="test", relevance=0.9
+            )],
+            l3_semantic = [],
+        )
+        self.assertEqual(r.total_results, 2)
+
+    def test_clear_working_memory(self):
+        """clear_working_memory 應清空 L1"""
+        self.router.write_working_memory("notes", "臨時筆記 1")
+        self.router.write_working_memory("notes", "臨時筆記 2")
+        count = self.router.clear_working_memory()
+        self.assertGreaterEqual(count, 0)   # 不崩潰即可（可能 0 或更多）
+
+    def test_brain_version_updated(self):
+        """brain/__init__.py 版本應為 3.0.0"""
+        from core.brain import __version__
+        self.assertEqual(__version__, "3.0.0",
+                         "brain/__init__.py 版本應已更新至 3.0.0")

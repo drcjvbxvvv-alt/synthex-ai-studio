@@ -40,22 +40,33 @@ from .counterfactual import CounterfactualReasoner # v2.0
 
 class ProjectBrain:
     """
-    Project Brain 主引擎
+    Project Brain 主引擎（v3.0 — 三層認知架構）
 
     使用方式：
         brain = ProjectBrain("/path/to/project")
         brain.init()                          # 新專案初始化
         brain.scan()                          # 舊專案考古掃描
-        ctx = brain.get_context("修復登入 bug") # 取得 Context 注入
-        brain.learn_from_commit("abc123")     # 從 commit 學習
+
+        # v3.0：三層查詢
+        result  = brain.router.query("修復登入 bug")
+        context = result.to_context_string()
+
+        # v3.0：三層學習
+        brain.router.learn_from_phase(9, "BYTE", frontend_code)
+        brain.router.learn_from_commit("abc123", "fix: login", "ahern", [...])
+
+        # 向後相容（v1.0 + v2.0 API）
+        ctx = brain.get_context("修復登入 bug")
+        brain.learn_from_commit("abc123")
     """
 
     BRAIN_DIR   = ".brain"
     CONFIG_FILE = "config.json"
 
-    def __init__(self, workdir: str):
-        self.workdir   = Path(workdir).resolve()
-        self.brain_dir = self.workdir / self.BRAIN_DIR
+    def __init__(self, workdir: str, graphiti_url: str = "bolt://localhost:7687"):
+        self.workdir      = Path(workdir).resolve()
+        self.brain_dir    = self.workdir / self.BRAIN_DIR
+        self._graphiti_url = graphiti_url
 
         # 延遲初始化（只有呼叫 init/scan 後才建立）
         self._graph     = None
@@ -69,6 +80,8 @@ class ProjectBrain:
         self._registry  = None
         self._decay     = None
         self._cf        = None
+        # v3.0
+        self._router:   "BrainRouter | None" = None
 
     # ── 屬性懶初始化 ──────────────────────────────────────────────
 
@@ -125,6 +138,22 @@ class ProjectBrain:
         if self._cf is None:
             self._cf = CounterfactualEngine(self.graph, self.workdir)
         return self._cf
+
+    @property
+    def router(self) -> "BrainRouter":
+        """
+        v3.0 三層認知路由器。
+        懶初始化：第一次呼叫時建立 L1 + L2 + L3 連線。
+        """
+        if self._router is None:
+            from core.brain.router import BrainRouter
+            self._router = BrainRouter(
+                brain_dir    = self.brain_dir,
+                l3_brain     = self,       # 自身作為 L3
+                graphiti_url = self._graphiti_url,
+                agent_name   = self._config.get("project_name", "synthex"),
+            )
+        return self._router
 
     # ── 公開 API ──────────────────────────────────────────────────
 
@@ -222,11 +251,23 @@ class ProjectBrain:
 
     def get_context(self, task: str, current_file: str = "") -> str:
         """
-        為任務動態組裝最佳 Context 注入片段。
-        在 AI 處理任務前呼叫，注入到 system prompt 或 user message。
+        為任務動態組裝最佳 Context 注入片段（v3.0 三層聚合）。
+
+        v3.0 升級：
+          若 router 已初始化，使用三層聚合查詢（L1+L2+L3）。
+          否則降級到 v2.0 的 ContextEngineer.build()（向後相容）。
         """
         if not self.brain_dir.exists():
             return ""
+
+        # v3.0 路徑：三層聚合
+        if self._router is not None:
+            result = self._router.query(task)
+            context_3layer = result.to_context_string()
+            if context_3layer:
+                return context_3layer
+
+        # v2.0 降級路徑（向後相容）
         return self.context_engineer.build(task, current_file)
 
     def learn_from_commit(self, commit_hash: str = "HEAD") -> int:
