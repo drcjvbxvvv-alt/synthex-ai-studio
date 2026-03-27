@@ -51,3 +51,12 @@ mcp>=1.26.0                  # pip install mcp
 # 安裝指令（最小 L2 配置）：
 #   pip install graphiti-core falkordb
 #   docker run -p 6379:6379 falkordb/falkordb
+
+# ── Project Brain v4.0 ────────────────────────────────────────
+# Web UI（知識圖譜視覺化）
+# pip install flask flask-cors
+# flask>=3.0.0
+# flask-cors>=4.0.0
+
+# LoRA 訓練（選填，需要 GPU）
+# pip install unsloth  OR  pip install axolotl

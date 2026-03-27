@@ -2,8 +2,6 @@
 
 > 讓 AI 永遠帶著完整的專案記憶工作。工程師離職後，知識不再消失。
 
-![Project Brain 全局架構](docs/images/project_brain_v3_architecture.svg)
-
 ---
 
 ## 目錄
@@ -1266,14 +1264,14 @@ brain._budget.total_cost_usd        # 總成本（美元）
 - ✅ `ProjectBrain.get_context()` 升級 — 三層聚合（router 已初始化時）
 - ✅ 110 個 unit tests 全部通過
 
-### v4.0（規劃中）
+### v4.0（完成，2026-03-28）
 
-- [ ] 知識圖譜視覺化 Web UI（D3.js，節點衰減顏色渲染，即時圖譜瀏覽）
-- [ ] Agent 自主知識驗證（AI 定期確認 L3 知識是否仍然準確，自動更新信心）
-- [ ] 跨組織匿名知識共享（業界踩坑的聯邦學習，差分隱私保護）
-- [ ] 多模型知識蒸餾（把整個專案知識庫壓縮為 LoRA adapter）
-- [ ] Graphiti MCP Server（讓 Claude Code 直接查詢 L2 時序圖）
-- [ ] L1 記憶的跨 session 持久化（目前 session 結束後可選清空）
+- ✅ 知識圖譜視覺化 Web UI（D3.js，節點衰減顏色渲染，即時圖譜瀏覽）
+- ✅ Agent 自主知識驗證（AI 定期確認 L3 知識是否仍然準確，自動更新信心）
+- ✅ 跨組織匿名知識共享（業界踩坑的聯邦學習，差分隱私保護）
+- ✅ 多模型知識蒸餾（把整個專案知識庫壓縮為 LoRA adapter）
+- ✅ Graphiti MCP Server（讓 Claude Code 直接查詢 L2 時序圖）
+- ✅ L1 記憶的跨 session 持久化（目前 session 結束後可選清空）
 
 ---
 

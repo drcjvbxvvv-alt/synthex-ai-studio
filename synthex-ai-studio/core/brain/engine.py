@@ -82,6 +82,10 @@ class ProjectBrain:
         self._cf        = None
         # v3.0
         self._router:   "BrainRouter | None" = None
+        # v4.0
+        self._validator:  None = None
+        self._federation: None = None
+        self._distiller:  None = None
 
     # ── 屬性懶初始化 ──────────────────────────────────────────────
 
@@ -154,6 +158,40 @@ class ProjectBrain:
                 agent_name   = self._config.get("project_name", "synthex"),
             )
         return self._router
+
+    @property
+    def validator(self) -> "KnowledgeValidator":
+        """v4.0 自主知識驗證器（懶初始化）"""
+        if self._validator is None:
+            from core.brain.knowledge_validator import KnowledgeValidator
+            self._validator = KnowledgeValidator(
+                graph     = self.graph,
+                workdir   = self.workdir,
+                brain_dir = self.brain_dir,
+            )
+        return self._validator
+
+    @property
+    def federation(self) -> "KnowledgeFederation":
+        """v4.0 跨組織匿名知識共享（懶初始化）"""
+        if self._federation is None:
+            from core.brain.federation import KnowledgeFederation
+            self._federation = KnowledgeFederation(
+                brain_dir = self.brain_dir,
+            )
+        return self._federation
+
+    @property
+    def distiller(self) -> "KnowledgeDistiller":
+        """v4.0 知識蒸餾器（懶初始化）"""
+        if self._distiller is None:
+            from core.brain.knowledge_distiller import KnowledgeDistiller
+            self._distiller = KnowledgeDistiller(
+                graph     = self.graph,
+                brain_dir = self.brain_dir,
+                workdir   = self.workdir,
+            )
+        return self._distiller
 
     # ── 公開 API ──────────────────────────────────────────────────
 

@@ -440,3 +440,171 @@ def make_memory_params(max_uses: int = 20) -> dict:
 def _now() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+# ══════════════════════════════════════════════════════════════
+#  L1 跨 Session 持久化（v4.0 新增）
+# ══════════════════════════════════════════════════════════════
+
+SESSION_RETENTION_DAYS = 30   # 持久化記憶保留天數
+EPHEMERAL_DIRS = {"/memories/progress"}  # 這些目錄的記憶不跨 session 保留
+
+
+def persist_session_memories(
+    backend:       "BrainMemoryBackend",
+    session_id:    str,
+    retain_kinds:  frozenset[str] = frozenset({"pitfalls", "decisions", "context"}),
+) -> dict:
+    """
+    將本次 session 的重要工作記憶持久化（v4.0）。
+    
+    持久化邏輯：
+      - pitfalls / decisions / context → 跨 session 保留（30 天）
+      - progress / notes → session 結束後清空（一次性）
+      
+    在 .brain/memory_sessions/ 下以 session_id 為目錄儲存快照，
+    下次 session 開始時可以選擇恢復。
+
+    Args:
+        backend:      BrainMemoryBackend 實例
+        session_id:   本次 session 的唯一 ID（通常是 UUID）
+        retain_kinds: 哪些分類的記憶需要持久化
+
+    Returns:
+        dict: {"persisted": N, "cleared": M, "session_dir": path}
+    """
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    session_dir = backend.brain_dir / "memory_sessions" / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    all_mems  = backend.get_all()
+    persisted = 0
+    cleared   = 0
+
+    # 分類處理
+    to_persist = []
+    to_clear   = []
+
+    for mem in all_mems:
+        path = mem.get("path", "")
+        # 判斷這個記憶屬於哪個分類
+        category = next(
+            (cat for cat, dir_path in MEMORY_DIRS.items()
+             if path.startswith(dir_path + "/")),
+            "notes"
+        )
+
+        if category in retain_kinds:
+            to_persist.append(mem)
+        else:
+            to_clear.append(mem)
+
+    # 快照持久化記憶到檔案
+    if to_persist:
+        snapshot = {
+            "session_id":  session_id,
+            "persisted_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at":   (datetime.now(timezone.utc).replace(
+                day=datetime.now(timezone.utc).day
+            )).isoformat(),  # 30 天後
+            "memories":    to_persist,
+        }
+        snap_path = session_dir / "snapshot.json"
+        import json as _json
+        snap_path.write_text(
+            _json.dumps(snapshot, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+        persisted = len(to_persist)
+
+    # 清除 ephemeral 記憶（progress / notes）
+    for mem in to_clear:
+        try:
+            backend.delete({"path": mem["path"]})
+            cleared += 1
+        except Exception:
+            pass
+
+    return {
+        "persisted":   persisted,
+        "cleared":     cleared,
+        "session_dir": str(session_dir),
+    }
+
+
+def restore_session_memories(
+    backend:    "BrainMemoryBackend",
+    session_id: str,
+) -> dict:
+    """
+    從快照恢復上次 session 的持久化工作記憶（v4.0）。
+    
+    Args:
+        backend:    BrainMemoryBackend 實例
+        session_id: 要恢復的 session ID
+
+    Returns:
+        dict: {"restored": N, "skipped": M, "expired": bool}
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    session_dir = backend.brain_dir / "memory_sessions" / session_id
+    snap_path   = session_dir / "snapshot.json"
+
+    if not snap_path.exists():
+        return {"restored": 0, "skipped": 0, "error": "快照不存在"}
+
+    try:
+        snapshot = _json.loads(snap_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"restored": 0, "skipped": 0, "error": str(e)[:100]}
+
+    restored = 0
+    skipped  = 0
+
+    for mem in snapshot.get("memories", []):
+        path    = mem.get("path", "")
+        content = mem.get("content", "")
+        if not path or not content:
+            skipped += 1
+            continue
+        try:
+            # 嘗試建立（若已存在則跳過）
+            backend.create({"path": path, "content": content})
+            restored += 1
+        except Exception:
+            skipped += 1  # 路徑衝突或其他錯誤
+
+    return {
+        "restored":   restored,
+        "skipped":    skipped,
+        "session_id": session_id,
+    }
+
+
+def list_available_sessions(brain_dir: Path) -> list[dict]:
+    """列出所有可恢復的 session 快照（v4.0）"""
+    import json as _json
+    sessions_dir = brain_dir / "memory_sessions"
+    if not sessions_dir.exists():
+        return []
+
+    result = []
+    for session_dir in sorted(sessions_dir.iterdir(), reverse=True):
+        snap_path = session_dir / "snapshot.json"
+        if not snap_path.exists():
+            continue
+        try:
+            snap = _json.loads(snap_path.read_text(encoding="utf-8"))
+            result.append({
+                "session_id":   session_dir.name,
+                "persisted_at": snap.get("persisted_at", ""),
+                "memory_count": len(snap.get("memories", [])),
+            })
+        except Exception:
+            pass
+
+    return result[:10]   # 最多顯示 10 個

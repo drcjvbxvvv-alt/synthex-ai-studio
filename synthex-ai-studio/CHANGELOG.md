@@ -296,3 +296,138 @@ Graphiti ✗ + Memory Tool ✗ → 純 L3（Project Brain v2.0，向後相容）
 - `TestBrainRouter`（8）：三層查詢、寫入、狀態、版本確認
 
 **全部 110 tests 通過（3.47s，無 warnings）**
+
+## v0.13.0（第十三輪 — Project Brain v4.0，2026-03-27）
+
+### Project Brain v4.0 — 六大功能
+
+**1. Agent 自主知識驗證（`knowledge_validator.py`，648 行）**
+- 三階段驗證：規則驗證（本地）→ 程式碼比對（本地）→ Claude 語義驗證（API）
+- Prompt Injection 防護：知識內容清理後才送入 Claude
+- 驗證快取（7 天 SQLite）：同一知識不重複 API 呼叫
+- 成本控制：只對 confidence≥0.5 且 age≥30 天的 Decision/Rule/ADR 觸發 AI
+- 結果只更新 confidence（不刪除，保留歷史可審計）
+- `ValidationResult.conf_delta`、`to_summary_line()` 語義豐富的輸出
+
+**2. 跨組織匿名知識共享（`federation.py`，455 行）**
+- 三重差分隱私：語意泛化 + Laplace 機制（ε=1.0）+ K-匿名（K=3）
+- PII 自動過濾：email、IP、API Key、URL 在上傳前清除
+- 只分享 Pitfall/Rule（Decision 可能含公司策略）
+- 本地佇列管理（SQLite）+ flush_queue() 同步
+- 聯邦 Hub 以 mock 模擬（架構已就緒，等 v5.0 接入真實 Hub）
+- `org_id` 由機器特徵 SHA-256 hash 生成（不可逆）
+
+**3. 多層知識蒸餾（`knowledge_distiller.py`，489 行）**
+- Layer 1 Context Distillation：壓縮為 SYNTHEX_KNOWLEDGE.md（任何 LLM 可讀）
+- Layer 2 Role Prompts：為 7 個 SYNTHEX Agent 角色生成針對性 system prompt
+  - `distill_for_agent("SHIELD")` 即時回傳安全知識 prompt 片段
+- Layer 3 LoRA Dataset：生成 Alpaca instruction-following 格式 JSONL
+  - 含訓練配置模板（Axolotl / Unsloth 兼容）
+- PII 過濾確保訓練數據安全
+
+**4. Graphiti 專屬 MCP Server（`graphiti_mcp_server.py`，458 行）**
+- 4 個 MCP Tools：`graphiti_search` / `graphiti_add_episode` / `graphiti_adr` / `graphiti_status`
+- `current_only=True` 自動過濾已過期知識（`valid_until != None`）
+- Rate Limiting（60 RPM）、輸入嚴格驗證、錯誤訊息不洩漏路徑
+- 支援 stdio 模式（Claude Code 直接呼叫）
+
+**5. 知識圖譜視覺化 Web UI（`web_ui/server.py`，554 行）**
+- Flask + D3.js 力導向圖（Force-directed Graph）
+- 節點信心分數顏色渲染（綠→黃→橙→紅）
+- 即時搜尋高亮（FTS5 + fallback LIKE）
+- 按類型過濾、拖拽節點、縮放平移
+- RESTful API：`/api/graph` / `/api/stats` / `/api/search` / `/api/decay`
+- 只綁定 127.0.0.1（本地安全）
+
+**6. L1 工作記憶跨 Session 持久化（`memory_tool.py` 擴充）**
+- `persist_session_memories()`：pitfalls/decisions/context 跨 session 保留
+- `restore_session_memories()`：下次 session 恢復上次的工作記憶
+- `list_available_sessions()`：列出可恢復的歷史 session
+- progress/notes 為 ephemeral（session 結束自動清空）
+- 快照儲存在 `.brain/memory_sessions/{session_id}/snapshot.json`
+
+**整合：`engine.py` 三個新屬性（懶初始化）**
+- `brain.validator` → KnowledgeValidator
+- `brain.federation` → KnowledgeFederation
+- `brain.distiller` → KnowledgeDistiller
+
+**`brain/__init__.py` 版本升級至 4.0.0**
+
+**測試：110 → 139（+29 個新測試）**
+- `TestKnowledgeValidator`（7）
+- `TestKnowledgeFederation`（8）
+- `TestKnowledgeDistiller`（6）
+- `TestSessionPersistence`（4）
+- `TestBrainV4Integration`（4）
+
+**全部 139 tests 通過（4.58s）**
+
+## v0.13.0（第十三輪 — Project Brain v4.0，2026-03-27）
+
+### 六個 v4.0 功能全部實作完成
+
+**1. KnowledgeValidator — Agent 自主知識驗證（648 行）**
+- 三階段驗證：規則驗證（<1ms）→ 程式碼比對（<100ms）→ Claude 語義驗證（~2s）
+- Prompt Injection 防護：過濾 ignore/forget/override 等指令
+- 驗證快取（7 天 SQLite）：避免重複 API 呼叫，成本控制
+- max_api_calls 強制上限（預設 20 次）
+- dry_run 模式：只報告不更新
+- `validation_log.db` 審計追蹤（run 歷史 + 詳細記錄）
+- 整合：`ProjectBrain.validator` 懶初始化屬性
+
+**2. KnowledgeFederation — 跨組織匿名知識共享（455 行）**
+- 差分隱私（Differential Privacy）三重保護：
+  - 語意泛化：CamelCase 組件名 → 通用描述
+  - Laplace 雜訊（ε=1.0）：信心分數加 DP 雜訊
+  - K-匿名：≥3 個組織提供才發布
+- PII 自動過濾：email、IP、API Key、URL 拒絕上傳
+- 匿名組織 ID（SHA-256 不可逆 hash）
+- `federation.db` 本地審計（發布佇列 + 接收快取）
+- `flush_queue()` 同步佇列；`receive_industry_knowledge()` 接收業界知識
+- `apply_to_brain()` 將聯邦知識寫入 L3
+
+**3. KnowledgeDistiller — 多模型知識蒸餾（489 行）**
+- Layer 1 Context Distillation：壓縮為 `SYNTHEX_KNOWLEDGE.md`（任何 LLM 可讀）
+- Layer 2 Role Prompts：為 7 個 Agent 角色生成針對性 system prompt 片段
+- Layer 3 LoRA Dataset：生成 Alpaca 格式的 JSONL 訓練數據 + Axolotl 配置模板
+- `distill_for_agent("SHIELD")` 即時版本（不需要事先執行 distill_all）
+- PII 過濾確保訓練數據安全
+
+**4. Graphiti MCP Server — L2 時序圖直接查詢（458 行）**
+- 4 個 MCP Tools：graphiti_search / add_episode / adr / status
+- `current_only=True` 過濾：只回傳 valid_until=None 的有效知識
+- 支援 JSON-RPC stdio 協議（Claude Code 標準）
+- Rate limiting 60 RPM，輸入嚴格驗證
+- 整合到 Claude Code 的 `.claude/settings.json` MCP 設定
+
+**5. Web UI — 知識圖譜視覺化（554 行）**
+- Flask + D3.js 力導向圖（Force-directed Graph）
+- 節點衰減熱力圖：信心分數 → 顏色（綠/黃/橙/紅）
+- 節點類型形狀映射（Pitfall=triangle, Decision=diamond, ...）
+- 即時搜尋（FTS5，300ms debounce）+ 圖上高亮
+- 類型過濾按鈕（踩坑/規則/決策/ADR/組件）
+- 節點詳情側邊欄（點擊顯示完整內容）
+- 統計儀表板（健康分數、低信心計數）
+- 只綁定 localhost（127.0.0.1），不對外暴露
+
+**6. L1 跨 Session 持久化（新增到 memory_tool.py）**
+- `persist_session_memories()` — 將重要記憶快照到 `.brain/memory_sessions/`
+  - pitfalls / decisions / context → 跨 session 保留（30 天）
+  - progress / notes → session 結束後清空（ephemeral）
+- `restore_session_memories()` — 從快照恢復上次 session 的工作記憶
+- `list_available_sessions()` — 列出所有可恢復的 session
+- JSON 快照格式，帶過期時間戳
+
+---
+
+**測試：110 → 139（+29 個新測試）**
+
+| 群組 | 數量 | 覆蓋範圍 |
+|------|------|---------|
+| TestKnowledgeValidator | 7 | 三階段驗證、Injection 偵測、dry_run |
+| TestKnowledgeFederation | 8 | 匿名化、DP 雜訊、PII 過濾、分享/拒絕 |
+| TestKnowledgeDistiller | 6 | 三層蒸餾、LoRA JSONL、角色 prompt |
+| TestSessionPersistence | 4 | 持久化、恢復、列表、不存在 session |
+| TestBrainV4Integration | 4 | 三個屬性懶初始化、版本號 v4.0.0 |
+
+**全部 139 tests 通過（4.70s）**
