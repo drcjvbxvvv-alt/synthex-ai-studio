@@ -156,7 +156,7 @@ def tool_graphiti_search(
         return json.dumps(output, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        logger.error("graphiti_search_failed", error=str(e)[:200])
+        logger.error("graphiti_search_failed | error=str(e")
         return json.dumps({"error": str(e)[:200], "query": query})
 
 
@@ -205,7 +205,7 @@ def tool_graphiti_add_episode(
         }, ensure_ascii=False)
 
     except Exception as e:
-        logger.error("graphiti_add_failed", error=str(e)[:200])
+        logger.error("graphiti_add_failed | error=str(e")
         return json.dumps({"success": False, "error": str(e)[:200]})
 
 
@@ -439,7 +439,7 @@ def run_mcp_server() -> None:
             error_resp = {"error": {"code": -32700, "message": "Parse error"}}
             print(json.dumps(error_resp), flush=True)
         except Exception as e:
-            logger.error("mcp_handler_error", error=str(e)[:200])
+            logger.error("mcp_handler_error | error=str(e")
             error_resp = {
                 "id":    None,
                 "error": {"code": -32603, "message": str(e)[:200]},

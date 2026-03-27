@@ -137,10 +137,10 @@ class GraphitiAdapter:
                 asyncio.wait_for(self._init_client(), timeout=5.0)
             )
             loop.close()
-            logger.info("graphiti_connected", url=self.db_url)
+            logger.info("graphiti_connected | url=self.db_url")
             return True
         except Exception as e:
-            logger.info("graphiti_unavailable", reason=str(e)[:100])
+            logger.info("graphiti_unavailable | reason=str(e")
             return False
 
     async def _init_client(self) -> None:
@@ -179,28 +179,29 @@ class GraphitiAdapter:
                 source_description = episode.source,
                 reference_time     = ref_time,
             )
-            logger.debug("graphiti_episode_added",
-                         source=episode.source, chars=len(episode.content))
+            logger.debug("graphiti_episode_added | source=episode.source chars=len(episode.content")
             return True
         except Exception as e:
-            logger.error("graphiti_add_failed", error=str(e)[:200])
+            logger.error("graphiti_add_failed | error=str(e")
             return self._fallback_add(episode)
 
     def add_episode_sync(self, episode: KnowledgeEpisode) -> bool:
         """同步包裝（供非 async 環境，如 ship() 流水線）"""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 已有 event loop，用 thread 執行
+            try:
+                asyncio.get_running_loop()
+                # 已在 event loop 中，用 thread 執行
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     future = ex.submit(
                         lambda: asyncio.run(self.add_episode(episode))
                     )
                     return future.result(timeout=30)
-            return loop.run_until_complete(self.add_episode(episode))
+            except RuntimeError:
+                # 沒有 running loop，直接 run
+                return asyncio.run(self.add_episode(episode))
         except Exception as e:
-            logger.error("graphiti_sync_add_failed", error=str(e)[:100])
+            logger.error("graphiti_sync_add_failed: %s", str(e)[:100])
             return self._fallback_add(episode)
 
     # ── 查詢操作 ──────────────────────────────────────────────
@@ -238,7 +239,7 @@ class GraphitiAdapter:
                 ))
             return output
         except Exception as e:
-            logger.error("graphiti_search_failed", error=str(e)[:200])
+            logger.error("graphiti_search_failed | error=str(e")
             return self._fallback_search(query, top_k)
 
     def search_sync(self, query: str, top_k: int = 5) -> list[TemporalSearchResult]:
@@ -277,7 +278,7 @@ class GraphitiAdapter:
             ) if hasattr(self._fallback, "add_temporal_fact") else None
             return True
         except Exception as e:
-            logger.error("graphiti_fallback_failed", error=str(e)[:100])
+            logger.error("graphiti_fallback_failed | error=str(e")
             return False
 
     def _fallback_search(
@@ -304,7 +305,7 @@ class GraphitiAdapter:
                 for r in (raw or [])
             ]
         except Exception as e:
-            logger.warning("graphiti_fallback_search_failed", error=str(e)[:100])
+            logger.warning("graphiti_fallback_search_failed | error=str(e")
             return []
 
     def status(self) -> dict:

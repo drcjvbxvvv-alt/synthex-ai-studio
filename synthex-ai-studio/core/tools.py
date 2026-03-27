@@ -69,10 +69,15 @@ BLOCKED_PATTERNS = [
     r"\bmkfs\b",               # format disk
     r":\(\)\{.*\}",            # fork bomb
     r"\bcurl\b.*\|\s*bash",   # curl | bash
-    r"\bwget\b.*\|\s*sh",     # wget | sh
+    r"\bcurl\b.*\|\s*sh\b",   # curl | sh
+    r"\bwget\b.*\|\s*sh\b",   # wget | sh
+    r"\bwget\b.*\|\s*bash",   # wget | bash  ← 新增
+    r"\bfetch\b.*\|\s*bash",  # fetch | bash
     r">\s*/dev/sd[a-z]",      # write to disk
     r"\bchmod\s+777\s+/",     # chmod 777 /
     r"\bsudo\s+rm",            # sudo rm
+    r"\beval\s+\$\(",          # eval $(...)  ← 新增：動態執行
+    r"\bbase64\b.*\|\s*bash", # base64 decode | bash  ← 新增
 ]
 
 # ── 需要確認的操作 ─────────────────────────────────────────────
@@ -268,7 +273,10 @@ class ToolExecutor:
             return f"[工具錯誤] {tool_name}: {e}"
 
     def _resolve(self, path: str) -> Path:
+        # 防止路徑穿越攻擊：解析後必須在 workdir 內
         p = Path(path)
+        if ".." in p.parts:
+            raise PermissionError(f"[安全] 禁止路徑穿越: {path!r}")
         if not p.is_absolute():
             p = self.workdir / p
         return p.resolve()
