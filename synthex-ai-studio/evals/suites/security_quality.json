@@ -1,0 +1,38 @@
+[
+  {
+    "case_id": "sec-001",
+    "suite": "security_quality",
+    "agent": "SHIELD",
+    "prompt": "審查這段 Node.js 程式碼的安全問題：\nconst query = `SELECT * FROM users WHERE id = ${req.params.id}`;\ndb.query(query, callback);",
+    "context": "",
+    "expected_keywords": ["SQL injection", "參數化", "prepared statement"],
+    "forbidden_keywords": ["沒有問題", "看起來安全"],
+    "rubric": {
+      "min_length": 100,
+      "pass_threshold": 0.7,
+      "criteria": {
+        "identifies_sqli": {"contains": "injection"},
+        "suggests_fix": {"contains": "?"}
+      }
+    },
+    "tags": ["security", "sql"]
+  },
+  {
+    "case_id": "sec-002",
+    "suite": "security_quality",
+    "agent": "SHIELD",
+    "prompt": "列出 JWT 身份驗證的常見安全問題和最佳實踐。",
+    "context": "",
+    "expected_keywords": ["演算法", "過期", "密鑰", "HTTPS"],
+    "forbidden_keywords": [],
+    "rubric": {
+      "min_length": 200,
+      "pass_threshold": 0.6,
+      "criteria": {
+        "mentions_algo": {"contains": "RS256"},
+        "mentions_expiry": {"contains": "exp"}
+      }
+    },
+    "tags": ["security", "jwt"]
+  }
+]

@@ -731,3 +731,253 @@ class TestTokenBudgetV4(unittest.TestCase):
         cost_opus  = cfg.calc_cost(ModelID.OPUS_46,  10_000, 5_000)
         self.assertLess(cost_haiku, cost_opus * 0.1,
                         "Haiku 成本應低於 Opus 10%（實際差距 60x）")
+
+
+# ══════════════════════════════════════════════════════════════
+# Test Group 12：CompactionManager（第十一輪新增）
+# ══════════════════════════════════════════════════════════════
+
+class TestCompactionManager(unittest.TestCase):
+    """CompactionManager Context Compaction 的 unit tests"""
+
+    def setUp(self):
+        from core.base_agent import CompactionManager, COMPACTION_TOKEN_THRESHOLD
+        from core.config import ModelID
+        self.CM        = CompactionManager
+        self.model     = ModelID.SONNET_46
+        self.threshold = COMPACTION_TOKEN_THRESHOLD
+
+    def test_should_compact_by_token_count(self):
+        """input_tokens 超過閾值應觸發 compaction"""
+        mgr = self.CM(self.model, "NEXUS")
+        self.assertTrue(mgr.should_compact([], self.threshold + 1))
+        self.assertFalse(mgr.should_compact([], self.threshold - 1))
+
+    def test_should_compact_by_char_estimate(self):
+        """無精確 token 數時，用字元估算"""
+        mgr   = self.CM(self.model, "NEXUS", threshold=1_000)
+        short = [{"role": "user", "content": "hi"}]  # 很短
+        long_ = [{"role": "user", "content": "x" * 5_000}]  # 很長
+        self.assertFalse(mgr.should_compact(short))
+        self.assertTrue(mgr.should_compact(long_))
+
+    def test_build_context_management_params_structure(self):
+        """context_management 參數應有正確結構"""
+        mgr    = self.CM(self.model, "NEXUS")
+        params = mgr.build_context_management_params()
+        self.assertIn("betas", params)
+        self.assertIn("context-management-2025-06-27", params["betas"])
+        self.assertIn("context_management", params)
+        edits = params["context_management"]["edits"]
+        self.assertEqual(len(edits), 1)
+        self.assertEqual(edits[0]["type"], "clear_tool_uses_20250919")
+
+    def test_context_management_trigger_value(self):
+        """觸發閾值應等於 compaction manager 的 threshold"""
+        threshold = 50_000
+        mgr       = self.CM(self.model, "NEXUS", threshold=threshold)
+        params    = mgr.build_context_management_params()
+        trigger   = params["context_management"]["edits"][0]["trigger"]
+        self.assertEqual(trigger["value"], threshold)
+
+    def test_compaction_fallback_on_short_messages(self):
+        """訊息太少時，compact() 應直接返回原始訊息（不壓縮）"""
+        mgr      = self.CM(self.model, "NEXUS")
+        messages = [{"role": "user", "content": "hi"}]
+        result   = mgr.compact(messages, client=None, system_prompt="")
+        self.assertEqual(result, messages,
+                         "少於 4 條訊息不應壓縮")
+
+    def test_compacted_count_tracking(self):
+        """compacted_count 應正確追蹤"""
+        mgr = self.CM(self.model, "NEXUS")
+        self.assertEqual(mgr.compacted_count, 0)
+
+
+# ══════════════════════════════════════════════════════════════
+# Test Group 13：PhaseCheckpoint 修復（第十一輪新增）
+# ══════════════════════════════════════════════════════════════
+
+class TestPhaseCheckpointFixed(unittest.TestCase):
+    """PhaseCheckpoint P0-1 修復驗證"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def _make_ckpt(self, requirement="test req"):
+        from core.web_orchestrator import PhaseCheckpoint
+        return PhaseCheckpoint(self.tmpdir, requirement)
+
+    def test_close_no_name_error(self):
+        """close() 修復後不應拋出 NameError"""
+        ckpt = self._make_ckpt()
+        try:
+            ckpt.close()
+        except NameError as e:
+            self.fail(f"close() 拋出 NameError：{e}")
+
+    def test_save_is_atomic(self):
+        """_save() 應使用原子寫入（不留 tmp 文件）"""
+        ckpt = self._make_ckpt()
+        ckpt.mark_done(1)
+        docs_dir = Path(self.tmpdir) / "docs"
+        tmp_files = list(docs_dir.glob(".ship_state_tmp_*"))
+        self.assertEqual(len(tmp_files), 0,
+                         "原子寫入後不應留下 .ship_state_tmp_* 文件")
+
+    def test_state_file_created(self):
+        """mark_done() 後狀態文件應存在且可讀"""
+        ckpt       = self._make_ckpt()
+        ckpt.mark_done(1)
+        state_file = Path(self.tmpdir) / "docs" / ".ship_state.json"
+        self.assertTrue(state_file.exists())
+        state = json.loads(state_file.read_text())
+        self.assertEqual(state["phases"]["1"]["status"], "done")
+
+    def test_load_corrupted_state_returns_empty(self):
+        """損毀的狀態文件應靜默重置（不崩潰）"""
+        docs = Path(self.tmpdir) / "docs"
+        docs.mkdir(exist_ok=True)
+        state_file = docs / ".ship_state.json"
+        state_file.write_text("{corrupted json{{")
+        ckpt = self._make_ckpt()
+        self.assertEqual(ckpt.state, {},
+                         "損毀狀態應重置為空 dict")
+
+    def test_reset_for_new_requirement(self):
+        """reset_for_new_requirement 應清除舊狀態"""
+        ckpt = self._make_ckpt("old req")
+        ckpt.mark_done(1)
+        ckpt.mark_done(2)
+        ckpt.reset_for_new_requirement("new req")
+        self.assertEqual(ckpt.state.get("requirement"), "new req")
+        self.assertEqual(ckpt.state.get("phases"), {},
+                         "新需求應重置所有 Phase 狀態")
+
+    def test_is_done_returns_false_for_undone_phase(self):
+        """未完成的 Phase 應返回 False"""
+        ckpt = self._make_ckpt()
+        self.assertFalse(ckpt.is_done(5))
+
+    def test_mark_failed_records_error(self):
+        """mark_failed() 應記錄錯誤訊息"""
+        ckpt = self._make_ckpt()
+        ckpt.mark_failed(3, "API 超時")
+        phase_state = ckpt.state["phases"]["3"]
+        self.assertEqual(phase_state["status"], "failed")
+        self.assertIn("API 超時", phase_state.get("error", ""))
+
+
+# ══════════════════════════════════════════════════════════════
+# Test Group 14：Evals Golden Dataset（第十一輪新增）
+# ══════════════════════════════════════════════════════════════
+
+class TestEvalsGoldenDataset(unittest.TestCase):
+    """Evals Golden Dataset 和 EvalRunner 的 unit tests"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def test_evals_dir_exists_and_has_suites(self):
+        """evals/ 目錄應存在且有測試套件"""
+        from core.evals import EVALS_DIR, SUITES_DIR
+        self.assertTrue(EVALS_DIR.exists(),
+                        f"evals/ 目錄不存在：{EVALS_DIR}")
+        self.assertTrue(SUITES_DIR.exists(),
+                        f"evals/suites/ 不存在：{SUITES_DIR}")
+
+    def test_suite_files_are_valid_json(self):
+        """所有測試套件文件應是有效 JSON"""
+        from core.evals import SUITES_DIR
+        suite_files = list(SUITES_DIR.glob("*.json"))
+        self.assertGreater(len(suite_files), 0,
+                           "至少應有一個測試套件文件")
+        for f in suite_files:
+            try:
+                cases = json.loads(f.read_text())
+                self.assertIsInstance(cases, list)
+            except json.JSONDecodeError as e:
+                self.fail(f"{f.name} JSON 格式無效：{e}")
+
+    def test_suite_cases_have_required_fields(self):
+        """每個測試案例應有必要欄位"""
+        from core.evals import SUITES_DIR
+        required = {"case_id", "suite", "agent", "prompt"}
+        for f in SUITES_DIR.glob("*.json"):
+            cases = json.loads(f.read_text())
+            for case in cases:
+                missing = required - set(case.keys())
+                self.assertEqual(len(missing), 0,
+                                 f"{f.name} / {case.get('case_id')} 缺少欄位：{missing}")
+
+    def test_eval_scorer_keywords(self):
+        """EvalScorer 關鍵字命中應正確計算"""
+        from core.evals import EvalScorer, EvalCase
+        scorer = EvalScorer()
+        case   = EvalCase(
+            case_id="t1", suite="test", agent="ECHO",
+            prompt="test",
+            expected_keywords=["用戶故事", "AC", "P0"],
+        )
+        score, breakdown = scorer.score(case, "用戶故事：xxx，AC：xxx，P0 功能")
+        self.assertGreater(score, 0.5)
+        self.assertEqual(breakdown["keywords"], 1.0)
+
+    def test_eval_scorer_forbidden_word(self):
+        """禁用詞出現應降低分數"""
+        from core.evals import EvalScorer, EvalCase
+        scorer = EvalScorer()
+        case   = EvalCase(
+            case_id="t2", suite="test", agent="ECHO",
+            prompt="test",
+            forbidden_keywords=["lorem ipsum"],
+        )
+        score_clean, _ = scorer.score(case, "正常輸出內容")
+        score_dirty, _ = scorer.score(case, "lorem ipsum 填充文字")
+        self.assertGreater(score_clean, score_dirty)
+
+    def test_eval_runner_db_initializes(self):
+        """EvalRunner 應能初始化 SQLite DB"""
+        from core.evals import EvalRunner, EVALS_DB
+        runner = EvalRunner(workdir=self.tmpdir)
+        self.assertTrue(EVALS_DB.exists(),
+                        f"Evals DB 應已建立：{EVALS_DB}")
+
+    def test_eval_runner_suite_not_found_raises(self):
+        """不存在的套件應拋出 FileNotFoundError"""
+        from core.evals import EvalRunner
+        runner = EvalRunner(workdir=self.tmpdir)
+        with self.assertRaises(FileNotFoundError):
+            runner.run_suite("nonexistent_suite_xyz")
+
+
+# ══════════════════════════════════════════════════════════════
+# Test Group 15：SwarmScheduler async safety（第十一輪新增）
+# ══════════════════════════════════════════════════════════════
+
+class TestSwarmAsyncSafety(unittest.TestCase):
+    """AgentSwarm v3.1 async 升級的 unit tests"""
+
+    def test_swarm_has_run_async(self):
+        """AgentSwarm 應有 run_async() 方法"""
+        from core.swarm import AgentSwarm
+        swarm = AgentSwarm(workdir=".")
+        self.assertTrue(hasattr(swarm, "run_async"),
+                        "AgentSwarm 應有 run_async() 方法")
+
+    def test_run_async_is_coroutine(self):
+        """run_async 應是 coroutine function"""
+        import asyncio
+        from core.swarm import AgentSwarm
+        swarm = AgentSwarm(workdir=".")
+        self.assertTrue(asyncio.iscoroutinefunction(swarm.run_async),
+                        "run_async 應是 async def（coroutine function）")
+
+    def test_swarm_docstring_updated(self):
+        """swarm.py docstring 應提及 asyncio"""
+        from core.swarm import AgentSwarm
+        import inspect
+        module_src = inspect.getmodule(AgentSwarm)
+        module_doc = module_src.__doc__ or ""
+        self.assertIn("asyncio", module_doc.lower(),
+                      "模組 docstring 應說明 asyncio 支援")

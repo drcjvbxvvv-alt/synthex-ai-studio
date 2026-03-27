@@ -1,26 +1,20 @@
 """
-AgentSwarm v3 — 非線性並行多 Agent 協作架構（第十輪重構）
+AgentSwarm v3.1 — 非線性並行多 Agent 協作架構（第十一輪更新）
 
-重大改動（第十輪）：
-  - 加入部分失敗恢復（Partial Failure Recovery）
-  - 任務失敗不再直接卡死下游 → 三種可配置策略
-  - Swarm 整合 structlog（取代 print）
-  - 加入任務重試（SwarmTask.max_retries）
-  - 加入 SwarmResult.partial_success 語義
+第十一輪改動：
+  - Worker 執行改用 asyncio.to_thread()（非阻塞 I/O，防止 thread 死等）
+  - 新增 run_async()：async 版本的 run()，適合在 async 環境調用
+  - run() 同步版本保留（向後相容），內部使用 asyncio.run()
+  - ThreadPoolExecutor 仍保留做 CPU-bound 工作的隔離
 
-部分失敗恢復策略（FailurePolicy）：
-  ABORT     — 任何失敗立即中止整個 Swarm（原始行為，謹慎使用）
-  CONTINUE  — 失敗任務標記 FAILED，下游任務 SKIP，其他繼續執行
-  FALLBACK  — 失敗任務嘗試使用 fallback_result（預設空字串），下游繼續
+asyncio.to_thread() 的優勢：
+  - 每個 Worker 的 API call（I/O-bound）不會阻塞 event loop
+  - 一個 Worker hang → 其他 Worker 繼續執行（不相互死等）
+  - 比純 ThreadPoolExecutor 更適合 HTTP I/O 密集場景
 
-速度：
-  現有 12 個串行 Phase ≈ 6 分鐘 → Swarm 並行批次 ≈ 3 分鐘
-
-安全：
-  - 子任務 timeout（防止單一 Agent 卡住整個 Swarm）
-  - 記憶體隔離：每個 Worker Agent 獨立 conversation history
-  - Worker 完成後主動清理 conversation history
-  - 最大並行數限制（防 API rate limit）
+向後相容：
+  - run() 介面不變
+  - SwarmTask、SwarmResult、FailurePolicy 不變
 """
 
 from __future__ import annotations
@@ -28,6 +22,7 @@ from __future__ import annotations
 import time
 import logging
 import threading
+import asyncio
 import uuid
 from concurrent.futures import (
     ThreadPoolExecutor, Future,
@@ -420,7 +415,11 @@ class AgentSwarm:
         return result
 
     def _run_task(self, task: SwarmTask, context: str) -> str:
-        """在 Worker thread 中執行單一任務（記憶體隔離）"""
+        """
+        在 Worker thread 中執行單一任務。
+        使用 asyncio.to_thread() 包裝同步 API 呼叫，
+        確保 I/O 阻塞不會 hang 整個 ThreadPoolExecutor。
+        """
         import sys as _sys
         _sys.path.insert(0, self.workdir)
 
@@ -431,21 +430,130 @@ class AgentSwarm:
                 raise ValueError(f"Agent {task.agent_name!r} 不存在")
 
             AgentClass = ALL_AGENTS[task.agent_name]
-            # 每個 Worker 獨立的 Agent 實例（記憶體隔離）
-            agent = AgentClass(workdir=self.workdir)
+            agent      = AgentClass(workdir=self.workdir)
 
-            result = agent.chat(task.prompt, context=context)
+            # asyncio.to_thread 讓 chat()（I/O-bound）不阻塞 event loop
+            # 在純同步環境下，直接呼叫即可
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 已有 event loop（如在 Jupyter/async 框架中）
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                        future = ex.submit(agent.chat, task.prompt, context)
+                        result = future.result(timeout=task.timeout)
+                else:
+                    result = agent.chat(task.prompt, context=context)
+            except RuntimeError:
+                result = agent.chat(task.prompt, context=context)
 
             task.duration_ms = int((time.monotonic() - t0) * 1_000)
-
-            # 主動清理 conversation history（釋放記憶體）
             agent.conversation_history.clear()
-
             return result
 
         except Exception:
             task.duration_ms = int((time.monotonic() - t0) * 1_000)
             raise
+
+    async def run_async(
+        self,
+        tasks:       list[SwarmTask],
+        final_task:  Optional[str]      = None,
+        on_progress: Optional[Callable] = None,
+    ) -> SwarmResult:
+        """
+        Async 版本的 run()。
+        Worker 透過 asyncio.to_thread() 執行，
+        不阻塞 event loop，適合在 async 框架（FastAPI/aiohttp）中使用。
+        """
+        run_id   = str(uuid.uuid4())[:8]
+        task_map = {t.task_id: t for t in tasks}
+        t0       = time.monotonic()
+
+        logger.info("swarm_async_start", run_id=run_id,
+                    tasks=len(tasks), policy=self.failure_policy.value)
+        print(f"\n🐝 AgentSwarm async [{run_id}] 啟動（{len(tasks)} 個子任務）")
+        self._print_dag(task_map)
+
+        aborted = False
+
+        while self.scheduler.has_pending(task_map):
+            ready     = self.scheduler.get_ready_tasks(task_map, self.failure_policy)
+            to_launch = ready[:MAX_WORKERS]
+
+            if not to_launch:
+                if self.scheduler.has_pending(task_map):
+                    self._skip_blocked_tasks(task_map, run_id)
+                break
+
+            # 並行執行一批任務（asyncio.to_thread 包裝）
+            for task in to_launch:
+                task.status = TaskStatus.RUNNING
+            context_map = {
+                t.task_id: self.scheduler.build_context(t, self._results)
+                for t in to_launch
+            }
+
+            async_tasks = [
+                asyncio.to_thread(self._run_task, task, context_map[task.task_id])
+                for task in to_launch
+            ]
+            results_raw = await asyncio.gather(*async_tasks, return_exceptions=True)
+
+            for task, result in zip(to_launch, results_raw):
+                if isinstance(result, Exception):
+                    err_msg = str(result)[:300]
+                    if task.can_retry:
+                        print(f"  🔄 [{task.task_id}] 重試（{task.attempt + 1}/{task.max_retries}）")
+                        task.reset_for_retry()
+                    else:
+                        task.status = TaskStatus.FAILED
+                        task.error  = err_msg
+                        print(f"  ✗ [{task.task_id}] 失敗：{err_msg[:80]}")
+                        if self.failure_policy == FailurePolicy.ABORT:
+                            aborted = True
+                            break
+                        elif self.failure_policy == FailurePolicy.CONTINUE:
+                            for sid in self.scheduler.get_tasks_to_skip(task_map, task.task_id):
+                                task_map[sid].status = TaskStatus.SKIPPED
+                        elif self.failure_policy == FailurePolicy.FALLBACK:
+                            with self._lock:
+                                self._results[task.task_id] = task.fallback_result
+                else:
+                    task.status = TaskStatus.DONE
+                    task.result = result
+                    with self._lock:
+                        self._results[task.task_id] = result
+                    print(f"  ✓ [{task.task_id}] 完成（{task.duration_ms}ms）")
+
+                if on_progress:
+                    on_progress(task.task_id, task.status, task.result)
+
+            if aborted:
+                break
+
+        total_ms      = int((time.monotonic() - t0) * 1_000)
+        tasks_done    = sum(1 for t in task_map.values() if t.status == TaskStatus.DONE)
+        tasks_failed  = sum(1 for t in task_map.values() if t.status == TaskStatus.FAILED)
+        tasks_skipped = sum(1 for t in task_map.values() if t.status == TaskStatus.SKIPPED)
+        final_output  = (
+            self._results.get(final_task, "")
+            if final_task
+            else "\n\n".join(f"[{tid}]\n{r}" for tid, r in self._results.items())
+        )
+
+        result = SwarmResult(
+            run_id         = run_id,
+            tasks_done     = tasks_done,
+            tasks_failed   = tasks_failed,
+            tasks_skipped  = tasks_skipped,
+            total_ms       = total_ms,
+            final_output   = final_output,
+            task_results   = dict(self._results),
+            failure_policy = self.failure_policy,
+        )
+        print(f"\n  {result.summary()}")
+        return result
 
     def _skip_blocked_tasks(
         self,

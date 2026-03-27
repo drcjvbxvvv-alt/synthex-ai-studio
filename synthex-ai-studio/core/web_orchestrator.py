@@ -12,6 +12,11 @@ from pathlib import Path
 from datetime import datetime
 import anthropic
 
+from core.config import cfg, ModelID
+from core.logging_setup import get_logger
+
+_log = get_logger("web_orchestrator")
+
 RESET  = "\033[0m"; BOLD = "\033[1m"; DIM = "\033[2m"
 PURPLE = "\033[35m"; CYAN = "\033[96m"; GREEN = "\033[92m"
 YELLOW = "\033[93m"; RED = "\033[91m"; BLUE = "\033[34m"
@@ -22,10 +27,19 @@ PHASE_COLORS = [PURPLE, BLUE, CYAN, GREEN, YELLOW]
 def _phase(n: int, title: str):
     c = PHASE_COLORS[n % len(PHASE_COLORS)]
     print(f"\n{c}{BOLD}{'═'*62}\n  Phase {n} · {title}\n{'═'*62}{RESET}")
+    _log.info("phase_start", phase=n, title=title)
 
-def _step(msg: str):  print(f"\n{CYAN}  ▶ {msg}{RESET}")
-def _ok(msg: str):    print(f"  {GREEN}✔ {msg}{RESET}")
-def _warn(msg: str):  print(f"  {YELLOW}⚠ {msg}{RESET}")
+def _step(msg: str):
+    print(f"\n{CYAN}  ▶ {msg}{RESET}")
+    _log.debug("phase_step", message=msg)
+
+def _ok(msg: str):
+    print(f"  {GREEN}✔ {msg}{RESET}")
+    _log.info("phase_ok", message=msg)
+
+def _warn(msg: str):
+    print(f"  {YELLOW}⚠ {msg}{RESET}")
+    _log.warning("phase_warning", message=msg)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -870,30 +884,59 @@ class PhaseCheckpoint:
             self._lock_fd = None
 
     def close(self) -> None:
+        # 修正：使用 self.requirement（原 close() 引用了 out-of-scope 的 requirement）
         self._save()
         self._release_lock()
 
-        # 如果是新需求，重置狀態
-        if self.state.get("requirement") != requirement:
+    def reset_for_new_requirement(self, new_requirement: str) -> None:
+        """新需求開始前重置狀態（從 close() 拆出，職責分離）"""
+        if self.state.get("requirement") != new_requirement:
             self.state = {
-                "requirement": requirement,
-                "started_at": datetime.now().isoformat(),
-                "phases": {}
+                "requirement": new_requirement,
+                "started_at":  datetime.now().isoformat(),
+                "phases":      {},
             }
             self._save()
 
     def _load(self) -> dict:
         if self.state_file.exists():
             try:
-                return json.loads(self.state_file.read_text())
-            except Exception:
-                pass
+                data = json.loads(
+                    self.state_file.read_text(encoding="utf-8")
+                )
+                # 基本完整性驗證：確保 phases 欄位存在
+                if not isinstance(data, dict):
+                    _warn("Checkpoint 格式損毀，重置狀態")
+                    return {}
+                return data
+            except (json.JSONDecodeError, OSError) as e:
+                _warn(f"Checkpoint 讀取失敗（{e}），重置狀態")
         return {}
 
-    def _save(self):
-        self.state_file.write_text(
-            json.dumps(self.state, ensure_ascii=False, indent=2)
+    def _save(self) -> None:
+        """
+        原子寫入 Checkpoint（P0-1 修復）。
+        使用 tempfile + os.replace() — POSIX 原子操作，
+        確保中途崩潰不留下半空或損毀的狀態檔案。
+        """
+        import tempfile, os as _os
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        content = json.dumps(self.state, ensure_ascii=False, indent=2)
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix=".ship_state_tmp_",
+            suffix=".json",
+            dir=str(self.state_file.parent),
         )
+        try:
+            with _os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            _os.replace(tmp_path, str(self.state_file))
+        except Exception:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def is_done(self, phase: int) -> bool:
         return self.state.get("phases", {}).get(str(phase), {}).get("status") == "done"
@@ -1356,22 +1399,25 @@ BYTE 的所有顏色/間距都只能引用 tokens.css 的變數。
                 ckpt.mark_done(10)
                 return result
 
-            print(f"\n{CYAN}{BOLD}  ⚡ Phase 7 + 8 並行執行（預計節省 30-50% 時間）{RESET}")
+            _log.info("phase_parallel_start", phases=[9, 10])
+            print(f"\n{CYAN}{BOLD}  ⚡ Phase 9 + 10 並行執行（預計節省 30-50% 時間）{RESET}")
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 f7 = pool.submit(_run_byte)
                 f8 = pool.submit(_run_stack)
-                # P0-4：future.result() 必須有 timeout，防死鎖
                 _PHASE_TIMEOUT = 600   # 10 分鐘
                 try:
                     frontend = f7.result(timeout=_PHASE_TIMEOUT)
-                except __import__('concurrent.futures').TimeoutError:
+                except concurrent.futures.TimeoutError:
                     _warn("Phase 9（BYTE 前端）超時，使用空結果繼續")
+                    _log.error("phase_timeout", phase=9)
                     frontend = "[Phase 9 超時]"
                 try:
                     backend  = f8.result(timeout=_PHASE_TIMEOUT)
-                except __import__('concurrent.futures').TimeoutError:
+                except concurrent.futures.TimeoutError:
                     _warn("Phase 10（STACK 後端）超時，使用空結果繼續")
+                    _log.error("phase_timeout", phase=10)
                     backend  = "[Phase 10 超時]"
+            _log.info("phase_parallel_done", phases=[9, 10])
 
             results["phase7_frontend"] = frontend
             results["phase8_backend"]  = backend

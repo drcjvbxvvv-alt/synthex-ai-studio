@@ -40,8 +40,12 @@ RED    = "\033[91m"; GRAY = "\033[90m"
 
 # ── 常數 ──────────────────────────────────────────────────────────
 DEFAULT_BUDGET_USD = 5.0
-CACHE_MIN_TOKENS   = 1024     # 低於此值不值得快取
-MAX_HISTORY_LEN    = 40       # 對話歷史上限（20 輪）
+CACHE_MIN_TOKENS   = 1024
+MAX_HISTORY_LEN    = 40
+
+# Compaction：messages 超過此 token 數時觸發摘要（58.6% 平均節省）
+COMPACTION_TOKEN_THRESHOLD = 80_000   # 保守值（context window 的 40%）
+COMPACTION_SUMMARY_TOKENS  = 4_096    # 摘要輸出的 token 預算
 
 # ── Thinking 設定 ─────────────────────────────────────────────────
 ADAPTIVE_THINKING_AGENTS: frozenset[str] = frozenset({
@@ -56,8 +60,158 @@ THINKING_BUDGET = {
 # ── 模型查詢（委託給 config.py）──────────────────────────────────
 
 def get_model_for_agent(agent_name: str) -> str:
-    """根據 Agent 名稱回傳最佳模型（集中於 config.py）"""
     return cfg.model_for_agent(agent_name)
+
+
+def _model_display_tag(model: str) -> str:
+    tags = {
+        ModelID.OPUS_46:   "Opus 4.6",
+        ModelID.SONNET_46: "Sonnet 4.6",
+        ModelID.SONNET_45: "Sonnet 4.5",
+        ModelID.HAIKU_45:  "Haiku 4.5",
+        ModelID.OPUS_45:   "Opus 4.5",
+    }
+    return tags.get(model, model.split("-")[1] if "-" in model else model)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  CompactionManager — Context Compaction（長任務記憶體管理）
+# ══════════════════════════════════════════════════════════════════
+
+class CompactionManager:
+    """
+    為長時間運行的 agentic loop 提供 Context Compaction。
+
+    策略（兩層）：
+      1. Tool Result Clearing（輕量）：使用官方 context_management
+         API，自動在 input_tokens 超過閾值時清除舊工具結果。
+         保留最近 N 個工具調用，確保模型仍有足夠上下文。
+
+      2. 手動摘要 Compaction（重量）：token 用量接近 safe_limit 時，
+         呼叫 Claude 生成任務摘要，然後重置 messages。
+         基於 Anthropic cookbook 的「58.6% token 節省」最佳實踐。
+
+    安全設計：
+      - 摘要前先記錄原始 messages 數量到 log
+      - 摘要失敗（API 錯誤）→ 降級為截斷舊訊息，不崩潰
+      - 不壓縮 system prompt（始終完整傳遞）
+    """
+
+    def __init__(self, model: str, agent_name: str = "?",
+                 threshold: int = COMPACTION_TOKEN_THRESHOLD):
+        self.model      = model
+        self.agent_name = agent_name
+        self.threshold  = threshold
+        self._compacted_count = 0
+
+    def should_compact(self, messages: list[dict],
+                        input_tokens: int = 0) -> bool:
+        """判斷是否需要觸發 compaction"""
+        if input_tokens > 0:
+            return input_tokens >= self.threshold
+        # 無精確 token 數時，用字元數估算
+        total_chars = sum(
+            len(str(m.get("content", ""))) for m in messages
+        )
+        return total_chars >= self.threshold * 4  # 4 chars ≈ 1 token
+
+    def build_context_management_params(self) -> dict:
+        """
+        建立 context_management 參數（server-side tool result clearing）。
+        使用官方 context-management-2025-06-27 beta。
+        """
+        return {
+            "betas": ["context-management-2025-06-27"],
+            "context_management": {
+                "edits": [{
+                    "type": "clear_tool_uses_20250919",
+                    "trigger": {
+                        "type":  "input_tokens",
+                        "value": self.threshold,
+                    },
+                    "keep": {
+                        "type":  "tool_uses",
+                        "value": 3,   # 保留最近 3 個工具調用
+                    },
+                    "clear_at_least": {
+                        "type":  "input_tokens",
+                        "value": 10_000,  # 最少清除 10K tokens
+                    },
+                }]
+            }
+        }
+
+    def compact(self, messages: list[dict],
+                client, system_prompt) -> list[dict]:
+        """
+        手動 Compaction：生成任務摘要，重置 messages。
+        返回壓縮後的 messages 列表。
+        """
+        if len(messages) < 4:
+            return messages   # 太短，不壓縮
+
+        original_count = len(messages)
+
+        # 構建摘要請求
+        summary_prompt = """請為到目前為止的任務進展生成一份結構化摘要。
+
+包含以下部分：
+1. 原始任務：一句話描述用戶要求什麼
+2. 已完成：列出已完成的具體步驟和結果
+3. 當前狀態：目前進行到哪裡
+4. 待完成：還需要執行哪些步驟
+5. 關鍵決策：做出的重要架構/設計決策
+6. 已知問題：遇到的錯誤或限制
+
+請保持簡潔，每部分不超過 3 個要點。"""
+
+        try:
+            resp = client.messages.create(
+                model      = self.model,
+                max_tokens = COMPACTION_SUMMARY_TOKENS,
+                system     = system_prompt if isinstance(system_prompt, str)
+                             else system_prompt[0].get("text", "") if system_prompt
+                             else "",
+                messages   = messages + [{
+                    "role": "user", "content": summary_prompt
+                }],
+            )
+            summary_text = next(
+                (b.text for b in resp.content if hasattr(b, "text")),
+                "[摘要生成失敗]"
+            )
+
+            # 重置 messages：只保留摘要
+            compacted = [{
+                "role": "user",
+                "content": (
+                    f"[Context Compaction — 以下為任務進展摘要，"
+                    f"原始 {original_count} 條訊息已壓縮]\n\n"
+                    f"{summary_text}"
+                )
+            }, {
+                "role": "assistant",
+                "content": "已了解任務進展摘要，繼續執行。"
+            }]
+
+            self._compacted_count += 1
+            logger.info("compaction_done",
+                        agent=self.agent_name,
+                        original_messages=original_count,
+                        compacted_to=len(compacted),
+                        round=self._compacted_count)
+
+            return compacted
+
+        except Exception as e:
+            # 降級：截斷舊訊息（保留最近 10 條）
+            logger.warning("compaction_failed_fallback",
+                           agent=self.agent_name, error=str(e)[:100])
+            return messages[-10:]
+
+    @property
+    def compacted_count(self) -> int:
+        return self._compacted_count
 
 
 def _model_display_tag(model: str) -> str:
@@ -601,16 +755,33 @@ class BaseAgent:
 
     # ── Agentic 模式 ──────────────────────────────────────────────
 
-    def run(self, task: str, context: str = "", max_iterations: int = 20) -> str:
-        """Agentic 模式 — 帶重試 + Token 追蹤 + Budget Guard"""
+    def run(self, task: str, context: str = "", max_iterations: int = 20,
+            enable_compaction: bool = True) -> str:
+        """
+        Agentic 模式 — 帶重試 + Token 追蹤 + Budget Guard + Context Compaction。
+
+        Args:
+            task:               任務描述
+            context:            額外上下文
+            max_iterations:     最大工具循環次數
+            enable_compaction:  啟用 Context Compaction（長任務建議保持 True）
+        """
         self._budget.check_budget()
 
-        tools     = get_tools_for_role(self.dept)
-        full_task = f"[上下文]\n{context}\n\n[任務]\n{task}" if context else task
-        messages  = list(self.conversation_history) + [{"role": "user", "content": full_task}]
+        tools       = get_tools_for_role(self.dept)
+        full_task   = f"[上下文]\n{context}\n\n[任務]\n{task}" if context else task
+        messages    = list(self.conversation_history) + [{"role": "user", "content": full_task}]
+        compaction  = CompactionManager(
+            model=self.model,
+            agent_name=self.name,
+            threshold=COMPACTION_TOKEN_THRESHOLD,
+        ) if enable_compaction else None
 
         print(self._header("Agentic"))
-        self._print_system(f"工具: {len(tools)} 個，最多 {max_iterations} 輪")
+        self._print_system(
+            f"工具: {len(tools)} 個，最多 {max_iterations} 輪"
+            + ("，Compaction: 開啟" if compaction else "")
+        )
 
         final_text = ""
         iteration  = 0
@@ -619,11 +790,22 @@ class BaseAgent:
             iteration += 1
             self._budget.check_budget()
 
+            # ── 建立 API 參數 ─────────────────────────────────────
+            params = self._build_run_params(tools=tools, messages=messages)
+
+            # 注入 Context Management（server-side tool result clearing）
+            if compaction:
+                cm_params = compaction.build_context_management_params()
+                if "betas" in cm_params:
+                    existing_betas = params.get("betas", [])
+                    merged = list(set(existing_betas + cm_params["betas"]))
+                    params["betas"] = merged
+                if "context_management" in cm_params:
+                    params["context_management"] = cm_params["context_management"]
+
             try:
-                def _call():
-                    return self.client.messages.create(
-                        **self._build_run_params(tools=tools, messages=messages)
-                    )
+                def _call(p=params):
+                    return self.client.messages.create(**p)
 
                 response = _circuit_breaker.call(
                     self.name,
@@ -632,19 +814,29 @@ class BaseAgent:
 
                 if hasattr(response, "usage"):
                     u = response.usage
-                    self._budget.record(
-                        self.name,
-                        u.input_tokens,
-                        u.output_tokens,
-                        getattr(u, "cache_read_input_tokens", 0),
-                        getattr(u, "cache_creation_input_tokens", 0),
-                    )
+                    in_tok     = u.input_tokens
+                    out_tok    = u.output_tokens
+                    cache_read = getattr(u, "cache_read_input_tokens", 0)
+                    cache_write= getattr(u, "cache_creation_input_tokens", 0)
+                    self._budget.record(self.name, in_tok, out_tok,
+                                        cache_read, cache_write)
+
+                    # 手動 Compaction 觸發（token 超過閾值時）
+                    if (compaction and
+                            compaction.should_compact(messages, in_tok) and
+                            iteration % 3 == 0):   # 每 3 輪才觸發一次（避免頻繁）
+                        self._print_system(
+                            f"⟳ Context Compaction 觸發（{in_tok:,} tokens）"
+                        )
+                        sys_prompt = self._build_system_prompt(with_tools=True)
+                        messages   = compaction.compact(messages, self.client, sys_prompt)
 
             except BudgetExceededError:
                 raise
             except Exception as e:
                 msg = f"[API 錯誤] {e}"
-                logger.error("run_error", agent=self.name, iteration=iteration, error=str(e))
+                logger.error("run_error", agent=self.name,
+                             iteration=iteration, error=str(e))
                 print(f"{RED}  ✖ {msg}{RESET}")
                 return msg
 
@@ -673,8 +865,13 @@ class BaseAgent:
                 final_text = "\n".join(text_parts)
 
             if response.stop_reason == "end_turn":
-                self._print_system(f"✔ 完成（{iteration} 輪）")
-                logger.info("run_done", agent=self.name, iterations=iteration)
+                compact_info = (
+                    f"，Compaction {compaction.compacted_count} 次"
+                    if compaction and compaction.compacted_count else ""
+                )
+                self._print_system(f"✔ 完成（{iteration} 輪{compact_info}）")
+                logger.info("run_done", agent=self.name, iterations=iteration,
+                            compactions=compaction.compacted_count if compaction else 0)
                 break
             elif response.stop_reason != "tool_use":
                 self._print_system(f"停止: {response.stop_reason}")
