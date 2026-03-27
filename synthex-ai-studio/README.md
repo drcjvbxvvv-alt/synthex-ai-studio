@@ -1,666 +1,442 @@
 # SYNTHEX AI STUDIO
 
-全 AI 驅動的軟體開發公司。24 位 Agent，7 個部門，透過命令行讓整個公司為你工作。
+> 28 個 AI Agent，8 個部門，一行命令讓整個虛擬軟體公司為你工作。
 
 ---
 
-## 目錄結構
+## 目錄
 
-```
-synthex-ai-studio/          ← 工具本體（建議放在 ~/tools/）
-│
-├── synthex.py              ← 主入口，所有命令從這裡執行
-├── requirements.txt
-├── README.md
-├── CLAUDE.md               ← 複製到你的專案根目錄，給 Claude Code 使用
-│
-├── core/
-│   ├── base_agent.py       ← Agent 基底（對話 + Agentic 兩種模式）
-│   ├── orchestrator.py     ← ARIA 智能路由
-│   ├── tools.py            ← 基礎工具（讀寫檔案、執行命令）
-│   ├── web_tools.py        ← 網頁開發工具（npm、git、框架偵測）
-│   └── web_orchestrator.py ← /discover、/ship 完整流水線
-│
-├── agents/
-│   └── all_agents.py       ← 全部 24 位 Agent 定義
-│
-└── memory/                 ← 自動產生，Agent 的跨 session 對話記憶
-```
-
-**CLAUDE.md 放在每個專案的根目錄，不是工具本體裡：**
-
-```
-~/tools/synthex-ai-studio/   ← 工具本體
-
-~/projects/my-app/
-├── CLAUDE.md                ← 複製到這裡，Claude Code 自動讀取
-├── src/
-└── package.json
-```
+- [這是什麼](#這是什麼)
+- [快速安裝](#快速安裝)
+- [核心架構](#核心架構)
+- [兩種使用方式](#兩種使用方式)
+- [核心命令](#核心命令)
+- [Project Brain 長期記憶](#project-brain-長期記憶)
+- [28 位 Agent](#28-位-agent)
+- [常見場景](#常見場景)
+- [品質與安全](#品質與安全)
+- [延伸閱讀](#延伸閱讀)
 
 ---
 
-## 安裝
+## 這是什麼
+
+SYNTHEX AI STUDIO 是一個自主式 AI 軟體開發框架。你描述想做什麼，它負責把想法變成可以跑起來的程式碼。
+
+**不是 AI 助手，是 AI 公司。** 差別在於：
+
+| 傳統 AI 助手 | SYNTHEX AI STUDIO |
+|------------|------------------|
+| 你問一個問題，它回答一個問題 | 你給一個需求，它從分析到交付全部完成 |
+| 你要把 AI 回答的程式碼複製貼上 | Agent 直接讀寫你的專案檔案 |
+| 每次對話從零開始 | Project Brain 記錄每個決策，永久積累 |
+| 一個 AI 做所有事 | 28 個 Agent 各司其職，並行工作 |
+
+**核心設計數字：**
+
+- **28 個 Agent**，8 個部門（高層管理、工程、設計、AI、基礎架構、品質、商務、硬體）
+- **12 Phase 流水線**（需求確認 → PRD → 架構 → 實作 → 測試 → 安全 → 交付）
+- **Project Brain v4.0** — 三層認知記憶系統（L1 工作記憶 + L2 時序圖譜 + L3 語義知識）
+- **AgentSwarm** — 並行多 Agent 協作，Phase 9+10 並行省 30-50% 時間
+- **139 個自動化測試**，全數通過
+
+---
+
+## 快速安裝
 
 ```bash
-# 1. 放到你喜歡的位置
+# 1. 下載並放到合適位置
 mv synthex-ai-studio ~/tools/
 cd ~/tools/synthex-ai-studio
 
-# 2. 安裝依賴（只有一個）
+# 2. 安裝 Python 依賴
 pip install -r requirements.txt
 
-# 3. 設定 API Key（加到 ~/.zshrc 永久生效）
-export ANTHROPIC_API_KEY="your-anthropic-api-key"
+# 3. 設定 API Key（加到 ~/.zshrc 或 ~/.bashrc 永久生效）
+export ANTHROPIC_API_KEY="sk-ant-..."
 
-# 4. 設定你的專案目錄（一次設定，之後不用每次指定）
+# 4. 設定你的預設工作目錄
 python synthex.py workdir ~/projects/my-app
 
-# 5. 確認正常
+# 5. 驗證安裝
 python synthex.py list
 ```
+
+詳細安裝說明見 [INSTALL.md](INSTALL.md)。
+
+---
+
+## 核心架構
+
+```
+你的需求
+    ↓
+synthex.py（CLI 入口）
+    ↓
+WebOrchestrator（12 Phase 流水線）
+    ├── Phase 1：ARIA — 任務確認
+    ├── Phase 2：ECHO — 需求分析 PRD
+    ├── Phase 3：LUMI — 產品驗證
+    ├── Phase 4：NEXUS — 技術架構
+    ├── Phase 5：SIGMA — 可行性評估
+    ├── Phase 6：FORGE — 環境準備
+    ├── Phase 7：SPARK — UX 設計
+    ├── Phase 8：PRISM — UI 設計系統
+    ├── Phase 9+10：BYTE + STACK（並行）— 實作
+    ├── Phase 11：PROBE + TRACE — 測試
+    └── Phase 12：SHIELD + ARIA — 安全審查 + 交付
+            ↓
+    AgentSwarm（並行協作）
+            ↓
+    BaseAgent（單一 Agent 執行單元）
+    ├── CompactionManager — Context 長任務管理
+    ├── TokenBudget — 成本控制
+    ├── CircuitBreaker — 故障隔離
+    └── Project Brain v4.0 — 知識注入
+```
+
+**模型分配策略（config.py）：**
+
+| 層級 | 模型 | 適用 Agent |
+|------|------|-----------|
+| Opus 4.6 | 最高品質，1M context | NEXUS、ARIA、SIGMA |
+| Sonnet 4.6 | 均衡，1M context | BYTE、STACK、ECHO 等主力 |
+| Haiku 4.5 | 快速廉價 | RELAY、BRIDGE、WIRE 等輔助 |
 
 ---
 
 ## 兩種使用方式
 
-### 方式 A：Synthex CLI（本工具）
-
-你在 Terminal 執行命令，Agent 透過 API 操作你的專案檔案。
+### 方式 A：Synthex CLI（適合自動化流水線）
 
 ```bash
-python synthex.py <命令> <參數>
+# 需求模糊時，先挖掘需求
+python synthex.py discover "我想做一個台灣股票 AI 分析平台"
+
+# 需求確認後，一氣呵成交付
+python synthex.py ship "電商平台：商品瀏覽、購物車、Stripe 結帳..."
+
+# 在現有專案開發
+python synthex.py feature "新增 Google OAuth 登入"
+
+# 修復問題
+python synthex.py fix "用戶登出後資料仍顯示上一個用戶的"
 ```
 
-### 方式 B：Claude Code + CLAUDE.md
-
-把 `CLAUDE.md` 複製到你的專案，在 Claude Code 裡直接用角色名稱工作。
+### 方式 B：Claude Code + CLAUDE.md（適合高品質互動開發）
 
 ```bash
+# 把 CLAUDE.md 複製到你的專案
 cp ~/tools/synthex-ai-studio/CLAUDE.md ~/projects/my-app/
-cd ~/projects/my-app
-claude
-# 然後在 Claude Code 裡：@BYTE 建立 DataTable 組件
+
+# 開啟 Claude Code
+cd ~/projects/my-app && claude
+
+# 在 Claude Code 裡直接用角色
+# @NEXUS 設計技術架構
+# @BYTE 實作登入頁面
+# @SHIELD 做安全審查
 ```
 
-**兩種方式都是同一個 Claude 扮演不同角色，差別在於：**
-Synthex CLI 自動串接多個角色，Claude Code 讓你有更完整的 context 和互動控制。
+**選擇哪種方式？**
+
+- 需要**快速產出骨架**，或希望**完全自動** → 選 CLI
+- 需要**高品質交付**，或想要**全程介入** → 選 Claude Code
+- 最佳組合：**CLI 做規劃（discover + agent）→ Claude Code 做實作**
 
 ---
 
+## 核心命令
 
----
+### 開發流程
 
-## Project Brain × SYNTHEX — 兩種使用場景
+```bash
+# 需求挖掘（模糊想法 → 完整需求書）
+python synthex.py discover "你的想法"
 
-> **核心原則**
-> - **自動觸發**：Context 注入（每次 `ship`/`feature`/`fix` 都自動）、Git Hook 學習（每次 `git commit` 都自動）
-> - **手動觸發**：`brain init` 或 `brain scan`（只需一次）、`brain add`（選填補充）
+# 全自動交付（需求書 → 可執行程式碼）
+python synthex.py ship "完整需求描述"
+python synthex.py ship "需求" --budget 10.0   # 設定最高成本（美元）
 
----
+# 功能開發（在現有專案加功能）
+python synthex.py feature "新功能描述"
 
-### 場景一：全新專案
+# 問題修復
+python synthex.py fix "bug 描述"
 
-從零開始，同時建立開發系統和長期記憶。
-
-**完整流程：**
-
-```
-[你] python synthex.py brain init          ← 手動（僅一次）
-      │
-      │  建立 .brain/、設定 Git Hook、建立知識圖譜
-      ▼
-[你] python synthex.py discover "模糊想法"  ← 手動
-      │
-      │  (自動) Brain.get_context() 注入已知背景知識
-      │  6 個 Agent 深挖需求，產出 docs/DISCOVER_FINAL.md
-      ▼
-[你] python synthex.py ship "完整需求" --budget 5.0  ← 手動
-      │
-      │  Phase 4 NEXUS 架構設計
-      │    (自動) Brain 注入相關踩坑 + ADR
-      │  Phase 9+10 BYTE+STACK 實作
-      │    (自動) Brain 注入業務規則 + 依賴關係
-      │  Phase 11 PROBE+TRACE 測試
-      │    (自動) Brain 注入已知的邊界條件
-      ▼
-[你] git commit -m "feat: 完成登入功能"      ← 正常 git 操作
-      │
-      │  (自動) Git Hook → Brain.learn_from_commit()
-      │  Claude 分析 diff，提取決策 / 踩坑 / 規則
-      │  存入知識圖譜（背景執行，不阻塞你）
-      ▼
- 知識圖譜自動成長（每次 commit 都在積累）
-      ↻ 下次工作，Brain 知道得更多
+# 專案調查（找出問題根源）
+python synthex.py investigate "問題描述"
 ```
 
-**時間線：**
+### Agent 互動
 
-| 時間 | commit 數 | 知識節點 | Brain 效果 |
-|------|-----------|---------|-----------|
-| 第 1 週 | ~20 | ~5 | 基礎結構知識 |
-| 第 1 個月 | ~100 | ~30 | 開始有決策記錄 |
-| 第 3 個月 | ~300 | ~100 | 踩坑記錄豐富，不再重蹈覆轍 |
-| 第 1 年 | ~1000 | ~300 | 完整機構記憶 |
+```bash
+# 問任何問題（智能路由選最合適的 Agent）
+python synthex.py ask "JWT RS256 和 HS256 有什麼差別？"
 
----
+# 指定 Agent 對話
+python synthex.py agent NEXUS "評估用 GraphQL 替換 REST API 的利弊"
 
-### 場景二：現有專案（接手 / 新功能 / 修復 / 重構）
+# 多角色持續對話（保留記憶）
+python synthex.py chat NOVA
 
-接手沒有記錄的舊專案，或在現有專案上持續開發。
+# Agentic 模式（Agent 直接操作你的檔案）
+python synthex.py do SHIELD "掃描 API 路由，修復缺少授權檢查的端點"
 
-**接手舊專案（只需一次）：**
-
-```
-[你] python synthex.py brain scan           ← 手動（僅一次，約 3-10 分鐘）
-      │
-      │  Step 1：分析目錄結構，建立組件節點
-      │  Step 2：分析 Git 歷史（最近 200 commits）
-      │          Claude 提取每個 commit 的決策知識
-      │  Step 3：掃描「熱點」程式碼（修改最頻繁的檔案）
-      │          提取 TODO/FIXME/HACK 注釋
-      │  Step 4：整合現有 README / docs / ADR
-      │  Step 5：產出 .brain/SCAN_REPORT.md
-      ▼
- 知識圖譜重建完成，可以立即使用
+# Agentic Shell（互動式）
+python synthex.py shell BYTE
 ```
 
-**日常開發（完全自動）：**
+### 部門協作
 
+```bash
+# 讓整個部門一起分析
+python synthex.py dept engineering "評估把 Python 後端改寫為 Go 的工作量"
+
+# 多部門專案規劃
+python synthex.py project "建立 AI 客服系統，需要 NLP + 後台 + 數據分析"
 ```
-[你] python synthex.py feature "新增訂單退款功能"  ← 手動
-      │
-      │  (自動) Brain.get_context("新增訂單退款功能", "src/order/")
-      │          搜尋 → 「支付模組有重複扣款的踩坑記錄」
-      │          搜尋 → 「金額必須以分為單位儲存（業務規則）」
-      │          搜尋 → 「ADR-042：冪等性設計」
-      │          → 全部注入 Agent 的 Prompt 前端
-      ▼
- AI Agent 帶著完整記憶工作
- 知道之前踩過什麼坑，不會重複犯錯
-      │
-      ▼
-[你] git commit -m "feat: 加入退款 API"      ← 正常 git 操作
-      │
-      │  (自動) Git Hook 學習新知識
-      ▼
- 知識圖譜持續成長 ↻
-```
-
-**四種操作的觸發方式：**
-
-| 操作 | 命令 | Brain 介入方式 |
-|------|------|----------------|
-| 新增功能 | `synthex.py feature "描述"` | 自動注入相關踩坑 + 依賴關係 |
-| 修復 Bug | `synthex.py fix "bug 描述"` | 自動注入歷史相似 bug 的解法 |
-| 除錯 | `synthex.py investigate "問題"` | 自動注入可能的根本原因 |
-| 重構 | `synthex.py ship "重構需求"` | 自動注入完整架構脈絡 |
-
----
-
-### 哪些是自動的，哪些是手動的
-
-```
-自動（完全不需要手動觸發）：
-  ✓ git commit 後，知識自動積累（Git Hook）
-  ✓ 每次 AI 工作前，Context 自動注入（orchestrator 內建）
-  ✓ 知識圖譜自動成長
-
-手動（只需一次）：
-  ✓ brain init — 新專案初始化
-  ✓ brain scan — 舊專案考古掃描
-
-選填（隨時補充）：
-  ✓ brain add "知識" — 手動記錄重要決策
-  ✓ brain status    — 查看目前記憶狀態
-  ✓ brain context   — 測試 Context 注入效果
-```
-
-
-## 完整命令列表
-
-### 需求分析（從這裡開始）
-
-| 命令 | 說明 |
-|------|------|
-| `discover <想法>` | **需求模糊時用這個**。6 個角色深挖需求，產出需求書和 /ship 指令 |
-| `agent ECHO <任務>` | 讓 ECHO 分析需求、撰寫 PRD |
-| `agent LUMI <任務>` | 讓 LUMI 做產品策略和用戶研究 |
-
-### 開發執行
-
-| 命令 | 說明 |
-|------|------|
-| `ship <需求>` | **一氣呵成**。11 Phase 自動流水線，從範疇確認到 git commit |
-| `feature <描述>` | 在現有專案新增一個功能 |
-| `fixbug <描述>` | 診斷並修復錯誤 |
-| `codereview` | PROBE + SHIELD 全面程式碼審查 |
-
-### 對話與規劃
-
-| 命令 | 說明 |
-|------|------|
-| `ask <任務>` | 智能路由，自動選最合適的 Agent（對話模式） |
-| `agent <名稱> <任務>` | 直接指派特定 Agent（對話模式） |
-| `chat <名稱>` | 與 Agent 持續對話，保留記憶 |
-| `project <說明>` | 多部門專案規劃，ARIA 主導 |
-| `dept <部門> <任務>` | 讓整個部門一起分析 |
-| `review <名稱>` | 貼入內容讓 Agent 審查 |
-
-### Agentic 執行（Agent 直接操作你的檔案）
-
-| 命令 | 說明 |
-|------|------|
-| `do <名稱> <任務>` | Agent 讀寫檔案、執行命令，完成任務 |
-| `run <名稱> <任務>` | 同 `do` |
-| `build <任務>` | 智能路由 + Agentic 執行 |
-| `shell <名稱>` | Agentic 互動 Shell（最接近 Claude Code 體驗） |
 
 ### 工具
 
-| 命令 | 說明 |
-|------|------|
-| `workdir <路徑>` | 設定預設工作目錄（永久儲存到 ~/.synthex_config.json） |
-| `list` | 列出所有 24 位 Agent |
-| `clear <名稱>` | 清除特定 Agent 的記憶 |
+```bash
+# 設定預設工作目錄
+python synthex.py workdir ~/projects/my-app
 
-### 全域選項
+# 列出所有 Agent
+python synthex.py list
 
+# 清除 Agent 記憶
+python synthex.py clear NEXUS
+
+# 程式碼審查
+python synthex.py review BYTE   # 貼入程式碼讓 BYTE 審查
+
+# 全專案回顧
+python synthex.py retro
+
+# 瀏覽器 QA
+python synthex.py qa_browser --url http://localhost:3000
 ```
---workdir <路徑>    覆蓋本次工作目錄
---yes              危險操作自動確認
-```
+
+完整命令參考見 [COMMANDS.md](COMMANDS.md)。
 
 ---
 
-## 需求模糊？用 /discover
+## Project Brain 長期記憶
 
-這是你最常用到的起點。當你只有一個模糊的想法，還不知道要做什麼功能，先跑 `/discover`。
+Project Brain 是 SYNTHEX 最獨特的功能：**讓 AI 永遠記得你的專案**。
+
+### 快速開始
 
 ```bash
-python synthex.py discover "我想做一個幫助自由工作者管理客戶和收款的工具"
+# 新專案初始化（只需一次）
+python synthex.py brain init
 
-python synthex.py discover "我想做一個台灣股票的 AI 分析平台"
+# 舊專案考古掃描（只需一次，約 3-10 分鐘）
+python synthex.py brain scan
 
-python synthex.py discover "類似 Notion 但專門給工程師寫技術文件的工具"
+# 之後的 commit 自動學習（Git Hook 自動觸發）
+git commit -m "feat: 加入冪等性機制"
+
+# 查看三層記憶狀態
+python synthex.py brain status
 ```
 
-**6 個角色依序分析你的想法：**
+### 三層認知架構（v4.0）
 
 ```
-LUMI  — 你的用戶是誰？他們最痛的地方是什麼？現有替代方案的缺陷？
-↓
-ARIA  — 商業模式怎麼設計？MVP 怎麼定義？Go/No-Go 建議
-↓
-ECHO  — 具體功能清單（含假設標注）、優先排序（P0/P1/P2）、不做什麼
-↓
-NEXUS — 每個功能的技術複雜度、推薦技術棧、第三方服務費用
-↓
-SIGMA — 開發時間估算、月營運成本、關鍵里程碑
-↓
-ARIA  — 整合輸出完整需求書 + 可直接執行的 /ship 指令
+L1 工作記憶 — Anthropic Memory Tool
+   即時任務資訊（本次踩坑、任務進展）
+   生命週期：session，<10ms 查詢
+   效果：84% token 節省
+
+L2 情節記憶 — Graphiti 時序知識圖譜
+   「三個月前的決策現在還有效嗎？」
+   雙時態模型（t_valid/t_invalid），<100ms
+   後端：FalkorDB / Neo4j
+
+L3 語義記憶 — Project Brain v2.0
+   深度語義知識、反事實推理、知識衰減
+   永久保留，SQLite + Chroma
 ```
 
-**產出物：**
-- `docs/DISCOVER.md` — 完整需求分析報告
-- 一條具體的 `/ship` 指令，複製後直接執行
+### v4.0 新功能
 
-**執行流程：**
-```bash
-# Step 1: 挖掘需求
-python synthex.py discover "你的模糊想法"
+- **知識自動驗證**：AI 定期確認知識是否仍然準確
+- **聯邦匿名共享**：差分隱私保護下，與業界共享踩坑知識
+- **知識蒸餾**：壓縮為 Markdown 摘要 / 角色 Prompt / LoRA 訓練數據
+- **Web UI**：D3.js 互動式知識圖譜（`http://localhost:7890`）
+- **跨 Session 持久化**：重要工作記憶跨次保留
 
-# Step 2: 讀 docs/DISCOVER.md，確認需求書符合你的意圖
-
-# Step 3: 複製需求書裡建議的 /ship 指令執行
-python synthex.py ship "（從 DISCOVER.md 複製的完整需求）"
-```
+詳細說明見 [PROJECT_BRAIN.md](PROJECT_BRAIN.md)。
 
 ---
 
-## /ship — 從決策到實作一氣呵成
-
-需求確認後（自己想清楚了，或跑過 `/discover`），用 `/ship` 完整執行。
-
-```bash
-python synthex.py ship "電商平台：
-- 商品瀏覽（分類、搜尋、篩選）
-- 購物車（本地儲存，不需登入）
-- 結帳（Stripe，支援信用卡）
-- 訂單管理（用戶可查看訂單狀態）
-- 後台管理（上架商品、查看訂單）
-技術：Next.js 16 + TypeScript + Tailwind + PostgreSQL + Prisma"
-```
-
-**11 Phase 自動流水線：**
-
-```
-Phase 1  — ARIA  — 任務接收與範疇確認
-           輸出：任務確認報告（若有模糊之處，在此停下來問你）
-
-Phase 2  — ECHO  — 需求分析與 PRD
-           輸出：docs/PRD.md（功能清單、路由、資料模型、API、驗收標準）
-
-Phase 3  — LUMI  — 產品驗證
-           輸出：用戶旅程完整性確認（不通過則要求 ECHO 修改 PRD）
-
-Phase 4  — NEXUS — 技術架構設計
-           輸出：docs/ARCHITECTURE.md（技術選型、檔案計畫、實作順序）
-
-Phase 5  — SIGMA — 可行性評估
-           輸出：成本分析、風險評估（不可行則暫停）
-
-Phase 6  — FORGE — 環境準備
-           執行：建立目錄、安裝套件、建立 .env.local.example
-
-Phase 7  — BYTE  — 前端實作
-           執行：TypeScript 型別 → API 客戶端 → 組件 → 頁面 → 路由
-           驗證：lint + typecheck 通過
-
-Phase 8  — STACK — 後端實作
-           執行：資料模型 → Service 層 → API 路由 → 中間件
-           驗證：每個端點測試通過
-
-Phase 9  — PROBE + TRACE — 測試
-           執行：單元測試 + API 整合測試 + E2E 測試，全部必須通過
-
-Phase 10 — SHIELD — 安全審查
-           執行：OWASP 清單逐一確認，發現問題當場修復
-
-Phase 11 — ARIA  — 交付總結
-           執行：docs/DELIVERY.md + git commit
-```
-
-**重要說明：**
-
-`/ship` 的交付品質是「可以 demo 的起點」，不是「直接上 production」。原因是每個 Phase 是獨立的 API 呼叫，Phase 7 的 BYTE 只看到被截斷的架構摘要，不是完整的 context。你大約需要再花 2-4 小時修復整合問題。
-
-**如果要更高品質，改用 Claude Code + CLAUDE.md：**
-
-```
-# 在 Claude Code 裡，你帶著 DISCOVER.md 的需求書，一步步指揮
-@ECHO 根據 docs/DISCOVER.md 的需求，產出完整 PRD
-→ 確認 PRD 正確後
-@NEXUS 設計架構
-→ 確認架構後
-@BYTE + @STACK 實作
-```
-
-這樣你在全程，每個角色都有完整的 context，交付品質明顯更高。
-
----
-
-## 對話模式 vs Agentic 模式
-
-### 對話模式（ask / agent / chat / project）
-
-Claude 給你分析、建議、規格、程式碼片段，**你自己決定要不要執行**。
-
-```bash
-# 適合：規劃、諮詢、技術評估、架構設計、PRD 撰寫
-python synthex.py agent NEXUS "評估用 GraphQL 替換現有 REST API 的利弊"
-python synthex.py agent SHIELD "列出這個 JWT 實作的安全問題"
-```
-
-### Agentic 模式（do / run / shell / ship / discover）
-
-Claude **真實操作你的專案**：讀寫檔案、執行命令、安裝套件、提交 Git。
-
-```bash
-# 適合：實際開發、重構、建立設定、修 bug
-python synthex.py do FORGE "建立 .github/workflows/ci.yml，包含 lint → test → build"
-python synthex.py do SHIELD "掃描所有 API 端點，找出缺少授權檢查的路由並修復"
-python synthex.py shell BYTE  # 開啟互動 Shell
-```
-
----
-
-## 使用場景範例
-
-### 場景一：我有個模糊想法
-
-```bash
-# 1. 先挖掘需求
-python synthex.py discover "我想幫台灣的小餐廳做一個點餐系統"
-
-# 2. 讀 docs/DISCOVER.md，調整不符合你意圖的地方
-# 3. 執行建議的 /ship 指令
-python synthex.py ship "餐廳點餐系統：
-QR code 掃碼點餐、購物車、送出訂單、廚房顯示看板、
-結帳（現金為主，不需線上付款）、
-管理後台（菜單管理、查看訂單）
-Next.js + PostgreSQL，mobile first"
-```
-
-### 場景二：我知道要做什麼，需求很清楚
-
-```bash
-# 直接 /ship
-python synthex.py ship "在現有專案新增 Google OAuth 登入，
-使用 NextAuth.js，
-登入後 redirect 到 /dashboard，
-用戶資料（名稱、Email、頭像）存進 users 資料表"
-```
-
-### 場景三：現有專案新增功能
-
-```bash
-python synthex.py feature "新增用戶通知系統：
-- 後端：WebSocket 推播 + 資料庫儲存通知記錄
-- 前端：右上角鈴鐺 icon + 下拉列表 + 已讀/未讀狀態"
-```
-
-### 場景四：修 bug
-
-```bash
-python synthex.py fixbug "用戶登出後再登入，/dashboard 的資料還是顯示上一個用戶的"
-```
-
-### 場景五：請某個 Agent 專門做一件事
-
-```bash
-# 讓 NOVA 設計 AI 功能
-python synthex.py agent NOVA "我想在股票分析平台加入 AI 解讀財報的功能，設計架構"
-
-# 讓 PROBE 設計測試策略
-python synthex.py agent PROBE "為用戶認證模組設計完整的測試計畫"
-
-# 讓 MEMO 審查合規問題
-python synthex.py agent MEMO "我們要收集用戶的瀏覽行為做廣告投放，有什麼隱私合規問題"
-
-# 讓 SIGMA 做財務分析
-python synthex.py agent SIGMA "估算這個 SaaS 平台需要多少用戶才能損益平衡"
-```
-
-### 場景六：Agentic Shell 持續工作
-
-```bash
-python synthex.py shell FLUX
-
-# [FLUX] > 先幫我看一下現在的專案結構
-# [FLUX] > 在 src/lib/ 建立一個統一的 API error handler
-# [FLUX] > 把它套用到所有現有的 API 路由
-# [FLUX] > 跑一下 lint，有問題就修
-# [FLUX] > exit
-```
-
-### 場景七：搭配 Claude Code（推薦的高品質做法）
-
-```bash
-# 1. 用 Synthex 做規劃（快速產出文件）
-python synthex.py discover "我的模糊想法"
-python synthex.py agent NEXUS "根據 docs/DISCOVER.md 設計技術架構"
-
-# 2. 把文件複製到專案，開啟 Claude Code
-cp ~/tools/synthex-ai-studio/CLAUDE.md ~/projects/my-app/
-cd ~/projects/my-app
-claude
-
-# 3. 在 Claude Code 裡帶著文件逐步開發（完整 context，高品質交付）
-# "根據 docs/DISCOVER.md 和 docs/ARCHITECTURE.md，@BYTE 請實作登入頁面"
-```
-
----
-
-## 全體 24 位 Agent
+## 28 位 Agent
 
 ### 🎯 高層管理
 
-| Agent | 職位 | /ship 職責 | 其他能力 |
-|-------|------|-----------|---------|
-| **ARIA** | 執行長 CEO | Phase 1（範疇確認）+ Phase 11（交付） | 策略規劃、危機管理、跨部門協調 |
-| **NEXUS** | 技術長 CTO | Phase 4（技術架構） | 系統設計、技術選型、架構評審 |
-| **LUMI** | 產品長 CPO | Phase 3（產品驗證）+ /discover Step 1 | 產品策略、用戶研究、功能優先排序 |
-| **SIGMA** | 財務長 CFO | Phase 5（可行性評估） | 財務建模、ROI 分析、成本優化 |
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **ARIA** | 執行長 CEO | 任務確認、流水線指揮、交付總結 |
+| **NEXUS** | 技術長 CTO | 系統架構、技術選型、設計評審 |
+| **LUMI** | 產品長 CPO | 產品策略、用戶研究、需求驗證 |
+| **SIGMA** | 財務長 CFO | 成本估算、可行性評估、ROI 分析 |
 
 ### ⚙️ 工程開發
 
-| Agent | 職位 | /ship 職責 | 其他能力 |
-|-------|------|-----------|---------|
-| **BYTE** | 前端技術主管 | Phase 7（前端完整實作） | React/Next.js、效能優化、Design System |
-| **STACK** | 後端技術主管 | Phase 8（後端完整實作） | API 設計、PostgreSQL、微服務 |
-| **FLUX** | 全端工程師 | 補位（跨層級問題） | 快速原型、Docker、整合工作 |
-| **KERN** | 系統工程師 | /perf 效能優化 | Linux 底層、效能調優、並發問題 |
-| **RIFT** | 行動端工程師 | Phase 7 行動端 | React Native、iOS/Android |
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **BYTE** | 前端技術主管 | React/Next.js、TypeScript、效能優化 |
+| **STACK** | 後端技術主管 | API 設計、PostgreSQL、微服務 |
+| **FLUX** | 全端工程師 | 快速原型、第三方整合、Docker |
+| **KERN** | 系統工程師 | Linux 底層、效能調優、並發問題 |
+| **RIFT** | 行動端工程師 | React Native、iOS/Android |
 
 ### 💡 產品設計
 
-| Agent | 職位 | /ship 職責 | 其他能力 |
-|-------|------|-----------|---------|
-| **SPARK** | UX 設計主管 | 用戶旅程輸入 | 可用性測試、資訊架構 |
-| **PRISM** | UI 設計師 | 設計規格輸入 | 視覺設計、Design Token |
-| **ECHO** | 商業分析師 | Phase 2（PRD 產出） | 需求分析、流程設計 |
-| **VISTA** | 產品經理 | 任務分解、里程碑 | Sprint 規劃、Roadmap |
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **SPARK** | UX 設計主管 | 用戶旅程、資訊架構、線框圖 |
+| **PRISM** | UI 設計師 | Design System、色彩、組件規範 |
+| **ECHO** | 商業分析師 | PRD 撰寫、AC 定義、需求分析 |
+| **VISTA** | 產品經理 | Sprint 規劃、Roadmap、ICE 框架 |
 
 ### 🧠 AI 與資料
 
-| Agent | 職位 | /ship 職責 | 其他能力 |
-|-------|------|-----------|---------|
-| **NOVA** | ML 主管 | AI 功能架構設計 | LLM 微調、RAG 系統、MLOps |
-| **QUANT** | 資料科學家 | 指標設計、A/B 測試方案 | 統計分析、預測建模 |
-| **ATLAS** | 資料工程師 | Schema 設計輸入 | ETL Pipeline、Kafka |
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **NOVA** | ML 主管 | LLM 整合、RAG、Prompt 工程 |
+| **QUANT** | 資料科學家 | 統計分析、A/B 測試、預測建模 |
+| **ATLAS** | 資料工程師 | ETL、dbt、資料管線 |
 
 ### 🚀 基礎架構
 
-| Agent | 職位 | /ship 職責 | 其他能力 |
-|-------|------|-----------|---------|
-| **FORGE** | DevOps 主管 | Phase 6（環境準備）+ Phase 11（部署設定） | Kubernetes、CI/CD、IaC |
-| **SHIELD** | 資安工程師 | Phase 10（安全審查與修復） | OWASP、滲透測試、合規 |
-| **RELAY** | 雲端架構師 | 雲端架構建議 | AWS/GCP/Azure、FinOps |
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **FORGE** | DevOps 主管 | CI/CD、Kubernetes、IaC |
+| **SHIELD** | 資安工程師 | OWASP、滲透測試、合規 |
+| **RELAY** | 雲端架構師 | AWS/GCP、FinOps、多雲策略 |
 
-### 🔍 品質安全
+### 🔍 品質保證
 
-| Agent | 職位 | /ship 職責 | 其他能力 |
-|-------|------|-----------|---------|
-| **PROBE** | QA 主管 | Phase 9a（測試策略） | 品質指標、UAT 管理 |
-| **TRACE** | 自動化測試 | Phase 9b（測試執行） | Playwright、API 測試 |
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **PROBE** | QA 主管 | 測試策略、品質指標、UAT |
+| **TRACE** | 自動化測試 | Playwright、API 測試、E2E |
 
 ### 📣 商務發展
 
-| Agent | 職位 | /ship 職責 | 其他能力 |
-|-------|------|-----------|---------|
-| **PULSE** | 行銷主管 | 發布行銷包 | 內容行銷、SEO、成長策略 |
-| **BRIDGE** | 業務主管 | 合作提案框架 | 企業銷售、契約談判 |
-| **MEMO** | 法務合規 | 隱私合規檢查 | 合約審查、GDPR、個資法 |
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **PULSE** | 行銷主管 | SEO、GTM、AARRR 成長框架 |
+| **BRIDGE** | 業務主管 | 企業銷售、提案設計 |
+| **MEMO** | 法務合規 | GDPR、台灣個資法、合約審查 |
+
+### 🔧 硬體嵌入式
+
+| Agent | 職位 | 核心能力 |
+|-------|------|---------|
+| **BOLT** | 韌體工程師 | MCU、RTOS、Bootloader |
+| **VOLT** | 嵌入式 Linux | BSP、Device Driver、Yocto |
+| **WIRE** | 硬體整合 | Board Bring-up、驗證測試 |
+| **ATOM** | 系統程式 | eBPF、效能分析、核心驅動 |
+
+完整 Agent 說明見 [AGENTS.md](AGENTS.md)。
 
 ---
 
-## 可用工具（Agentic 模式）
+## 常見場景
 
-工程、DevOps、QA 角色有全套工具；高層、商務角色只有讀取類工具。
-
-### 基礎工具
-
-| 工具 | 說明 |
-|------|------|
-| `read_file` | 讀取檔案（支援指定行範圍） |
-| `write_file` | 寫入或追加（自動建立目錄） |
-| `list_dir` | 樹狀列出目錄 |
-| `run_command` | 執行 shell 命令（危險指令自動封鎖） |
-| `search_files` | 全專案文字搜尋 |
-| `move_file` | 移動或重命名 |
-| `delete_file` | 刪除（操作前要求確認） |
-| `get_project_info` | 偵測技術棧、統計檔案 |
-
-### 網頁開發工具
-
-| 工具 | 說明 |
-|------|------|
-| `npm_run` | 執行 npm/yarn/pnpm 腳本 |
-| `install_package` | 安裝套件 |
-| `git_run` | 執行 Git 指令 |
-| `detect_framework` | 偵測框架、版本、建置工具 |
-| `read_package_json` | 解析 package.json |
-| `scaffold_project` | 建立 Next.js、Vite、FastAPI 等骨架 |
-| `check_port` | 確認 port 是否被佔用 |
-| `read_env` | 讀取 .env 的 key 清單（不顯示值） |
-| `write_env` | 安全寫入環境變數 |
-| `lint_and_typecheck` | ESLint + TypeScript 型別檢查 |
-
----
-
-## 安全機制
-
-- **危險命令封鎖**：`rm -rf /`、`curl | bash` 等指令直接封鎖
-- **刪除前確認**：所有刪除操作預設要求確認，加 `--yes` 自動確認
-- **Git 指令白名單**：只允許常見安全的 Git 指令
-- **工作目錄隔離**：Agent 只在 `workdir` 指定的目錄內操作
-- **環境變數保護**：`read_env` 只顯示 key 名稱，不顯示值
-
----
-
-## 記憶機制
-
-每個 Agent 的對話歷史存在 `memory/<agent_name>_memory.json`，保留最近 20 輪對話，跨 session 有效。
+### 場景 1：從想法到產品骨架（最快路線）
 
 ```bash
-# 繼續上次的討論（NOVA 記得之前說過的）
-python synthex.py chat NOVA
+python synthex.py discover "我想做一個幫台灣小餐廳管理訂單的 SaaS"
+# → 30 分鐘後，產出完整需求書
 
-# 清除記憶重新開始
-python synthex.py clear NOVA
+python synthex.py ship "（從 docs/DISCOVER.md 複製的完整需求）"
+# → 1-2 小時後，可以跑起來的 Next.js + PostgreSQL 骨架
+```
+
+### 場景 2：在現有專案加功能
+
+```bash
+python synthex.py workdir ~/projects/my-ecommerce
+python synthex.py feature "新增訂單退款功能，支援全額和部分退款"
+```
+
+### 場景 3：安全審查
+
+```bash
+python synthex.py do SHIELD "全面審查所有 API 端點的授權邏輯，找出漏洞並修復"
+```
+
+### 場景 4：Project Brain 輔助開發
+
+```bash
+# 初始化記憶系統
+python synthex.py brain init
+
+# 每次 git commit 自動學習（設定 Git Hook 後）
+git commit -m "fix: 修復支付 timeout 問題"
+
+# 之後開發時，Brain 自動注入相關知識
+python synthex.py feature "新增支付退款功能"
+# → Brain 自動提醒：「之前有 timeout 踩坑記錄」
+```
+
+### 場景 5：Hardware + Software 整合
+
+```bash
+# 嵌入式韌體
+python synthex.py agent BOLT "設計 STM32 的 UART 驅動，支援 DMA 傳輸"
+
+# 搭配上位機軟體
+python synthex.py agent STACK "設計後端 WebSocket API 接收韌體數據"
 ```
 
 ---
 
-## 進階設定
+## 品質與安全
 
-預設工作目錄存在 `~/.synthex_config.json`：
+### 測試框架
 
-```json
-{
-  "workdir": "/Users/you/projects/my-app"
-}
+```bash
+# 執行所有 139 個自動化測試
+python -m pytest tests/ -v
+
+# 執行品質評估
+python -m core.evals run --suite prd_quality
+python -m core.evals run --suite security_quality
 ```
 
-Agent 使用的模型為 `claude-opus-4-5`。如需更換（例如用 `claude-sonnet-4-6` 降低成本），修改 `core/base_agent.py` 的 `self.model`。
+### 安全設計
+
+- **命令注入防護**：所有外部命令使用 argv 陣列，禁止 `shell=True`
+- **路徑穿越防護**：所有檔案操作驗證路徑在工作目錄內
+- **SSRF 防護**：封鎖私有 IP 網段（10.x.x.x、192.168.x.x）
+- **Rate Limiting**：API 呼叫有速率限制（Token Bucket 算法）
+- **Budget Guard**：可設定最高花費上限，超過自動中止
+
+詳細安全說明見 [SECURITY.md](SECURITY.md)。
 
 ---
 
-## 關於交付品質的誠實說明
+## 延伸閱讀
 
-`/ship` 的輸出是「可以 demo 的起點」，不是「直接上 production 的成品」。
-
-| 方式 | 程式碼能跑起來 | 需要人力修復 | 適合場景 |
-|------|------------|------------|---------|
-| `/discover` + `/ship` | 約 40-60% | 半天到一天 | 快速產出骨架，再人工精修 |
-| Claude Code + CLAUDE.md | 約 60-70% | 2-4 小時 | 你全程在場，即時糾正 |
-| 兩者結合 | 最高 | 最少 | 先用 Synthex 規劃，再用 Claude Code 實作 |
-
-**推薦工作流程：**
-
-```
-1. python synthex.py discover "模糊想法"
-   → 產出 docs/DISCOVER.md
-
-2. 讀一遍需求書，調整不符合你意圖的地方
-
-3. cp CLAUDE.md ~/projects/my-app/ && claude
-   → 在 Claude Code 裡帶著 DISCOVER.md 逐步開發
-
-4. 遇到需要跑整個流程的，再切回 /ship
-```
+| 文件 | 說明 |
+|------|------|
+| [INSTALL.md](INSTALL.md) | 完整安裝與環境設定指南 |
+| [COMMANDS.md](COMMANDS.md) | 所有命令的完整參考 |
+| [AGENTS.md](AGENTS.md) | 28 位 Agent 詳細說明 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 系統技術架構深度說明 |
+| [PROJECT_BRAIN.md](PROJECT_BRAIN.md) | Project Brain v4.0 完整文件 |
+| [SECURITY.md](SECURITY.md) | 安全設計與最佳實踐 |
+| [EVALS.md](EVALS.md) | 品質評估框架使用指南 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 開發者貢獻指南 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本更新記錄 |
 
 ---
 
-*SYNTHEX AI STUDIO · 24 Agents · 18 Tools · Built with Claude*
+*SYNTHEX AI STUDIO v4.0 · 28 Agents · 8 Departments · Built with Claude Opus 4.6 / Sonnet 4.6*
