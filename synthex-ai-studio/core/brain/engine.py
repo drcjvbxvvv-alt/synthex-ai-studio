@@ -208,6 +208,11 @@ class ProjectBrain:
         (self.brain_dir / "adrs").mkdir(exist_ok=True)
         (self.brain_dir / "sessions").mkdir(exist_ok=True)
 
+        # ── 強制建立 knowledge_graph.db ──────────────────────
+        # graph 是 lazy property，必須主動存取才會建立 SQLite 檔案。
+        # 不論 git 歷史是否存在，都應先把 DB 建好。
+        _ = self.graph   # 觸發 KnowledgeGraph.__init__ → 建立 .db 檔案
+
         # 設定檔
         name = project_name or self.workdir.name
         config = {

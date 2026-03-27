@@ -1260,21 +1260,35 @@ def cmd_brain_distill(args):
 
 def cmd_brain_webui(args):
     """啟動知識圖譜 Web UI（v4.0，預設 port 7890）"""
-    from core.brain import ProjectBrain
     from core.brain.web_ui.server import run_server
-    workdir = get_workdir(getattr(args, "workdir", None))
-    port    = getattr(args, "port", 7890)
     from pathlib import Path
+
+    workdir   = get_workdir(getattr(args, "workdir", None))
+    port      = getattr(args, "port", 7890)
     brain_dir = Path(workdir) / ".brain"
+    db_path   = brain_dir / "knowledge_graph.db"
+
+    print(f"{DIM}  工作目錄：{workdir}{RESET}")
+
     if not brain_dir.exists():
         print(f"{RED}✖ 找不到 .brain 目錄，請先執行：{RESET}")
         print(f"  python synthex.py brain init --workdir {workdir}")
         return
+
+    if not db_path.exists():
+        # DB 可能因為 init 時無 git 歷史而未建立 → 補建
+        print(f"{YELLOW}⚠ knowledge_graph.db 不存在，正在補建...{RESET}")
+        from core.brain.graph import KnowledgeGraph
+        KnowledgeGraph(brain_dir)   # 建立並初始化 schema
+        print(f"{GREEN}✓ 知識圖譜 DB 已建立{RESET}")
+
     try:
         run_server(Path(workdir), port=port)
+    except ImportError:
+        print(f"{RED}✖ 缺少 Web UI 依賴，請先安裝：{RESET}")
+        print("  pip install flask flask-cors")
     except Exception as e:
         print(f"{RED}✖ Web UI 啟動失敗：{e}{RESET}")
-        print("  請確認已安裝：pip install flask flask-cors")
 
 if __name__ == "__main__":
     main()
