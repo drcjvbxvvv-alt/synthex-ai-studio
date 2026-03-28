@@ -183,94 +183,16 @@ class ContextEngineer:
         return budget
 
     def summarize_brain(self) -> str:
-        """產生 Project Brain 的整體摘要（v4.0 完整版）"""
-        from datetime import datetime, timezone
-
-        stats  = self.graph.stats()
-        lines  = ["## Project Brain 知識庫統計", ""]
-
-        # ── L3 知識圖譜 ──────────────────────────────────────
-        lines.append(f"**L3 知識圖譜（SQLite）**")
-        lines.append(f"  節點：{stats['nodes']} 個 | 關係：{stats['edges']} 條")
-
-        by_type = stats.get("by_type", {})
-        if by_type:
-            lines.append("  分類：" + "、".join(
-                f"{t} {c}" for t, c in by_type.items()
-            ))
-
-        # ── L2 Graphiti 狀態 ─────────────────────────────────
-        try:
-            from .graphiti_adapter import GraphitiAdapter
-            adapter_status = GraphitiAdapter(
-                brain_dir  = self.graph.db_path.parent,
-                agent_name = "status_check",
-            ).status()
-            graphiti_ok  = adapter_status.get("graphiti_available", False)
-            graphiti_url = adapter_status.get("backend", "")
-        except Exception:
-            graphiti_ok  = False
-            graphiti_url = ""
-
-        lines.append(f"**L2 Graphiti（時序圖）**")
-        if graphiti_ok:
-            lines.append(f"  ✓ 已連接 {graphiti_url}")
-        else:
-            lines.append("  ✗ 未連接（自動降級到 SQLite 時序圖）")
-            lines.append("    啟用 FalkorDB：")
-            lines.append("      docker run -d -p 6379:6379 falkordb/falkordb")
-            lines.append("      pip install graphiti-core falkordb")
-            lines.append("    連線設定：GRAPHITI_URL=redis://localhost:6379")
-
-        # ── L1 Memory Tool 狀態 ──────────────────────────────
-        lines.append(f"**L1 工作記憶（Memory Tool）**")
-        try:
-            from .memory_tool import BrainMemoryBackend, list_available_sessions
-            backend  = BrainMemoryBackend(
-                brain_dir  = self.graph.db_path.parent,
-                agent_name = "status_check",
-            )
-            mem_summary = backend.session_summary()
-            total_mems  = mem_summary.get("total_memories", 0)
-            sessions    = list_available_sessions(self.graph.db_path.parent)
-            lines.append(f"  工作記憶：{total_mems} 筆 | 可恢復 session：{len(sessions)} 個")
-        except Exception:
-            lines.append("  ✓ 可用（尚未初始化工作記憶）")
-
-        # ── 驗證 / 蒸餾狀態（v4.0）──────────────────────────
-        distilled_dir = self.graph.db_path.parent / "distilled"
-        if distilled_dir.exists():
-            distilled_files = list(distilled_dir.glob("*"))
-            if distilled_files:
-                lines.append(f"**知識蒸餾**  ✓ {len(distilled_files)} 個輸出檔案")
-
-        validation_db = self.graph.db_path.parent / "validation_log.db"
-        if validation_db.exists():
-            try:
-                import sqlite3
-                conn = sqlite3.connect(str(validation_db))
-                last = conn.execute(
-                    "SELECT run_at, total_checked FROM validation_runs "
-                    "ORDER BY run_at DESC LIMIT 1"
-                ).fetchone()
-                conn.close()
-                if last:
-                    lines.append(f"**知識驗證**  最近一次：{last[0][:10]}，驗證 {last[1]} 筆")
-            except Exception:
-                pass
-
-        # ── 最近新增知識 ──────────────────────────────────────
-        recent = self.graph._conn.execute(
-            "SELECT type, title FROM nodes "
-            "ORDER BY created_at DESC LIMIT 5"
-        ).fetchall()
-        if recent:
-            lines.append("\n**最近新增：**")
-            for r in recent:
-                lines.append(f"  [{r['type']}] {r['title']}")
-
-        # ── Brain 版本 ────────────────────────────────────────
+        """產生 Project Brain 的整體摘要（v4.0 彩色版）"""
         from core.brain import __version__
-        lines.append(f"\n_Project Brain v{__version__}_")
+        from core.brain.status_renderer import render_status
+        import os
 
-        return "\n".join(lines)
+        graphiti_url = os.environ.get("GRAPHITI_URL", "redis://localhost:6379")
+
+        return render_status(
+            graph        = self.graph,
+            brain_dir    = self.graph.db_path.parent,
+            graphiti_url = graphiti_url,
+            version      = __version__,
+        )
