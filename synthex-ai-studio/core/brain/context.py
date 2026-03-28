@@ -183,27 +183,90 @@ class ContextEngineer:
         return budget
 
     def summarize_brain(self) -> str:
-        """產生 Project Brain 的整體摘要（用於展示）"""
-        stats = self.graph.stats()
-        lines = [
-            "## Project Brain 知識庫統計",
-            "",
-            f"- 總知識節點：{stats['nodes']} 個",
-            f"- 總關係連結：{stats['edges']} 條",
-            "",
-            "節點分類：",
-        ]
-        for t, count in stats.get("by_type", {}).items():
-            lines.append(f"  - {t}：{count} 個")
+        """產生 Project Brain 的整體摘要（v4.0 完整版）"""
+        from datetime import datetime, timezone
 
-        # 最近新增的知識
+        stats  = self.graph.stats()
+        lines  = ["## Project Brain 知識庫統計", ""]
+
+        # ── L3 知識圖譜 ──────────────────────────────────────
+        lines.append(f"**L3 知識圖譜（SQLite）**")
+        lines.append(f"  節點：{stats['nodes']} 個 | 關係：{stats['edges']} 條")
+
+        by_type = stats.get("by_type", {})
+        if by_type:
+            lines.append("  分類：" + "、".join(
+                f"{t} {c}" for t, c in by_type.items()
+            ))
+
+        # ── L2 Graphiti 狀態 ─────────────────────────────────
+        try:
+            from .graphiti_adapter import GraphitiAdapter
+            # 只做狀態探測，不初始化完整 adapter
+            adapter_status = GraphitiAdapter(
+                brain_dir  = self.graph.db_path.parent,
+                agent_name = "status_check",
+            ).status()
+            graphiti_ok = adapter_status.get("graphiti_available", False)
+        except Exception:
+            graphiti_ok = False
+
+        lines.append(f"**L2 Graphiti（時序圖）**")
+        if graphiti_ok:
+            lines.append("  ✓ 已連接 bolt://localhost:7687")
+        else:
+            lines.append("  ✗ 未連接（自動降級到 SQLite 時序圖）")
+            lines.append("    啟用：docker run -d -p 6379:6379 falkordb/falkordb")
+
+        # ── L1 Memory Tool 狀態 ──────────────────────────────
+        lines.append(f"**L1 工作記憶（Memory Tool）**")
+        try:
+            from .memory_tool import BrainMemoryBackend, list_available_sessions
+            backend  = BrainMemoryBackend(
+                brain_dir  = self.graph.db_path.parent,
+                agent_name = "status_check",
+            )
+            mem_summary = backend.session_summary()
+            total_mems  = mem_summary.get("total_memories", 0)
+            sessions    = list_available_sessions(self.graph.db_path.parent)
+            lines.append(f"  工作記憶：{total_mems} 筆 | 可恢復 session：{len(sessions)} 個")
+        except Exception:
+            lines.append("  ✓ 可用（尚未初始化工作記憶）")
+
+        # ── 驗證 / 蒸餾狀態（v4.0）──────────────────────────
+        distilled_dir = self.graph.db_path.parent / "distilled"
+        if distilled_dir.exists():
+            distilled_files = list(distilled_dir.glob("*"))
+            if distilled_files:
+                lines.append(f"**知識蒸餾**  ✓ {len(distilled_files)} 個輸出檔案")
+
+        validation_db = self.graph.db_path.parent / "validation_log.db"
+        if validation_db.exists():
+            try:
+                import sqlite3
+                conn = sqlite3.connect(str(validation_db))
+                last = conn.execute(
+                    "SELECT run_at, total_checked FROM validation_runs "
+                    "ORDER BY run_at DESC LIMIT 1"
+                ).fetchone()
+                conn.close()
+                if last:
+                    lines.append(f"**知識驗證**  最近一次：{last[0][:10]}，驗證 {last[1]} 筆")
+            except Exception:
+                pass
+
+        # ── 最近新增知識 ──────────────────────────────────────
         recent = self.graph._conn.execute(
-            "SELECT type, title, created_at FROM nodes "
+            "SELECT type, title FROM nodes "
             "ORDER BY created_at DESC LIMIT 5"
         ).fetchall()
         if recent:
-            lines.append("\n最近新增：")
+            lines.append("\n**最近新增：**")
             for r in recent:
-                lines.append(f"  - [{r['type']}] {r['title']}")
+                lines.append(f"  [{r['type']}] {r['title']}")
+
+        # ── Brain 版本 ────────────────────────────────────────
+        from core.brain import __version__
+        lines.append(f"\n_Project Brain v{__version__}_")
 
         return "\n".join(lines)

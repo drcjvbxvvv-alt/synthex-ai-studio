@@ -234,40 +234,69 @@ class ProjectBrain:
         # .gitignore
         self._setup_gitignore()
 
-        # 初始掃描（如果有 git 歷史）
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--git-dir"],
-                cwd=str(self.workdir),
-                capture_output=True
-            )
-            has_git = result.returncode == 0
-        except FileNotFoundError:
-            has_git = False
+        # ── 偵測 git 狀態（不呼叫 API，只看 commit 數量）──────
+        has_git      = False
+        commit_count = 0
+        has_api_key  = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
-        if has_git:
-            # 快速掃描最近 20 次 commit
-            results = self.extractor.from_git_history(limit=20)
-            learned = 0
-            for r in results:
-                for chunk in r.get("knowledge_chunks", []):
-                    self._store_chunk(chunk, r.get("_meta", {}))
-                    learned += 1
+        try:
+            chk = subprocess.run(
+                ["git", "rev-parse", "--git-dir"],
+                cwd=str(self.workdir), capture_output=True
+            )
+            if chk.returncode == 0:
+                has_git = True
+                log = subprocess.run(
+                    ["git", "rev-list", "--count", "HEAD"],
+                    cwd=str(self.workdir), capture_output=True, text=True
+                )
+                if log.returncode == 0:
+                    commit_count = int(log.stdout.strip() or "0")
+        except (FileNotFoundError, ValueError):
+            pass
+
+        # 若已設定 API key + 有 commit → 快速初始掃描
+        learned = 0
+        if has_git and has_api_key and commit_count > 0:
+            try:
+                results = self.extractor.from_git_history(limit=20)
+                for r in results:
+                    for chunk in r.get("knowledge_chunks", []):
+                        self._store_chunk(chunk, r.get("_meta", {}))
+                        learned += 1
+            except Exception:
+                pass
+
+        # ── 組裝輸出 ─────────────────────────────────────────
+        if has_git and commit_count > 0:
+            if has_api_key:
+                git_tip = f"  • Git 歷史掃描：已學習 {learned} 筆知識"
+            else:
+                _tip = ""
+                _tip += "  偵測到 " + str(commit_count) + " 個 commit，但需要 API key 提取知識\n"
+                _tip += "  請設定後執行：\n"
+                _tip += "    export ANTHROPIC_API_KEY='sk-ant-...'\n"
+                _tip += "    python synthex.py brain scan --workdir " + str(self.workdir)
+                git_tip = _tip
+        elif has_git:
+            git_tip = "  • Git repo 已偵測（尚無 commit，提交後自動學習）"
+        else:
+            git_tip = "  • 非 git 目錄，請用 brain add 手動加入知識"
 
         return f"""
 ✅ Project Brain 初始化完成
 
 專案：{name}
 目錄：{self.brain_dir}
-功能：
-  • Git Hook 已設定（每次 commit 自動學習）
-  • 知識圖譜已建立
+狀態：
+  • 知識圖譜 DB 已建立（knowledge_graph.db）
   • 設定檔：{self.brain_dir / self.CONFIG_FILE}
+  • Git Hook 已設定（每次 commit 自動學習）
+{git_tip}
 
-使用方式：
-  synthex brain context "你的任務"   → 取得 Context 注入
-  synthex brain scan                → 深度掃描（舊專案）
-  synthex brain status              → 查看知識庫狀態
+下一步：
+  python synthex.py brain scan   --workdir {self.workdir}
+  python synthex.py brain status --workdir {self.workdir}
 """
 
     def scan(self, verbose: bool = True) -> str:

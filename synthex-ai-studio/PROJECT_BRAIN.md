@@ -1264,7 +1264,7 @@ brain._budget.total_cost_usd        # 總成本（美元）
 - ✅ `ProjectBrain.get_context()` 升級 — 三層聚合（router 已初始化時）
 - ✅ 110 個 unit tests 全部通過
 
-### v4.0（完成，2026-03-28）
+### v4.0（規劃中）
 
 - ✅ 知識圖譜視覺化 Web UI（D3.js，節點衰減顏色渲染，即時圖譜瀏覽）
 - ✅ Agent 自主知識驗證（AI 定期確認 L3 知識是否仍然準確，自動更新信心）

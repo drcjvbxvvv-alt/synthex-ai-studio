@@ -165,7 +165,8 @@ docker run -d -p 6379:6379 --name falkordb falkordb/falkordb
 
 # 驗證連線
 python synthex.py brain status
-# L2 Graphiti: ✓ 已連接 bolt://localhost:7687
+# **L2 Graphiti（時序圖）**
+#   ✓ 已連接 bolt://localhost:7687
 ```
 
 不安裝 Graphiti 時，系統自動降級到 SQLite 時序圖（v1.1），功能完整。
