@@ -55,29 +55,55 @@ EXTRACTION_PROMPT = """
 
 
 class KnowledgeExtractor:
-    """AI 驅動的知識提取器"""
+    """
+    AI 驅動的知識提取器
+
+    支援多種 LLM 後端（透過環境變數設定）：
+      BRAIN_LLM_PROVIDER=anthropic  → Claude（預設，需要 ANTHROPIC_API_KEY）
+      BRAIN_LLM_PROVIDER=openai     → 任何 OpenAI 相容 API（包括 Ollama、LM Studio）
+        BRAIN_LLM_BASE_URL=http://localhost:11434/v1  → Ollama
+        BRAIN_LLM_BASE_URL=http://localhost:1234/v1   → LM Studio
+        BRAIN_LLM_MODEL=llama3.1:8b                  → 本地模型名稱
+    """
 
     def __init__(self, workdir: str):
-        self.workdir = Path(workdir)
-        self.client  = anthropic.Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY")
-        )
-        # 用便宜的 Sonnet 做提取（量大但邏輯不複雜）
-        self.model = _DEFAULT_MODEL
+        self.workdir  = Path(workdir)
+        self.provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+        self.model    = os.environ.get("BRAIN_LLM_MODEL", _DEFAULT_MODEL)
+
+        if self.provider == "openai":
+            # OpenAI 相容（Ollama、LM Studio、本地 API）
+            from openai import OpenAI
+            base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
+            api_key  = os.environ.get("OPENAI_API_KEY", "ollama")  # Ollama 不需要真實 key
+            self.client = OpenAI(base_url=base_url, api_key=api_key)
+        else:
+            # Anthropic（預設）
+            self.client = anthropic.Anthropic(
+                api_key=os.environ.get("ANTHROPIC_API_KEY")
+            )
 
     def _call(self, content: str, max_tokens: int = 1000) -> dict:
-        """呼叫 Claude API 提取知識"""
+        """呼叫 LLM API 提取知識（支援 Anthropic / OpenAI 相容格式）"""
+        prompt = EXTRACTION_PROMPT + "\n\n---\n\n" + content[:4000]
         try:
-            resp = self.client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{
-                    "role": "user",
-                    "content": EXTRACTION_PROMPT + "\n\n---\n\n" + content[:4000]
-                }]
-            )
-            text = resp.content[0].text
-            # 清理可能的 markdown 包裹
+            if self.provider == "openai":
+                # OpenAI 相容格式（Ollama、LM Studio）
+                resp = self.client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=max_tokens,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                text = resp.choices[0].message.content or ""
+            else:
+                # Anthropic 格式
+                resp = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=max_tokens,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                text = resp.content[0].text
+
             text = re.sub(r"```json\n?", "", text)
             text = re.sub(r"```\n?",     "", text)
             return json.loads(text.strip())

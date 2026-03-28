@@ -79,12 +79,24 @@ def cmd_scan(args):
     import os
     wd = _workdir(args)
 
-    # 前置檢查
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        _err(f"缺少 ANTHROPIC_API_KEY — scan 需要 AI 分析 git 歷史")
-        print(f"   {D}export ANTHROPIC_API_KEY='sk-ant-...'{R}")
-        return
+    # 前置檢查：確認有 LLM 可用
+    provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+    if provider == "openai":
+        # 本地 LLM 模式（Ollama / LM Studio）
+        base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
+        model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.1:8b")
+        _info(f"使用本地 LLM：{C}{model}{R}  {GR}({base_url}){R}")
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            _err("缺少 ANTHROPIC_API_KEY — scan 需要 AI 分析 git 歷史")
+            print(f"   {D}export ANTHROPIC_API_KEY='sk-ant-...'{R}")
+            print()
+            print(f"   {B}或改用本地 LLM（免費，需先啟動 Ollama）：{R}")
+            print(f"   {GR}export BRAIN_LLM_PROVIDER=openai{R}")
+            print(f"   {GR}export BRAIN_LLM_BASE_URL=http://localhost:11434/v1{R}")
+            print(f"   {GR}export BRAIN_LLM_MODEL=llama3.1:8b{R}")
+            return
 
     git_dir = Path(wd) / ".git"
     if not git_dir.exists():
@@ -460,8 +472,56 @@ def _now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
+
+def _load_dotenv():
+    """
+    從 .env 檔案載入環境變數。
+
+    搜尋順序：
+      1. 當前目錄的 .env
+      2. $BRAIN_WORKDIR/.env（若已設定）
+      3. ~/.brain/.env（全域設定）
+
+    支援的格式：
+      ANTHROPIC_API_KEY=sk-ant-...
+      BRAIN_LLM_PROVIDER=openai
+      BRAIN_LLM_BASE_URL=http://localhost:11434/v1
+      BRAIN_LLM_MODEL=llama3.1:8b
+      GRAPHITI_URL=redis://localhost:6379
+      BRAIN_WORKDIR=/your/project
+
+    已有環境變數的不覆蓋（export 的值優先）。
+    """
+    import os
+    from pathlib import Path
+
+    candidates = [
+        Path.cwd() / ".env",
+        Path(os.environ.get("BRAIN_WORKDIR", "")) / ".env" if os.environ.get("BRAIN_WORKDIR") else None,
+        Path.home() / ".brain" / ".env",
+    ]
+
+    for env_path in candidates:
+        if env_path and env_path.exists():
+            try:
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, val = line.partition("=")
+                    key = key.strip()
+                    val = val.strip().strip(chr(34)).strip(chr(39))  # 移除引號
+                    if key and key not in os.environ:  # 不覆蓋已有值
+                        os.environ[key] = val
+            except Exception:
+                pass
+            break  # 找到第一個就停止
+
 def main():
     import argparse
+
+    # ── .env 檔案支援（自動載入當前目錄或 --workdir 指定目錄的 .env）──────
+    _load_dotenv()
 
     parser = argparse.ArgumentParser(
         prog='brain',
