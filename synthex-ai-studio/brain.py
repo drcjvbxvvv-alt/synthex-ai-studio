@@ -76,14 +76,69 @@ def cmd_add(args):
 
 def cmd_scan(args):
     """考古掃描：從 git 歷史提取所有知識（呼叫 AI API）"""
+    import os
     wd = _workdir(args)
+
+    # 前置檢查
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        _err(f"缺少 ANTHROPIC_API_KEY — scan 需要 AI 分析 git 歷史")
+        print(f"   {D}export ANTHROPIC_API_KEY='sk-ant-...'{R}")
+        return
+
+    git_dir = Path(wd) / ".git"
+    if not git_dir.exists():
+        _err(f"這不是 git 專案（找不到 .git 目錄）")
+        print(f"   {D}請先執行：cd {wd} && git init && git add . && git commit -m 'init'{R}")
+        print(f"   {D}或改用手動加入：brain add --title ... --kind Pitfall{R}")
+        return
+
+    # 確認有 commit
+    import subprocess
+    try:
+        log = subprocess.check_output(
+            ["git", "log", "--oneline", "-5"], cwd=wd,
+            stderr=subprocess.DEVNULL, text=True
+        ).strip()
+        if not log:
+            _err("git 倉庫沒有任何 commit，無法掃描")
+            print(f"   {D}請先 git commit 後再執行 brain scan{R}")
+            print(f"   {D}或改用：brain add --title ... --kind Pitfall{R}")
+            return
+        commit_count = len(log.split("\n"))
+        _info(f"找到 git 歷史（最近 {commit_count} 筆預覽）：")
+        for line in log.split("\n")[:3]:
+            print(f"   {GR}{line}{R}")
+        if commit_count >= 3:
+            print(f"   {GR}...{R}")
+    except Exception:
+        _err("無法讀取 git 歷史")
+        return
+
     _info(f"開始考古掃描：{C}{wd}{R}")
-    _info(f"{D}分析 git 歷史，視 commit 數量需要數分鐘...{R}")
+    _info(f"{D}AI 分析每個 commit，視數量需要數分鐘...{R}")
     b = _brain(wd)
     report = b.scan(verbose=True)
     report_path = Path(wd) / '.brain' / 'SCAN_REPORT.md'
     _ok(f"考古報告：{C}{report_path}{R}")
-    print(f"\n{GR}{report[:800]}{R}")
+
+    # 掃描後診斷
+    stats = b.graph.stats()
+    by_type = stats.get("by_type", {})
+    k_nodes = sum(by_type.get(t, 0) for t in ("Pitfall", "Decision", "Rule", "ADR"))
+    if k_nodes == 0:
+        print(f"\n{Y}⚠{R}  掃描完成，但沒有提取到知識")
+        print(f"   可能原因：")
+        print(f"   {D}① commit message 太簡單（只有 'fix', 'update', 'style' 等）{R}")
+        print(f"   {D}② diff 太小，AI 無法從中識別出決策或踩坑{R}")
+        print(f"   {D}③ 專案剛啟動，還沒有值得記錄的架構決策{R}")
+        print(f"\n   {B}建議：手動加入已知的重要知識{R}")
+        print(f"   {GR}brain add --title '踩坑標題' --content '...' --kind Pitfall{R}")
+        print(f"   {GR}brain add --title '決策標題' --content '...' --kind Decision{R}")
+    else:
+        print(f"\n{G}✓{R}  提取到 {W}{B}{k_nodes}{R} 個知識節點（Pitfall/Decision/Rule/ADR）")
+        print(f"   執行 {D}brain status{R} 查看完整統計")
+    print(f"\n{GR}{report[:600]}{R}")
 
 def cmd_learn(args):
     """從指定 git commit 學習知識"""
@@ -106,7 +161,30 @@ def cmd_context(args):
         print(ctx)
         print(f"{GR}{'─'*50}{R}")
     else:
-        print(f"{Y}⚠{R}  知識庫為空，請先執行：{D}brain scan{R}")
+        # 診斷：區分「真的空」和「只有 Component，沒有 Pitfall/Decision/Rule/ADR」
+        stats = b.graph.stats()
+        total = stats.get('nodes', 0)
+        by_type = stats.get('by_type', {})
+        knowledge_types = [t for t in ('Pitfall','Decision','Rule','ADR') if by_type.get(t,0) > 0]
+
+        if total == 0:
+            print(f"{Y}⚠{R}  知識庫為空（共 0 個節點）")
+            print(f"   先執行：{D}brain scan --workdir {wd}{R}")
+        elif not knowledge_types:
+            comp_count = by_type.get('Component', 0)
+            print(f"{Y}⚠{R}  知識庫只有 {W}{comp_count}{R} 個目錄組件，尚無可注入的知識")
+            print(f"   {D}Context 注入需要：Pitfall / Decision / Rule / ADR 類型的節點{R}")
+            print()
+            print(f"   {B}方案 A（推薦）{R}：讓 AI 掃描 git 歷史，自動提取知識")
+            print(f"   {GR}  brain scan --workdir {wd}{R}")
+            print()
+            print(f"   {B}方案 B{R}：手動加入你已知道的踩坑和決策")
+            print(f"   {GR}  brain add --title [標題] --content [內容] --kind Pitfall{R}")
+            print(f"   {GR}  brain add --title [標題] --content [內容] --kind Decision{R}")
+        else:
+            print(f"{Y}⚠{R}  找不到「{task}」相關的知識")
+            print(f"   知識庫現有：{', '.join(f'{t} {by_type[t]}' for t in knowledge_types)}")
+            print(f"   試試更換關鍵字，或用 {D}brain add{R} 手動加入相關知識")
 
 def cmd_distill(args):
     """知識蒸餾：產生可給任何 LLM 使用的知識摘要"""
