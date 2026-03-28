@@ -1283,6 +1283,45 @@ brain._budget.total_cost_usd        # 總成本（美元）
 
 Project Brain 的知識不是鎖在 SYNTHEX 裡的。透過蒸餾和 API，任何 LLM 工具都能使用。
 
+### 調用架構總覽
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  LLM 工具層                                                           │
+│  Cursor    Claude Code    ChatGPT/Gemini    Ollama/LM Studio    SDK  │
+└──────┬──────────┬─────────────┬─────────────────┬──────────────┬───┘
+       │ .cursorr │ CLAUDE.md   │ System Prompt   │              │ OpenAI
+       │ ules(靜) │ / MCP(即時) │ (手動複製貼上)  │              │ base_url
+       ↓          ↓             ↓                 ↓              ↓
+┌──────────────────────────────────────────────────────────────────────┐
+│  接口層                                                               │
+│  靜態文件        MCP Server      System Prompt    brain serve API    │
+│  export-rules   4個 MCP Tools   手動一次性       :7891 即時查詢     │
+└──────────────────────────────────────────────────────────────────────┘
+       │ L3            │ L2+L3        │ L3              │ L1+L2+L3
+       ↓               ↓              ↓                 ↓
+┌──────────────────────────────────────────────────────────────────────┐
+│  Project Brain 三層記憶系統                                           │
+│                                                                       │
+│  L1 工作記憶          L2 時序記憶          L3 語義記憶                │
+│  Anthropic Memory    Graphiti + FalkorDB  SQLite 知識圖譜            │
+│  Tool + SQLite WAL   redis://...6379      Decision/Pitfall/Rule      │
+│  session 即時         雙時態模型           ADR/Component              │
+│                                                                       │
+│              BrainRouter：三層聚合 → Context 注入                    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+#### 各工具讀取哪些層？
+
+| LLM 工具 | 接口 | 讀取層 | 更新方式 |
+|----------|------|--------|---------|
+| **Cursor** | `.cursorrules` | L3 蒸餾 | 手動執行 `export-rules`，知識更新後需重跑 |
+| **Claude Code** | `CLAUDE.md` + MCP | L3 蒸餾 + L2 即時 | CLAUDE.md 手動更新，MCP 每次對話即時查詢 |
+| **ChatGPT / Gemini** | System Prompt | L3 蒸餾 | 手動複製貼上，定期重新產生 |
+| **Ollama / LM Studio** | `brain serve` | L3（`/v1/knowledge`）| Server 啟動後自動讀最新知識 |
+| **任何 OpenAI SDK** | `brain serve` | L1 + L2 + L3 全層 | BrainRouter 三層聚合，每次請求即時 |
+
 ### 四種接入方式
 
 ```
@@ -1403,6 +1442,84 @@ python brain.py export-rules --target cursorrules  # 更新 Cursor
 python brain.py export-rules --target claude       # 更新 Claude Code
 # API Server 不需要更新，/v1/knowledge 每次都返回最新知識
 ```
+
+---
+
+### 如何確認 Brain 記憶有被調用？
+
+記憶有沒有真的被 LLM 讀到，需要主動驗證。以下四種方法從快到精準：
+
+#### 方法一：`brain context`（最快，秒出）
+
+```bash
+python brain.py context "實作支付退款功能" --workdir /your/project
+
+# 有輸出 → L3 有相關知識，且 BrainRouter 認為值得注入
+# 輸出空白 → 知識庫為空，或查詢關鍵字沒有命中，先執行 brain scan
+```
+
+#### 方法二：`brain status` 讀寫驗證
+
+```bash
+python brain.py status
+
+# 看這兩行：
+# L2 Graphiti（時序圖）：✓ 已連接 redis://localhost:6379
+# L1 讀寫驗證：✓ 通過 (create→view→delete)
+#
+# L2 ✓ = FalkorDB 已連接，時序查詢可用
+# L1 ✓ 通過 = Memory Tool 讀寫正常，工作記憶可使用
+```
+
+#### 方法三：`/v1/context` API 測試
+
+```bash
+# 啟動 brain serve
+python brain.py serve --port 7891
+
+# 查詢特定任務是否命中知識
+curl "http://localhost:7891/v1/context?q=JWT%20認證"
+# 回應：{"task":"JWT 認證","context":"...","found":true}
+#
+# found: true  → 知識庫有相關內容，會被注入
+# found: false → 查不到，試試更換關鍵字或先 brain scan
+```
+
+#### 方法四：`/v1/messages` 的 `knowledge_injected` 欄位
+
+```bash
+curl -X POST http://localhost:7891/v1/messages   -H "Content-Type: application/json"   -d '{"messages":[{"role":"user","content":"實作 Stripe 支付退款"}]}'
+
+# 回應：
+# {
+#   "messages": [...],
+#   "knowledge_injected": true,    ← 這次有注入知識
+#   "knowledge_chars": 843         ← 注入了 843 個字元
+# }
+```
+
+#### 方法五：放置「標記知識」來驗證
+
+```bash
+# 加一筆唯一識別的知識
+python brain.py add   --title "測試知識標記 BRAIN-TEST-2026"   --content "如果 AI 提到 BRAIN-TEST-2026，表示知識注入成功"   --kind Rule
+
+# 然後問 LLM（透過任何接口）：
+# "你知道 BRAIN-TEST-2026 嗎？"
+#
+# AI 能描述 = 知識注入成功
+# AI 不知道 = 接口設定有問題，重新確認接口配置
+```
+
+#### 驗證矩陣
+
+| 接口 | 驗證方式 | 預期結果 |
+|------|---------|---------|
+| `.cursorrules` | 問 Cursor「你知道 BRAIN-TEST-2026 嗎？」| 能描述該知識 |
+| `CLAUDE.md` | 問 Claude Code 同樣問題 | 能描述 |
+| `brain serve POST /v1/messages` | 看 `knowledge_injected` 欄位 | `true` |
+| `brain serve GET /v1/context` | 看 `found` 欄位 | `true` |
+| System Prompt | 直接問 ChatGPT/Gemini | 能描述 |
 
 ---
 

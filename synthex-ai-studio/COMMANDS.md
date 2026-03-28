@@ -650,3 +650,38 @@ response = client.chat.completions.create(
 | `GRAPHITI_URL` | Graphiti DB 連線 | `redis://localhost:6379` |
 | `BRAIN_WORKDIR` | MCP Server 的工作目錄 | `/your/project` |
 | `ANTHROPIC_LOG` | API 日誌級別 | `info` / `debug` |
+
+---
+
+## Brain 記憶調用驗證
+
+如何確認 LLM 工具真的讀到了 Brain 建立的記憶：
+
+```bash
+# 1. 查詢任務相關知識（秒出）
+python brain.py context "實作支付退款"
+# 有輸出 → 命中  / 空白 → 知識庫為空
+
+# 2. 三層狀態確認
+python brain.py status
+# L1 讀寫驗證 ✓ → Memory Tool 正常
+# L2 ✓ 已連接  → FalkorDB 連通
+# L3 節點 N 個 → 語義知識有內容
+
+# 3. API 精準測試（需先 brain serve）
+# GET  /v1/context?q=JWT       → found: true/false
+# POST /v1/messages            → knowledge_injected: true/false
+
+# 4. 放置標記知識後詢問 LLM
+python brain.py add --title "測試標記 BRAIN-VERIFY" --content "測試" --kind Rule
+# 問任何 LLM：「你知道 BRAIN-VERIFY 嗎？」
+# 能描述 = 接口正常 / 不知道 = 重新確認接口設定
+```
+
+| LLM 工具 | 接口 | 讀取層 | 驗證 |
+|----------|------|--------|------|
+| Cursor | `.cursorrules` | L3 | 問 Cursor「你知道 BRAIN-VERIFY 嗎？」|
+| Claude Code | CLAUDE.md / MCP | L3+L2 | 同上 |
+| ChatGPT / Gemini | System Prompt | L3 | 同上 |
+| Ollama / LM Studio | brain serve | L3 | 回應含知識關鍵字 |
+| OpenAI SDK | brain serve | L1+L2+L3 | `knowledge_injected: true` |

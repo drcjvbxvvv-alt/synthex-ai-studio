@@ -674,3 +674,38 @@ _ensure_client() → 完整 Graphiti 初始化（懶初始化）
 
 **139/139 通過（8.00s）**
 
+
+## v0.27.0（第二十七輪 — LLM 調用流程圖 + 驗證指南，2026-03-28）
+
+### 新增
+
+**互動式流程圖（對話中）**：
+- LLM 工具 → 接口層 → 三層記憶的完整調用路徑圖
+- 可點擊每個 LLM 工具，高亮對應的接口和記憶層
+- 顏色編碼：靜態接口（紫）/ 即時接口（琥珀）/ 三層全取（藍）
+
+**文件更新：**
+
+`PROJECT_BRAIN.md`（1,889 行，+78 行）
+- 新增「調用架構總覽」ASCII 架構圖
+- 各 LLM 工具讀取哪些記憶層的對照表
+- 「如何確認 Brain 記憶有被調用？」完整章節
+  - 方法一：`brain context`（最快，秒出）
+  - 方法二：`brain status` L1/L2 讀寫驗證
+  - 方法三：`/v1/context` API 的 `found` 欄位
+  - 方法四：`/v1/messages` 的 `knowledge_injected` 欄位
+  - 方法五：放置標記知識後詢問 LLM
+
+`COMMANDS.md`（687 行，+35 行）
+- 新增「Brain 記憶調用驗證」章節
+- 各 LLM 工具驗證方法對照表
+
+### 核心知識摘要
+
+**各 LLM 工具讀取哪些記憶層：**
+- Cursor / ChatGPT / Gemini：L3 蒸餾（靜態，需手動更新）
+- Claude Code：L3 蒸餾 + L2 時序（雙路徑）
+- Ollama / LM Studio：L3（透過 /v1/knowledge）
+- 任何 OpenAI SDK：L1+L2+L3 全層（BrainRouter 三層聚合）
+
+**139/139 測試通過**
