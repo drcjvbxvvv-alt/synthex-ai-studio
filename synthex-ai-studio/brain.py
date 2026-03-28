@@ -25,10 +25,18 @@ R="\033[0m"; B="\033[1m"; D="\033[2m"
 G="\033[92m"; Y="\033[93m"; RE="\033[91m"
 C="\033[96m"; P="\033[95m"; GR="\033[90m"; W="\033[97m"
 
-BANNER = f"""{P}{B}
-  🧠  Project Brain  {GR}v4.0.0  ·  獨立記憶系統{R}
-  {D}不依賴 SYNTHEX AI STUDIO，可搭配任何 LLM 使用{R}
-"""
+def _banner() -> str:
+    """酷炫漸層色標題"""
+    # ANSI 256色模擬漸層：藍 → 紫 → 青
+    _c = lambda n: f"\033[38;5;{n}m"
+    R = "\033[0m"; B = "\033[1m"; D = "\033[2m"
+    # "Project Brain" 字元逐一上色（75→99→129→171→213 藍→紫）
+    t = "Project Brain — AI 記憶系統"
+    ramp = [75,81,87,93,99,105,111,117,123,129,135,141,147,153,159,165,171,177,183,189,195,201,207,213,219]
+    colored = ""
+    for i, ch in enumerate(t):
+        colored += _c(ramp[min(i, len(ramp)-1)]) + ch
+    return f"{B}{colored}{R}\n  {D}獨立 AI 記憶系統 · 可搭配任何 LLM{R}"
 
 def _workdir(args) -> str:
     import argparse
@@ -628,19 +636,16 @@ def _settings_block() -> str:
     workdir = os.environ.get("BRAIN_WORKDIR", "（當前目錄）")
     w = 54
     lines = [
-        f"{P}{B}",
-        f"  🧠  Project Brain  {GR}v4.0.0  ·  獨立記憶系統{R}",
-        f"  {D}不依賴 SYNTHEX AI STUDIO，可搭配任何 LLM 使用{R}",
-        f"",
-        f"{B}目前設定{R}",
+        f'  🧠  {_banner()}',
+        f'',
+        f'{B}目前設定{R}',
         f"{GR}{'═' * w}{R}",
-        f"  LLM：{llm_tag}   工作目錄：{GR}{workdir}{R}",
+        f'  LLM：{llm_tag}   工作目錄：{GR}{workdir}{R}',
         f"{GR}{'─' * w}{R}",
-        f"  {D}python brain.py <command> --help   命令詳細說明{R}",
-        f"  {D}python brain.py --guide            快速入門 + 環境變數 + LLM 整合{R}",
+        f'  {D}python brain.py <command> --help   命令詳細說明{R}',
+        f'  {D}python brain.py --guide            快速入門 + 環境變數 + LLM 整合{R}',
     ]
-    return "\n".join(lines)
-
+    return chr(10).join(lines)
 
 def _show_guide():
     """--guide：完整使用指南"""
