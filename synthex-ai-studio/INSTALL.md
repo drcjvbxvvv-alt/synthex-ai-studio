@@ -163,10 +163,20 @@ pip install graphiti-core falkordb
 # 啟動 FalkorDB（需要 Docker）
 docker run -d -p 6379:6379 --name falkordb falkordb/falkordb
 
+# 安裝 Python 驅動（FalkorDB 用 Redis 協議，不是 Bolt）
+pip install graphiti-core falkordb
+
+# 設定連線（選擇一種方式）
+# 方式 A：環境變數（推薦，一次設好永遠有效）
+export GRAPHITI_URL=redis://localhost:6379
+
+# 方式 B：每次指令帶參數
+# python synthex.py brain status --graphiti-url redis://localhost:6379
+
 # 驗證連線
 python synthex.py brain status
 # **L2 Graphiti（時序圖）**
-#   ✓ 已連接 bolt://localhost:7687
+#   ✓ 已連接 redis://localhost:6379
 ```
 
 不安裝 Graphiti 時，系統自動降級到 SQLite 時序圖（v1.1），功能完整。
@@ -217,7 +227,7 @@ cp ~/tools/synthex-ai-studio/CLAUDE.md ~/projects/my-app/
       "cwd": "/path/to/synthex-ai-studio",
       "env": {
         "BRAIN_WORKDIR": "/your/project",
-        "GRAPHITI_URL": "bolt://localhost:7687"
+        "GRAPHITI_URL": "redis://localhost:6379"
       }
     }
   }

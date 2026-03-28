@@ -63,10 +63,14 @@ class ProjectBrain:
     BRAIN_DIR   = ".brain"
     CONFIG_FILE = "config.json"
 
-    def __init__(self, workdir: str, graphiti_url: str = "bolt://localhost:7687"):
+    def __init__(self, workdir: str, graphiti_url: str = ""):
         self.workdir      = Path(workdir).resolve()
         self.brain_dir    = self.workdir / self.BRAIN_DIR
-        self._graphiti_url = graphiti_url
+        # 優先順序：參數 > 環境變數 GRAPHITI_URL > 預設 redis://localhost:6379
+        import os as _os
+        self._graphiti_url = (graphiti_url
+                             or _os.environ.get("GRAPHITI_URL", "")
+                             or "redis://localhost:6379")
 
         # 延遲初始化（只有呼叫 init/scan 後才建立）
         self._graph     = None

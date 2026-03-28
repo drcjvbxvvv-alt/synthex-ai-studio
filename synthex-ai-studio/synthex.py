@@ -728,7 +728,8 @@ def cmd_brain_init(args):
     """初始化 Project Brain（新專案）"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    brain   = ProjectBrain(workdir)
+    gurl    = getattr(args, "graphiti_url", "") or ""
+    brain   = ProjectBrain(workdir, graphiti_url=gurl)
     name    = getattr(args, "name", None) or ""
     result  = brain.init(project_name=name)
     print(result)
@@ -1154,6 +1155,8 @@ def main():
     p.add_argument("--layers",        nargs="+",
                    default=["context","prompts","lora"])
     p.add_argument("--port",          type=int, default=7890)
+    p.add_argument("--graphiti-url",  default="",
+                   help="Graphiti DB URL（預設讀 GRAPHITI_URL 環境變數）")
 
     args = parser.parse_args()
 

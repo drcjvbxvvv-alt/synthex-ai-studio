@@ -475,7 +475,7 @@ docker run -p 6379:6379 falkordb/falkordb
 python synthex.py brain status
 # 輸出：
 # L1 Memory Tool:  ✓ SQLite 後端（0 個記憶文件）
-# L2 Graphiti:     ✓ 已連接 bolt://localhost:7687 (FalkorDB)
+# L2 Graphiti:     ✓ 已連接 redis://localhost:6379 (FalkorDB)
 # L3 Brain v2.0:   ✓ SQLite（0 個節點）
 
 # 3. 之後每次 git commit，三層知識自動積累
@@ -575,7 +575,7 @@ from core.brain import ProjectBrain, BrainRouter
 brain = ProjectBrain("/your/project")
 
 # 完整三層（含 L2 Graphiti）
-brain = ProjectBrain("/your/project", graphiti_url="bolt://localhost:7687")
+brain = ProjectBrain("/your/project", graphiti_url="redis://localhost:6379")
 
 # 取得 BrainRouter v3.0（懶初始化：第一次 access 才建立連線）
 router = brain.router
@@ -681,7 +681,7 @@ status = router.status()
 #   },
 #   "l2_episodic_memory": {
 #     "graphiti_available": True,
-#     "backend": "bolt://localhost:7687",
+#     "backend": "redis://localhost:6379",
 #     "has_fallback": True
 #   },
 #   "l3_semantic_memory": {
@@ -989,7 +989,7 @@ synthex brain status
 #   本 session 操作次數：28
 #
 # L2 情節記憶（Graphiti / FalkorDB）
-#   狀態：✓ 已連接 bolt://localhost:7687
+#   狀態：✓ 已連接 redis://localhost:6379
 #   後端：FalkorDB
 #
 # L3 語義記憶（Project Brain v2.0）
@@ -1264,7 +1264,7 @@ brain._budget.total_cost_usd        # 總成本（美元）
 - ✅ `ProjectBrain.get_context()` 升級 — 三層聚合（router 已初始化時）
 - ✅ 110 個 unit tests 全部通過
 
-### v4.0（規劃中）
+### v4.0（完成，2026-03-28）
 
 - ✅ 知識圖譜視覺化 Web UI（D3.js，節點衰減顏色渲染，即時圖譜瀏覽）
 - ✅ Agent 自主知識驗證（AI 定期確認 L3 知識是否仍然準確，自動更新信心）

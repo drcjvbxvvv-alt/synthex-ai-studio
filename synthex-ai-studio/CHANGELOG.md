@@ -270,7 +270,7 @@ Graphiti ✗ + Memory Tool ✗ → 純 L3（Project Brain v2.0，向後相容）
 **ProjectBrain 整合**
 - `engine.py` 新增 `router` property（懶初始化）
 - `get_context()` 升級：`_router` 已初始化時走三層聚合，否則降級到 v2.0
-- 建構子新增 `graphiti_url` 參數（`bolt://localhost:7687`）
+- 建構子新增 `graphiti_url` 參數（`redis://localhost:6379`）
 
 **brain/__init__.py 升級至 v3.0.0**
 

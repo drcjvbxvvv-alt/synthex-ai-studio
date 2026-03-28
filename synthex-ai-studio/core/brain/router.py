@@ -148,7 +148,7 @@ class BrainRouter:
         self,
         brain_dir:   Path,
         l3_brain:    Any  = None,    # ProjectBrain 實例
-        graphiti_url: str = "bolt://localhost:7687",
+        graphiti_url: str = "redis://localhost:6379",
         agent_name:  str  = "synthex",
     ):
         self.brain_dir  = Path(brain_dir)

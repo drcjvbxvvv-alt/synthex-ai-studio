@@ -525,6 +525,6 @@ python -m core.evals compare --baseline abc12345 --current def67890
 | `ANTHROPIC_API_KEY` | API Key（必要）| `sk-ant-...` |
 | `SYNTHEX_WORKDIR` | 預設工作目錄 | `/home/user/projects` |
 | `SYNTHEX_BUDGET` | 預設預算上限 USD | `5.0` |
-| `GRAPHITI_URL` | Graphiti DB 連線 | `bolt://localhost:7687` |
+| `GRAPHITI_URL` | Graphiti DB 連線 | `redis://localhost:6379` |
 | `BRAIN_WORKDIR` | MCP Server 的工作目錄 | `/your/project` |
 | `ANTHROPIC_LOG` | API 日誌級別 | `info` / `debug` |

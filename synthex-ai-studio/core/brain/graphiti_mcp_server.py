@@ -34,7 +34,7 @@ MCP Tools 提供：
         "args": ["-m", "core.brain.graphiti_mcp_server"],
         "env": {
           "BRAIN_WORKDIR": "/your/project",
-          "GRAPHITI_URL": "bolt://localhost:7687"
+          "GRAPHITI_URL": "redis://localhost:6379"
         }
       }
     }
@@ -104,7 +104,7 @@ def tool_graphiti_search(
     top_k:        int  = 5,
     current_only: bool = True,
     workdir:      str  = ".",
-    graphiti_url: str  = "bolt://localhost:7687",
+    graphiti_url: str  = "redis://localhost:6379",
 ) -> str:
     """
     混合搜尋 L2 情節記憶（語義 + BM25 + 圖遍歷）。
@@ -165,7 +165,7 @@ def tool_graphiti_add_episode(
     source:         str = "mcp_user",
     reference_time: str | None = None,
     workdir:        str = ".",
-    graphiti_url:   str = "bolt://localhost:7687",
+    graphiti_url:   str = "redis://localhost:6379",
 ) -> str:
     """
     把任何資訊加入 L2 時序知識圖譜。
@@ -216,7 +216,7 @@ def tool_graphiti_adr(
     context:    str = "",
     supersedes: str = "",
     workdir:    str = ".",
-    graphiti_url: str = "bolt://localhost:7687",
+    graphiti_url: str = "redis://localhost:6379",
 ) -> str:
     """
     快速記錄 ADR（架構決策記錄）到 L2 時序圖。
@@ -269,7 +269,7 @@ def tool_graphiti_adr(
 
 def tool_graphiti_status(
     workdir:      str = ".",
-    graphiti_url: str = "bolt://localhost:7687",
+    graphiti_url: str = "redis://localhost:6379",
 ) -> str:
     """
     查詢 Graphiti L2 連線狀態和基本統計。
@@ -308,7 +308,7 @@ def run_mcp_server() -> None:
     import sys
 
     workdir      = os.environ.get("BRAIN_WORKDIR", os.getcwd())
-    graphiti_url = os.environ.get("GRAPHITI_URL", "bolt://localhost:7687")
+    graphiti_url = os.environ.get("GRAPHITI_URL", "redis://localhost:6379")
 
     TOOLS = {
         "graphiti_search":      lambda p: tool_graphiti_search(
@@ -450,7 +450,7 @@ def run_mcp_server() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workdir",      default=os.getcwd())
-    parser.add_argument("--graphiti-url", default="bolt://localhost:7687")
+    parser.add_argument("--graphiti-url", default="redis://localhost:6379")
     args = parser.parse_args()
     os.environ.setdefault("BRAIN_WORKDIR", args.workdir)
     os.environ.setdefault("GRAPHITI_URL",  args.graphiti_url)

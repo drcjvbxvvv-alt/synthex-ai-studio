@@ -108,12 +108,16 @@ class GraphitiAdapter:
     def __init__(
         self,
         brain_dir:     Path,
-        db_url:        str  = "bolt://localhost:7687",  # Neo4j/FalkorDB
+        db_url:        str  = "",      # 空字串 → 讀環境變數，再 fallback 預設值
         fallback:      Any  = None,    # TemporalGraph 實例
         agent_name:    str  = "synthex",
     ):
         self.brain_dir  = Path(brain_dir)
-        self.db_url     = db_url
+        # 優先順序：參數 > 環境變數 GRAPHITI_URL > 預設 redis://localhost:6379
+        import os
+        self.db_url     = (db_url
+                          or os.environ.get("GRAPHITI_URL", "")
+                          or "redis://localhost:6379")
         self._fallback  = fallback    # TemporalGraph（降級用）
         self.agent_name = agent_name
         self._client:   Optional[Any] = None
@@ -126,33 +130,98 @@ class GraphitiAdapter:
             self._available = self._try_connect()
         return self._available
 
+    def _parse_host_port(self) -> tuple[str, int]:
+        """從 db_url 解析 host 和 port"""
+        import re
+        m = re.search(r'[:/]([a-zA-Z0-9._-]+)[:/](\d+)', self.db_url)
+        host = m.group(1) if m else "localhost"
+        port = int(m.group(2)) if m else 6379
+        return host, port
+
+    def _is_falkordb_url(self) -> bool:
+        """判斷是否為 FalkorDB（Redis 協議）"""
+        url = self.db_url.lower()
+        return "falkordb" in url or "redis" in url or "6379" in url
+
     def _try_connect(self) -> bool:
-        """嘗試連接 Graphiti 後端（不拋例外）"""
+        """
+        連線探測（TCP 層）— 只確認端口是否可達。
+
+        設計決策：
+          不在此初始化完整 Graphiti client（避免觸發 OpenAI client 初始化）。
+          Graphiti 在 llm_client=None 時會嘗試建立 OpenAIClient()，
+          若 OPENAI_API_KEY 未設定就會失敗。
+          用戶使用 ANTHROPIC_API_KEY，所以 status check 只做 TCP 探測，
+          實際寫入/讀取時才在 _ensure_client() 用 AnthropicClient 初始化。
+        """
         if not _HAS_GRAPHITI:
             return False
+
+        import socket
+        host, port = self._parse_host_port()
         try:
-            # 嘗試建立連線（5 秒 timeout）
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(
-                asyncio.wait_for(self._init_client(), timeout=5.0)
-            )
-            loop.close()
-            logger.info("graphiti_connected | url=self.db_url")
+            sock = socket.create_connection((host, port), timeout=2.0)
+            sock.close()
+            logger.info("graphiti_tcp_ok | host=%s port=%s", host, port)
             return True
+        except (socket.timeout, ConnectionRefusedError, OSError) as e:
+            logger.info("graphiti_tcp_fail | reason=%s", str(e)[:80])
+            return False
+
+    def _ensure_client(self) -> bool:
+        """
+        確保 Graphiti client 已初始化（懶初始化，只在需要讀寫時呼叫）。
+        用 ANTHROPIC_API_KEY 作為 LLM，不需要 OPENAI_API_KEY。
+        """
+        if self._client is not None:
+            return True
+        if not self.available:      # TCP probe 先確認
+            return False
+        try:
+            import os
+            from graphiti_core import Graphiti
+            from graphiti_core.llm_client.anthropic_client import AnthropicClient
+            from graphiti_core.llm_client.config import LLMConfig
+
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                logger.warning("graphiti_no_anthropic_key: ANTHROPIC_API_KEY 未設定，L2 寫入功能停用")
+                return False
+
+            llm_config = LLMConfig(api_key=api_key, model="claude-haiku-4-5-20251001")
+            llm_client  = AnthropicClient(config=llm_config)
+
+            if self._is_falkordb_url():
+                from graphiti_core.driver.falkordb_driver import FalkorDriver
+                host, port = self._parse_host_port()
+                driver = FalkorDriver(host=host, port=port)
+                client = Graphiti(graph_driver=driver, llm_client=llm_client)
+            else:
+                client = Graphiti(uri=self.db_url, llm_client=llm_client)
+
+            # 建立索引（非同步，用 thread 安全執行）
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    lambda: asyncio.run(
+                        asyncio.wait_for(
+                            client.build_indices_and_constraints(), timeout=10.0
+                        )
+                    )
+                )
+                fut.result(timeout=12)
+
+            self._client = client
+            logger.info("graphiti_client_ready | url=%s", self.db_url)
+            return True
+
         except Exception as e:
-            logger.info("graphiti_unavailable | reason=str(e")
+            logger.warning("graphiti_client_init_failed: %s", str(e)[:120])
             return False
 
     async def _init_client(self) -> None:
-        from graphiti_core import Graphiti
-        import anthropic
-        import os
-        self._client = Graphiti(
-            uri      = self.db_url,
-            llm_client    = None,  # Graphiti 可用 OpenAI/Anthropic
-            embedder_client = None,
-        )
-        await self._client.build_indices_and_constraints()
+        """內部：建立完整 Graphiti client（保留向後相容）"""
+        _ = self._ensure_client()
 
     # ── 寫入操作 ──────────────────────────────────────────────
 
@@ -161,7 +230,7 @@ class GraphitiAdapter:
         將知識事件加入時序知識圖譜。
         Graphiti 自動：提取實體、建立關係、處理衝突。
         """
-        if not self.available:
+        if not self._ensure_client():
             return self._fallback_add(episode)
 
         try:

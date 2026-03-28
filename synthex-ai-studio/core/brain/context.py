@@ -202,21 +202,25 @@ class ContextEngineer:
         # ── L2 Graphiti 狀態 ─────────────────────────────────
         try:
             from .graphiti_adapter import GraphitiAdapter
-            # 只做狀態探測，不初始化完整 adapter
             adapter_status = GraphitiAdapter(
                 brain_dir  = self.graph.db_path.parent,
                 agent_name = "status_check",
             ).status()
-            graphiti_ok = adapter_status.get("graphiti_available", False)
+            graphiti_ok  = adapter_status.get("graphiti_available", False)
+            graphiti_url = adapter_status.get("backend", "")
         except Exception:
-            graphiti_ok = False
+            graphiti_ok  = False
+            graphiti_url = ""
 
         lines.append(f"**L2 Graphiti（時序圖）**")
         if graphiti_ok:
-            lines.append("  ✓ 已連接 bolt://localhost:7687")
+            lines.append(f"  ✓ 已連接 {graphiti_url}")
         else:
             lines.append("  ✗ 未連接（自動降級到 SQLite 時序圖）")
-            lines.append("    啟用：docker run -d -p 6379:6379 falkordb/falkordb")
+            lines.append("    啟用 FalkorDB：")
+            lines.append("      docker run -d -p 6379:6379 falkordb/falkordb")
+            lines.append("      pip install graphiti-core falkordb")
+            lines.append("    連線設定：GRAPHITI_URL=redis://localhost:6379")
 
         # ── L1 Memory Tool 狀態 ──────────────────────────────
         lines.append(f"**L1 工作記憶（Memory Tool）**")
