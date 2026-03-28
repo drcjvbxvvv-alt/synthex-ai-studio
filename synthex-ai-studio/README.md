@@ -225,49 +225,79 @@ python synthex.py qa_browser --url http://localhost:3000
 
 ## Project Brain 長期記憶
 
-Project Brain 是 SYNTHEX 最獨特的功能：**讓 AI 永遠記得你的專案**。
+Project Brain 是**獨立的 AI 記憶系統**，可以單獨使用，也可以與 SYNTHEX AI STUDIO 搭配。它讓任何 LLM（Claude、ChatGPT、Gemini、Ollama）都能永遠記得你的專案。
 
-### 快速開始
+### 兩種使用方式
+
+**方式 A：獨立 brain CLI（不需要 SYNTHEX）**
 
 ```bash
-# 新專案初始化（只需一次）
+# 用 brain.py 獨立操作（更簡短）
+python brain.py init    --workdir /your/project
+python brain.py status  --workdir /your/project
+python brain.py scan    --workdir /your/project
+python brain.py add     --title "Stripe Webhook 冪等" --content "..." --kind Pitfall
+
+# 設環境變數，省略 --workdir
+export BRAIN_WORKDIR=/your/project
+python brain.py status
+python brain.py add --title "JWT RS256" --content "..." --kind Decision
+```
+
+**方式 B：整合到 SYNTHEX（開發時自動注入知識）**
+
+```bash
 python synthex.py brain init
-
-# 舊專案考古掃描（只需一次，約 3-10 分鐘）
 python synthex.py brain scan
-
-# 之後的 commit 自動學習（Git Hook 自動觸發）
-git commit -m "feat: 加入冪等性機制"
-
-# 查看三層記憶狀態
 python synthex.py brain status
 ```
 
 ### 三層認知架構（v4.0）
 
 ```
-L1 工作記憶 — Anthropic Memory Tool
+L1 工作記憶 — Anthropic Memory Tool + SQLite WAL
    即時任務資訊（本次踩坑、任務進展）
-   生命週期：session，<10ms 查詢
-   效果：84% token 節省
+   跨 session 持久化：pitfalls/decisions 保留 30 天
 
 L2 情節記憶 — Graphiti 時序知識圖譜
    「三個月前的決策現在還有效嗎？」
-   雙時態模型（t_valid/t_invalid），<100ms
-   後端：FalkorDB / Neo4j
+   後端：FalkorDB (redis://localhost:6379)
+   無 FalkorDB 時自動降級到 SQLite 時序圖
 
-L3 語義記憶 — Project Brain v2.0
-   深度語義知識、反事實推理、知識衰減
-   永久保留，SQLite + Chroma
+L3 語義記憶 — SQLite 知識圖譜
+   深度語義知識、反事實推理、三維衰減
+   7 種節點類型（Decision/Pitfall/Rule/ADR/Component）
 ```
 
-### v4.0 新功能
+### 讓任何 LLM 使用 Brain 的知識
 
-- **知識自動驗證**：AI 定期確認知識是否仍然準確
-- **聯邦匿名共享**：差分隱私保護下，與業界共享踩坑知識
-- **知識蒸餾**：壓縮為 Markdown 摘要 / 角色 Prompt / LoRA 訓練數據
-- **Web UI**：D3.js 互動式知識圖譜（`http://localhost:7890`）
-- **跨 Session 持久化**：重要工作記憶跨次保留
+```bash
+# ① Cursor — 自動更新 .cursorrules
+python brain.py export-rules --target cursorrules
+
+# ② Claude Code — 注入 CLAUDE.md
+python brain.py export-rules --target claude
+
+# ③ ChatGPT / Gemini — 複製到 System Prompt
+python brain.py export-rules --target system-prompt
+
+# ④ Ollama / LM Studio / 任何 OpenAI SDK — API Server
+python brain.py serve --port 7891
+# → GET  http://localhost:7891/v1/knowledge    完整知識摘要
+# → GET  http://localhost:7891/v1/context?q=任務  精準知識查詢
+# → POST http://localhost:7891/v1/messages      自動注入知識（OpenAI 相容格式）
+```
+
+### v4.0 功能清單
+
+| 功能 | 命令 | 說明 |
+|------|------|------|
+| 知識自動驗證 | `brain validate` | 三階段 AI 審查，確認知識仍然準確 |
+| 知識蒸餾 | `brain distill` | 產生 Markdown / 角色 Prompt / LoRA 訓練數據 |
+| 聯邦匿名共享 | `brain share` | 差分隱私保護，與業界共享踩坑 |
+| Web UI | `brain webui` | D3.js 知識圖譜視覺化（port 7890） |
+| LLM API Server | `brain serve` | OpenAI 相容 API，接入任何 LLM 工具 |
+| 跨 Session 持久化 | 自動 | pitfalls/decisions 跨次保留 30 天 |
 
 詳細說明見 [PROJECT_BRAIN.md](PROJECT_BRAIN.md)。
 

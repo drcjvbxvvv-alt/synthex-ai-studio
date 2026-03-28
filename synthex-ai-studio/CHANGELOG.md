@@ -619,3 +619,58 @@ _ensure_client() → 完整 Graphiti 初始化（懶初始化）
 - 補充第 17-24 輪的詳細更新記錄
 
 **總計文件：** 11 份，6,018+ 行
+
+## v0.26.0（第二十六輪 — brain.py 獨立 CLI + 多 LLM 整合，2026-03-28）
+
+### 新增：`brain.py`（508 行）
+
+**設計動機：**
+1. `python synthex.py brain init` 指令過長，使用複雜
+2. Brain 不依賴 SYNTHEX，應可獨立使用
+3. 知識建立後需要能讓 Ollama、LM Studio、Gemini、Cursor、ChatGPT 等工具使用
+
+**`brain.py` 特點：**
+- 完全獨立，不依賴任何 SYNTHEX 模組（只依賴 `core/brain/`）
+- 指令更簡短：`python brain.py init` vs `python synthex.py brain init`
+- 支援 `BRAIN_WORKDIR` 環境變數，省略 `--workdir` 參數
+
+**新增命令（brain.py 限定）：**
+
+`brain serve [--port 7891]` — OpenAI 相容 API Server
+- `GET  /health` — 服務健康 + 知識庫節點數
+- `GET  /v1/knowledge` — 完整知識摘要（適合貼到 system prompt）
+- `GET  /v1/context?q=任務` — 精準知識查詢（只返回相關知識）
+- `POST /v1/messages` — OpenAI 相容端點，自動把知識注入 system message
+- `POST /v1/add` — REST 方式新增知識
+- `GET  /v1/stats` — 知識庫統計
+
+`brain export-rules [--target <目標>]` — 匯出知識到各種 LLM 工具
+- `--target cursorrules` → 更新 `.cursorrules`（Cursor IDE 自動讀取）
+- `--target claude` → 注入 `CLAUDE.md`（Claude Code 自動讀取）
+- `--target system-prompt` → 生成 `.brain/system-prompt.md`（複製到任何 LLM）
+- `--target openai-compat` → 生成 `.brain/context_messages.json`（JSON messages 格式）
+
+### 各 LLM 工具接入方式
+
+| 工具 | 方式 | 命令 |
+|------|------|------|
+| Cursor | `.cursorrules` 自動讀取 | `brain export-rules --target cursorrules` |
+| Claude Code | `CLAUDE.md` 自動注入 | `brain export-rules --target claude` |
+| ChatGPT | Custom Instructions | `brain export-rules --target system-prompt` → 複製貼上 |
+| Gemini | 對話開頭貼入 | 同上 |
+| Ollama | Modelfile SYSTEM 或 API | `brain serve` → `GET /v1/knowledge` |
+| LM Studio | Default System Prompt | 同上 |
+| 任何 OpenAI SDK | `base_url` 替換 | `OpenAI(base_url="http://localhost:7891")` |
+| Claude Code MCP | MCP settings.json | `graphiti_mcp_server.py` |
+
+### 文件更新
+
+- `README.md` — Project Brain 章節完整改寫（獨立 CLI + 多 LLM 接入）
+- `INSTALL.md` — 新增「Project Brain 獨立使用」章節（最小安裝）
+- `COMMANDS.md` — 新增 brain.py 完整命令參考 + LLM 整合指南
+- `PROJECT_BRAIN.md` — 新增獨立 CLI 說明 + 完整多 LLM 接入章節
+
+### 測試結果
+
+**139/139 通過（8.00s）**
+

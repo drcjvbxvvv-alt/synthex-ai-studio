@@ -153,7 +153,55 @@ python ~/tools/synthex-ai-studio/synthex.py brain scan
 
 ---
 
-## 六、選填：啟用 Graphiti L2 記憶
+## 五點五、Project Brain 獨立使用（不需要完整 SYNTHEX）
+
+若你只需要記憶功能，不需要 AI 驅動開發流水線，可以只使用 `brain.py`。
+
+**最小安裝：**
+```bash
+# 只需要三個依賴
+pip install anthropic flask flask-cors
+
+# 設定 API Key（用於 AI 知識提取，scan 命令需要）
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# 初始化並使用
+python brain.py init --workdir /your/project
+python brain.py status
+python brain.py add --title "踩坑標題" --content "..." --kind Pitfall
+```
+
+**環境變數（設定後省略 `--workdir`）：**
+```bash
+export BRAIN_WORKDIR=/your/project
+export GRAPHITI_URL=redis://localhost:6379   # 選填，需要 FalkorDB Docker
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# 之後所有命令都不需要 --workdir
+python brain.py status
+python brain.py distill
+python brain.py serve --port 7891
+```
+
+**啟動 API Server（讓 Ollama / ChatGPT / Cursor 使用知識）：**
+```bash
+python brain.py serve --port 7891
+
+# Ollama 用法
+ollama run llama3
+# 在 System Prompt 欄位貼入：
+curl http://localhost:7891/v1/knowledge
+
+# LM Studio 用法
+# → Preferences → Default System Prompt → 貼入上述 curl 結果
+
+# Cursor 用法（自動更新 .cursorrules）
+python brain.py export-rules --target cursorrules
+```
+
+---
+
+六、選填：啟用 Graphiti L2 記憶
 
 Graphiti 提供時序知識圖譜，可以查詢「這個決策現在還有效嗎？」
 

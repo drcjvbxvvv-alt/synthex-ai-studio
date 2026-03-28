@@ -518,6 +518,128 @@ python -m core.evals compare --baseline abc12345 --current def67890
 
 ---
 
+## brain.py 獨立 CLI（不需要 SYNTHEX）
+
+`brain.py` 是 Project Brain 的獨立入口點，指令更簡短，完全不依賴 SYNTHEX。
+
+### 快速對照
+
+| SYNTHEX 舊命令 | brain.py 新命令 | 說明 |
+|----------------|----------------|------|
+| `python synthex.py brain init` | `python brain.py init` | 初始化 |
+| `python synthex.py brain status` | `python brain.py status` | 查看狀態 |
+| `python synthex.py brain scan` | `python brain.py scan` | 考古掃描 |
+| `python synthex.py brain add --title ...` | `python brain.py add --title ...` | 加入知識 |
+| `python synthex.py brain distill` | `python brain.py distill` | 知識蒸餾 |
+| `python synthex.py brain validate` | `python brain.py validate` | 知識驗證 |
+| `python synthex.py brain webui` | `python brain.py webui` | Web UI |
+| _(無)_ | `python brain.py serve` | OpenAI 相容 API |
+| _(無)_ | `python brain.py export-rules` | 匯出到 LLM 規則文件 |
+
+### brain.py 完整命令
+
+```bash
+# 初始化
+python brain.py init [--workdir .] [--name "專案名稱"]
+
+# 狀態
+python brain.py status [--workdir .]
+
+# 知識管理
+python brain.py add --title "標題" --content "內容" --kind Pitfall [--tags tag1 tag2]
+  # --kind 選項：Decision / Pitfall / Rule / ADR / Component
+python brain.py scan   [--workdir .]   # AI 掃描 git 歷史（需要 ANTHROPIC_API_KEY）
+python brain.py learn  [--commit HEAD] # 從指定 commit 學習
+
+# 查詢
+python brain.py context "實作支付退款功能"   # 查詢相關知識注入
+
+# 蒸餾與匯出
+python brain.py distill [--layers context prompts lora]
+python brain.py export  # 匯出 Mermaid 圖譜
+
+# 匯出到各種 LLM 工具
+python brain.py export-rules --target cursorrules    # → .cursorrules（Cursor）
+python brain.py export-rules --target claude         # → CLAUDE.md（Claude Code）
+python brain.py export-rules --target system-prompt  # → 通用 Markdown
+python brain.py export-rules --target openai-compat  # → JSON messages 格式
+
+# API Server（OpenAI 相容）
+python brain.py serve [--port 7891]
+# 端點：
+#   GET  /health                  服務健康
+#   GET  /v1/knowledge            完整知識摘要（for system prompt）
+#   GET  /v1/context?q=<任務>     精準知識查詢
+#   POST /v1/messages             OpenAI 相容，自動注入知識
+#   POST /v1/add                  新增知識（REST 方式）
+#   GET  /v1/stats                知識庫統計
+
+# 知識驗證
+python brain.py validate [--max-api-calls 20] [--dry-run]
+
+# 可視化
+python brain.py webui [--port 7890]  # → http://localhost:7890
+```
+
+### 環境變數（省略 --workdir）
+
+```bash
+export BRAIN_WORKDIR=/your/project      # 預設工作目錄
+export GRAPHITI_URL=redis://localhost:6379   # L2 FalkorDB
+export ANTHROPIC_API_KEY=sk-ant-...         # AI 功能必填
+```
+
+### 整合各種 LLM 工具
+
+**Cursor（自動讀取）：**
+```bash
+python brain.py export-rules --target cursorrules
+# Cursor 在每次對話自動讀取 .cursorrules 中的知識
+```
+
+**Claude Code：**
+```bash
+python brain.py export-rules --target claude
+# 知識注入 CLAUDE.md，Claude Code 啟動時自動讀取
+```
+
+**ChatGPT / Gemini（手動貼上）：**
+```bash
+python brain.py export-rules --target system-prompt
+# 複製 .brain/system-prompt.md 的內容
+# 貼到 ChatGPT "Custom Instructions" 或對話開頭
+```
+
+**Ollama / LM Studio（API 查詢）：**
+```bash
+# 啟動 Brain API Server
+python brain.py serve --port 7891
+
+# 取得 system prompt 內容
+curl http://localhost:7891/v1/knowledge
+
+# 在 LM Studio 的 System Prompt 欄位貼入上述結果
+```
+
+**任何 OpenAI SDK（自動注入）：**
+```python
+from openai import OpenAI
+
+# 把 base_url 指向 Brain Server
+client = OpenAI(
+    base_url="http://localhost:7891",
+    api_key="brain"   # 任意字串
+)
+
+# 所有請求會自動注入相關知識到 system message
+response = client.chat.completions.create(
+    model="gpt-4o",   # 實際模型由你的 LLM 決定
+    messages=[{"role": "user", "content": "實作支付退款功能"}]
+)
+```
+
+---
+
 ## 環境變數
 
 | 變數 | 說明 | 範例 |

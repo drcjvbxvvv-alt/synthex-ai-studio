@@ -454,6 +454,32 @@ graph TD
 
 ## 快速開始
 
+### 方式 A：獨立 brain CLI（最簡單）
+
+不需要 SYNTHEX，一個 Python 檔案搞定：
+
+```bash
+# 指向 brain.py（放在任何地方）
+python /path/to/synthex-ai-studio/brain.py init --workdir /your/project
+
+# 或設環境變數後，省略 --workdir
+export BRAIN_WORKDIR=/your/project
+python brain.py init
+python brain.py status
+python brain.py add --title "JWT 改用 RS256" --content "廢棄 HS256" --kind Decision
+python brain.py scan   # AI 掃描 git 歷史（需要 ANTHROPIC_API_KEY）
+```
+
+### 方式 B：整合到 SYNTHEX（知識自動注入 Agent）
+
+```bash
+python synthex.py brain init
+python synthex.py brain scan
+# 之後 ship/agent/do 命令會自動帶著知識工作
+```
+
+---
+
 ### 新專案（從第一天開始）
 
 ```bash
@@ -1250,6 +1276,133 @@ brain._budget.total_cost_usd        # 總成本（美元）
 - ✅ L1 記憶跨 session 持久化（pitfalls/decisions/context 保留 30 天，progress 清空）
 - ✅ 統一彩色輸出系統（status_renderer.py + output.py，所有命令 ANSI 彩色化）
 - ✅ Graphiti FalkorDB 連線修復（redis:// 協議，TCP probe，AnthropicClient 替代 OpenAI）
+
+---
+
+## 讓任何 LLM 使用 Brain 知識
+
+Project Brain 的知識不是鎖在 SYNTHEX 裡的。透過蒸餾和 API，任何 LLM 工具都能使用。
+
+### 四種接入方式
+
+```
+Brain 知識
+   │
+   ├── ① 靜態文件匯出（腳本執行一次，工具自動讀取）
+   │       .cursorrules ────────── Cursor IDE
+   │       CLAUDE.md ─────────── Claude Code
+   │       system-prompt.md ───── 複製貼到任何 LLM
+   │
+   ├── ② API Server（brain serve，OpenAI 相容格式）
+   │       /v1/knowledge ─────── 完整知識摘要
+   │       /v1/context?q=任務 ── 精準知識查詢
+   │       /v1/messages ─────── 自動注入（OpenAI SDK 直接用）
+   │
+   ├── ③ 蒸餾文件（brain distill）
+   │       SYNTHEX_KNOWLEDGE.md → 複製到任何 LLM 的 system prompt
+   │       lora_dataset.jsonl  → 訓練 LoRA adapter（讓知識變成模型權重）
+   │
+   └── ④ MCP Server（Claude Code / 支援 MCP 的工具）
+           graphiti_mcp_server.py 提供 4 個 MCP Tools
+```
+
+### 各工具接入指南
+
+**Cursor**
+```bash
+python brain.py export-rules --target cursorrules
+# → 更新 .cursorrules，Cursor 每次對話自動讀取
+# → 知識更新後重新執行一次即可
+```
+
+**Claude Code（CLAUDE.md）**
+```bash
+python brain.py export-rules --target claude
+# → 在 CLAUDE.md 插入 <!-- PROJECT_BRAIN_START --> 知識區塊
+# → Claude Code 啟動時自動讀取
+```
+
+**ChatGPT Custom Instructions**
+```bash
+python brain.py export-rules --target system-prompt
+# → 生成 .brain/system-prompt.md
+# → 複製內容 → ChatGPT Settings → Custom Instructions → 貼上
+```
+
+**Gemini / 其他 LLM**
+```bash
+python brain.py export-rules --target system-prompt
+# → 複製內容貼到每次對話的開頭，或設為該工具的 System Prompt
+```
+
+**Ollama（本地 LLM）**
+```bash
+# 方式 A：複製 system prompt 到 Modelfile
+python brain.py export-rules --target system-prompt
+# 編輯 Modelfile：SYSTEM """<貼入內容>"""
+ollama create my-model -f Modelfile
+
+# 方式 B：透過 API 動態注入（推薦）
+python brain.py serve --port 7891 &
+curl http://localhost:7891/v1/knowledge  # 每次對話前取得最新知識
+```
+
+**LM Studio**
+```bash
+python brain.py serve --port 7891 &
+
+# 取得知識文字
+curl http://localhost:7891/v1/knowledge > brain_knowledge.txt
+
+# LM Studio → Settings → Default System Prompt → 貼入 brain_knowledge.txt 內容
+```
+
+**任何 OpenAI SDK（自動注入）**
+```python
+from openai import OpenAI
+
+# 把 base_url 指向 Brain Server
+# Brain Server 會自動把相關知識注入到 system message
+client = OpenAI(base_url="http://localhost:7891", api_key="brain")
+
+# 正常呼叫，知識自動注入
+response = client.chat.completions.create(
+    model="你的模型",  # 這個欄位 Brain Server 不使用，由你的 LLM 決定
+    messages=[{"role": "user", "content": "實作支付退款 API"}]
+)
+# system message 自動包含：JWT RS256 決策、Stripe Webhook 踩坑、金額 cent 規則...
+```
+
+**Claude Code MCP Server**
+```json
+// .claude/settings.json
+{
+  "mcpServers": {
+    "project-brain": {
+      "command": "python",
+      "args": ["-m", "core.brain.graphiti_mcp_server"],
+      "env": {
+        "BRAIN_WORKDIR": "/your/project",
+        "GRAPHITI_URL": "redis://localhost:6379",
+        "ANTHROPIC_API_KEY": "sk-ant-..."
+      }
+    }
+  }
+}
+```
+
+### 知識更新流程
+
+```bash
+# 每次有新知識時（可以設成 git hook 自動執行）
+python brain.py learn --commit HEAD       # 從最新 commit 學習
+python brain.py add --title "..." ...     # 手動加入
+
+# 更新各 LLM 工具的知識
+python brain.py export-rules --target cursorrules  # 更新 Cursor
+python brain.py export-rules --target claude       # 更新 Claude Code
+# API Server 不需要更新，/v1/knowledge 每次都返回最新知識
+```
 
 ---
 
