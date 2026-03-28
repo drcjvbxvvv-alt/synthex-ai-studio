@@ -602,18 +602,141 @@ def _load_dotenv():
                 pass
             break  # 找到第一個就停止
 
+def _settings_block() -> str:
+    """目前設定區塊（LLM + 工作目錄），顯示在 help 頂部"""
+    import os
+    provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+    if provider == "openai":
+        base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
+        model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.1:8b")
+        # 判斷供應商名稱
+        if "11434" in base_url:
+            vendor = "Ollama"
+        elif "1234" in base_url:
+            vendor = "LM Studio"
+        else:
+            vendor = "Local"
+        llm_tag = f"{G}{vendor} - {model}（免費）{R}"
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        model   = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
+        if api_key:
+            llm_tag = f"{Y}Anthropic - {model}{R}"
+        else:
+            llm_tag = f"{RE}未設定{R}  {GR}→ 建立 .env 或設定 ANTHROPIC_API_KEY{R}"
+
+    workdir = os.environ.get("BRAIN_WORKDIR", "（當前目錄）")
+    w = 54
+    lines = [
+        f"{P}{B}",
+        f"  🧠  Project Brain  {GR}v4.0.0  ·  獨立記憶系統{R}",
+        f"  {D}不依賴 SYNTHEX AI STUDIO，可搭配任何 LLM 使用{R}",
+        f"",
+        f"{B}目前設定{R}",
+        f"{GR}{'═' * w}{R}",
+        f"  LLM：{llm_tag}   工作目錄：{GR}{workdir}{R}",
+        f"{GR}{'─' * w}{R}",
+        f"  {D}python brain.py <command> --help   命令詳細說明{R}",
+        f"  {D}python brain.py --guide            快速入門 + 環境變數 + LLM 整合{R}",
+    ]
+    return "\n".join(lines)
+
+
+def _show_guide():
+    """--guide：完整使用指南"""
+    import os
+    w = 54
+    hr = f"{GR}{'─' * w}{R}"
+    HR = f"{GR}{'═' * w}{R}"
+    print(f"""
+{P}{B}  🧠  Project Brain  完整使用指南{R}
+{HR}
+
+{B}{C}快速入門 — 新專案（無任何 commit）{R}
+{hr}
+  {D}① 建立 .env（設定好就不用每次 export）{R}
+  {GR}  cat > /your/project/.env << 'EOF'{R}
+  {GR}  ANTHROPIC_API_KEY=sk-ant-...{R}
+  {GR}  BRAIN_WORKDIR=/your/project{R}
+  {GR}  EOF{R}
+
+  {D}② 初始化{R}
+  {GR}  python brain.py init{R}
+
+  {D}③ 手動加入已知踩坑（立即生效，不花費）{R}
+  {GR}  python brain.py add --title "Stripe Webhook 冪等" \\{R}
+  {GR}    --content "Webhook 重複觸發，需用 idempotency_key" \\{R}
+  {GR}    --kind Pitfall{R}
+
+  {D}④ 確認 + 匯出給 LLM{R}
+  {GR}  python brain.py context "實作支付功能"{R}
+  {GR}  python brain.py export-rules --target cursorrules{R}
+
+{B}{C}快速入門 — 舊專案（有 git 歷史）{R}
+{hr}
+  {D}① 建立 .env → ② 初始化 → ③ AI 掃描{R}
+  {GR}  python brain.py init{R}
+  {GR}  python brain.py scan   # 顯示費用估算後確認{R}
+
+  {D}④ 驗證{R}
+  {GR}  python brain.py status{R}
+  {GR}  python brain.py context "你的任務關鍵字"{R}
+  {GR}  # 有輸出 = 成功；空白 = 換更具體的詞{R}
+
+  {D}⑤ 匯出給所有 LLM 使用{R}
+  {GR}  python brain.py export-rules --target cursorrules{R}
+  {GR}  python brain.py export-rules --target claude{R}
+  {GR}  python brain.py serve --port 7891{R}
+
+{B}{C}環境變數{R}  {D}（建議用 .env，不要用 export）{R}
+{hr}
+  {B}變數{R}                {B}預設值{R}            {B}費用{R}
+  ANTHROPIC_API_KEY    （無，需設定）        {Y}⚠ scan/learn 有費用{R}
+  BRAIN_LLM_PROVIDER   anthropic            → 改 openai = 本地免費
+  BRAIN_LLM_BASE_URL   localhost:11434/v1   Ollama 端點
+  BRAIN_LLM_MODEL      llama3.1:8b          本地模型名稱
+  BRAIN_WORKDIR        當前目錄             省略 --workdir
+  GRAPHITI_URL         redis://localhost:6379   L2 FalkorDB
+
+  {D}.env 範本：{R}
+  {GR}  ANTHROPIC_API_KEY=sk-ant-...   # 方案 A：Anthropic{R}
+  {GR}  # BRAIN_LLM_PROVIDER=openai   # 方案 B：Ollama（免費）{R}
+  {GR}  # BRAIN_LLM_BASE_URL=http://localhost:11434/v1{R}
+  {GR}  # BRAIN_LLM_MODEL=llama3.1:8b{R}
+  {GR}  BRAIN_WORKDIR=/your/project{R}
+  {GR}  GRAPHITI_URL=redis://localhost:6379{R}
+
+{B}{C}多 LLM 整合（啟動 brain serve 後）{R}
+{hr}
+  Cursor       {GR}export-rules --target cursorrules{R}
+  Claude Code  {GR}export-rules --target claude{R}
+  ChatGPT      {GR}export-rules --target system-prompt → 複製貼上{R}
+  Ollama       {GR}GET /v1/knowledge → 貼到 System Prompt{R}
+  OpenAI SDK   {GR}OpenAI(base_url="http://localhost:7891", api_key="brain"){R}
+  LM Studio    {GR}設定 base_url=http://localhost:7891{R}
+
+{B}{C}費用說明{R}
+{hr}
+  {G}免費{R}：init / status / add / context / distill / export / serve / webui
+  {Y}有費用{R}：scan / learn / validate（依 BRAIN_LLM_PROVIDER 決定）
+  完全免費方案：BRAIN_LLM_PROVIDER=openai + Ollama
+
+  validate 省費技巧：
+  {GR}  python brain.py validate --dry-run          # 完全免費{R}
+  {GR}  python brain.py validate --max-api-calls 5  # 最多 5 次{R}
+""")
+
+
 def main():
     import argparse
 
-    # ── .env 檔案支援（自動載入當前目錄或 --workdir 指定目錄的 .env）──────
     _load_dotenv()
 
     parser = argparse.ArgumentParser(
         prog='brain',
         description='Project Brain — AI 記憶系統（獨立版，可搭配任何 LLM）',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-命令快速參考：
+        epilog="""命令快速參考：
   brain init      --workdir .          初始化記憶系統
   brain status    --workdir .          查看三層記憶狀態
   brain scan      --workdir .          AI 掃描 git 歷史（需要 API Key）
@@ -628,11 +751,16 @@ def main():
   brain webui     --workdir . --port 7890   D3.js 視覺化
 
 環境變數：
-  BRAIN_WORKDIR   預設工作目錄（省略 --workdir）
-  GRAPHITI_URL    Graphiti L2 連線（預設 redis://localhost:6379）
-  ANTHROPIC_API_KEY  AI 分析功能所需
-        """
+  BRAIN_WORKDIR         預設工作目錄（省略 --workdir）
+  GRAPHITI_URL          Graphiti L2 連線（預設 redis://localhost:6379）
+  ANTHROPIC_API_KEY     AI 分析功能所需（scan/learn/validate）
+  BRAIN_LLM_PROVIDER    anthropic（預設）或 openai（本地 Ollama/LM Studio）
+  BRAIN_LLM_BASE_URL    本地 LLM 端點（預設 http://localhost:11434/v1）
+  BRAIN_LLM_MODEL       本地模型名稱（預設 llama3.1:8b）
+""",
     )
+    parser.add_argument('--guide', action='store_true',
+                        help='完整使用指南（新專案/舊專案/環境變數/LLM 整合）')
 
     sub = parser.add_subparsers(dest='cmd', metavar='<command>')
 
@@ -642,66 +770,60 @@ def main():
                        help='專案目錄（預設：$BRAIN_WORKDIR 或當前目錄）')
         return p
 
-    # init
-    p = mkp('init', '初始化 Project Brain')
-    p.add_argument('--name', default='', help='專案名稱')
-
-    # status
+    mkp('init',   '初始化 Project Brain')
     mkp('status', '查看三層記憶狀態（L1/L2/L3）')
+    mkp('scan',   '從 git 歷史 AI 掃描並提取知識')
 
-    # scan
-    mkp('scan', '從 git 歷史 AI 掃描並提取知識（需要 ANTHROPIC_API_KEY）')
-
-    # learn
     p = mkp('learn', '從指定 commit 學習知識')
-    p.add_argument('--commit', default='HEAD')
+    p.add_argument('--commit', default='HEAD', help='commit hash（預設：HEAD）')
 
-    # add
     p = mkp('add', '手動加入一筆知識')
     p.add_argument('--title',   nargs='+', required=True)
     p.add_argument('--content', default='')
     p.add_argument('--kind',    default='Pitfall',
-                   choices=['Decision','Pitfall','Rule','ADR','Component'])
+                   choices=['Decision','Pitfall','Rule','ADR','Component'],
+                   help='類型（預設：Pitfall）')
     p.add_argument('--tags',    nargs='+', default=[])
 
-    # context
     p = mkp('context', '查詢任務相關知識（Context 注入）')
     p.add_argument('task', nargs='*', help='任務描述')
 
-    # distill
     p = mkp('distill', '知識蒸餾：產生可給任何 LLM 使用的知識摘要')
     p.add_argument('--layers', nargs='+', default=['context','prompts','lora'],
-                   choices=['context','prompts','lora'])
+                   choices=['context','prompts','lora'],
+                   help='蒸餾層次（預設：全部三層）')
 
-    # validate
     p = mkp('validate', '自主知識驗證')
-    p.add_argument('--max-api-calls', type=int, default=20)
-    p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--max-api-calls', type=int, default=20,
+                   help='最大 API 呼叫次數（預設：20，設 0 = 免費）')
+    p.add_argument('--dry-run', action='store_true',
+                   help='只做本地規則驗證，不呼叫 AI（完全免費）')
 
-    # export
     mkp('export', '匯出知識圖譜（Mermaid 格式）')
 
-    # export-rules
     p = mkp('export-rules', '匯出知識到各種 LLM 規則文件')
     p.add_argument('--target', default='cursorrules',
                    choices=['cursorrules','claude','system-prompt','openai-compat'],
-                   help=('cursorrules=.cursorrules, claude=CLAUDE.md, '
-                         'system-prompt=通用 Markdown, openai-compat=JSON'))
+                   help='目標格式（預設：cursorrules）')
 
-    # serve
     p = mkp('serve', '啟動 OpenAI 相容 API（讓 Ollama/LM Studio/Cursor 查詢知識）')
-    p.add_argument('--port', type=int, default=7891)
+    p.add_argument('--port', type=int, default=7891, help='監聽 port（預設：7891）')
 
-    # webui
     p = mkp('webui', '啟動 D3.js 知識圖譜視覺化')
-    p.add_argument('--port', type=int, default=7890)
+    p.add_argument('--port', type=int, default=7890, help='監聽 port（預設：7890）')
 
+    # 無參數時：印出設定區塊 + 標準 argparse help
     if len(sys.argv) == 1:
-        print(BANNER)
+        print(_settings_block())
+        print()
         parser.print_help()
         return
 
     args = parser.parse_args()
+
+    if getattr(args, 'guide', False):
+        _show_guide()
+        return
 
     dispatch = {
         'init':         cmd_init,
@@ -725,7 +847,10 @@ def main():
         except KeyboardInterrupt:
             print(f"\n{GR}已中止{R}")
     else:
+        print(_settings_block())
+        print()
         parser.print_help()
+
 
 if __name__ == '__main__':
     main()
