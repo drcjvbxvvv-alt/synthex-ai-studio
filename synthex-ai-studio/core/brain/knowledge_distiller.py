@@ -33,6 +33,7 @@ core/brain/knowledge_distiller.py — 多模型知識蒸餾（v4.0）
 """
 
 from __future__ import annotations
+from .output import OK, WARN, ERR, R, B, G, Y, C, P, GR, D, W, hr, section, badge
 
 import re
 import json
@@ -81,12 +82,16 @@ class DistillationResult:
     elapsed_ms:     int
 
     def summary(self) -> str:
+        from .output import OK, B, G, Y, C, GR, R, W, hr
+        files_str = "\n    ".join(self.output_files)
         return (
-            f"知識蒸餾完成\n"
-            f"  節點：{self.total_nodes} 筆 | token 估算：{self.token_estimate:,}\n"
-            f"  完成層次：{', '.join(self.layers_done)}\n"
-            f"  輸出：{', '.join(self.output_files)}\n"
-            f"  耗時：{self.elapsed_ms}ms"
+            f"\n{G}{B}⚗  知識蒸餾完成{R}\n{GR}{hr()}{R}\n"
+            f"  {B}節點{R}      {W}{self.total_nodes}{R} 筆  "
+            f"{GR}│{R}  {B}token 估算{R}  {W}{self.token_estimate:,}{R}\n"
+            f"  {B}完成層次{R}  {G}{', '.join(self.layers_done)}{R}\n"
+            f"  {B}輸出{R}\n    {GR}{files_str}{R}\n"
+            f"  {B}耗時{R}      {W}{self.elapsed_ms}{R} ms\n"
+            f"{GR}{hr()}{R}"
         )
 
 
@@ -141,19 +146,19 @@ class KnowledgeDistiller:
             path = self._distill_context(all_nodes)
             output_files.append(str(path.relative_to(self.brain_dir)))
             done_layers.append("context")
-            print(f"  ✓ Layer 1 Context Distillation → {path.name}")
+            print(f"  {OK} {B}Layer 1{R} Context Distillation  {GR}→{R} {W}{path.name}{R}")
 
         if "prompts" in layers:
             paths = self._distill_role_prompts(all_nodes)
             output_files.extend(str(p.relative_to(self.brain_dir)) for p in paths)
             done_layers.append("prompts")
-            print(f"  ✓ Layer 2 Role Prompts → {len(paths)} 個角色")
+            print(f"  {OK} {B}Layer 2{R} Role Prompts  {GR}→{R} {W}{len(paths)}{R} 個角色")
 
         if "lora" in layers:
             path = self._distill_lora_dataset(all_nodes)
             output_files.append(str(path.relative_to(self.brain_dir)))
             done_layers.append("lora")
-            print(f"  ✓ Layer 3 LoRA Dataset → {path.name}")
+            print(f"  {OK} {B}Layer 3{R} LoRA Dataset  {GR}→{R} {W}{path.name}{R}")
 
         token_est = sum(
             len(n.get("content", n.get("description", ""))) // 4

@@ -35,6 +35,7 @@ core/brain/knowledge_validator.py — Agent 自主知識驗證（v4.0）
 """
 
 from __future__ import annotations
+from .output import OK, WARN, ERR, R, B, G, Y, C, RE, P, GR, D, W, hr, badge, conf_color
 
 import re
 import json
@@ -86,11 +87,22 @@ class ValidationResult:
         return self.new_conf - self.original_conf
 
     def to_summary_line(self) -> str:
+        from .output import OK, WARN, ERR, badge, conf_color, R, GR, W, D
         delta_str = f"{self.conf_delta:+.2f}" if abs(self.conf_delta) > 0.01 else "="
-        icon = "✓" if self.is_valid else ("⚠" if self.action == "flag" else "✗")
-        return (f"  {icon} [{self.kind}] {self.title[:40]:<40} "
-                f"conf:{self.original_conf:.2f}→{self.new_conf:.2f}({delta_str}) "
-                f"[{self.validator}]")
+        if self.is_valid and self.action == "keep":
+            icon = OK
+        elif self.action == "flag":
+            icon = WARN
+        else:
+            icon = ERR
+        c_old = conf_color(self.original_conf)
+        c_new = conf_color(self.new_conf)
+        b = badge(self.kind)
+        title = self.title[:36]
+        return (f"  {icon} {b:<32} {title:<38} "
+                f"{c_old}{self.original_conf:.2f}{R}{GR}→{R}"
+                f"{c_new}{self.new_conf:.2f}{R}{GR}({delta_str}){R}  "
+                f"{D}[{self.validator}]{R}")
 
 
 @dataclass
@@ -106,12 +118,16 @@ class ValidationReport:
     results:          list[ValidationResult] = field(default_factory=list)
 
     def summary(self) -> str:
+        from .output import OK, WARN, ERR, R, B, G, Y, RE, C, GR, W, hr
         return (
-            f"驗證報告 [{self.run_id}]\n"
-            f"  總計：{self.total_checked} 筆\n"
-            f"  有效：{self.valid_count} ✓ | 標記：{self.flagged_count} ⚠ | "
-            f"失效：{self.invalidated_count} ✗\n"
-            f"  API 呼叫：{self.api_calls_used} 次 | 耗時：{self.elapsed_ms}ms"
+            f"\n{C}{B}🔍  驗證報告{R}  {GR}[{self.run_id}]{R}\n{GR}{hr()}{R}\n"
+            f"  {B}總計{R}    {W}{self.total_checked}{R} 筆\n"
+            f"  {OK} 有效  {G}{B}{self.valid_count}{R}  "
+            f"{WARN} 標記  {Y}{B}{self.flagged_count}{R}  "
+            f"{ERR} 失效  {RE}{B}{self.invalidated_count}{R}\n"
+            f"  {B}API 呼叫{R}  {W}{self.api_calls_used}{R} 次  "
+            f"{GR}│{R}  {B}耗時{R}  {W}{self.elapsed_ms}{R} ms\n"
+            f"{GR}{hr()}{R}"
         )
 
 
@@ -220,7 +236,7 @@ class KnowledgeValidator:
         api_used = 0
 
         logger.info("validation_start", run_id=run_id, max_api=max_api_calls)
-        print(f"\n🔍 知識驗證 [{run_id}] 開始（max_api_calls={max_api_calls}）")
+        print(f"\n{C}{B}🔍  知識驗證{R}  {GR}[{run_id}]{R}  max_api_calls={W}{max_api_calls}{R}\n{GR}{hr()}{R}")
 
         # 取得所有節點
         all_nodes = self._get_all_nodes(kinds)
