@@ -71,15 +71,21 @@ class ContextEngineer:
         # 3. 知識搜尋：v1.1 向量語義優先，FTS5 備援
         keywords = self._extract_keywords(task)
         if keywords:
-            # v1.1：優先使用向量搜尋（更精準的語義匹配）
+            pitfalls  = []
+            decisions = []
+            rules     = []
+            adrs      = []
+
+            # v1.1：向量語義搜尋（若 chromadb 已安裝）
             if self.vm and self.vm.available:
                 vm_results = self.vm.search(task, top_k=8)
                 pitfalls  = [r for r in vm_results if r.get("type") == "Pitfall"][:3]
                 decisions = [r for r in vm_results if r.get("type") == "Decision"][:2]
                 rules     = [r for r in vm_results if r.get("type") == "Rule"][:2]
                 adrs      = [r for r in vm_results if r.get("type") == "ADR"][:1]
-            else:
-                # FTS5 備援
+
+            # FTS5 備援：向量搜尋空結果或未安裝時啟用
+            if not any([pitfalls, decisions, rules, adrs]):
                 pitfalls  = self.graph.search_nodes(keywords, node_type="Pitfall",  limit=3)
                 decisions = self.graph.search_nodes(keywords, node_type="Decision", limit=2)
                 rules     = self.graph.search_nodes(keywords, node_type="Rule",     limit=2)

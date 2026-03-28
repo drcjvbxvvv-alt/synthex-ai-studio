@@ -130,22 +130,67 @@ class KnowledgeGraph:
         return d
 
     def search_nodes(self, query: str, node_type: str = None, limit: int = 10) -> list:
-        """全文搜尋節點（SQLite FTS5）"""
-        if node_type:
-            rows = self._conn.execute("""
-                SELECT n.* FROM nodes n
-                JOIN nodes_fts f ON f.id = n.id
-                WHERE nodes_fts MATCH ? AND n.type = ?
-                ORDER BY rank LIMIT ?
-            """, (query, node_type, limit)).fetchall()
-        else:
-            rows = self._conn.execute("""
-                SELECT n.* FROM nodes n
-                JOIN nodes_fts f ON f.id = n.id
-                WHERE nodes_fts MATCH ?
-                ORDER BY rank LIMIT ?
-            """, (query, limit)).fetchall()
-        return [dict(r) for r in rows]
+        """
+        全文搜尋節點（FTS5 + LIKE 雙重搜尋）
+
+        FTS5 對中文的限制：unicode61 分詞器以空白為邊界，
+        「等社群軟體會快取」是一個 token，無法搜尋其中的「快取」子詞。
+        解法：FTS5 找不到時自動降級到 LIKE 模糊搜尋。
+        """
+        # Step 1: 嘗試 FTS5（精準，支援 AND 組合）
+        try:
+            if node_type:
+                rows = self._conn.execute("""
+                    SELECT n.* FROM nodes n
+                    JOIN nodes_fts f ON f.id = n.id
+                    WHERE nodes_fts MATCH ? AND n.type = ?
+                    ORDER BY rank LIMIT ?
+                """, (query, node_type, limit)).fetchall()
+            else:
+                rows = self._conn.execute("""
+                    SELECT n.* FROM nodes n
+                    JOIN nodes_fts f ON f.id = n.id
+                    WHERE nodes_fts MATCH ?
+                    ORDER BY rank LIMIT ?
+                """, (query, limit)).fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+        except Exception:
+            pass  # FTS5 query 格式錯誤時降級
+
+        # Step 2: FTS5 無結果 → 逐詞 LIKE 模糊搜尋
+        # 把查詢拆成個別詞，每個詞用 LIKE 搜尋，取聯集
+        import re
+        words = [w for w in re.split(r'\s+', query.strip()) if w]
+        if not words:
+            return []
+
+        seen_ids = set()
+        results  = []
+        for word in words:
+            pattern = f"%{word}%"
+            if node_type:
+                rows = self._conn.execute("""
+                    SELECT * FROM nodes
+                    WHERE (title LIKE ? OR content LIKE ?)
+                      AND type = ?
+                    LIMIT ?
+                """, (pattern, pattern, node_type, limit)).fetchall()
+            else:
+                rows = self._conn.execute("""
+                    SELECT * FROM nodes
+                    WHERE title LIKE ? OR content LIKE ?
+                    LIMIT ?
+                """, (pattern, pattern, limit)).fetchall()
+            for r in rows:
+                d = dict(r)
+                if d["id"] not in seen_ids:
+                    seen_ids.add(d["id"])
+                    results.append(d)
+            if len(results) >= limit:
+                break
+
+        return results[:limit]
 
     # ── 關係操作 ──────────────────────────────────────────────────
 

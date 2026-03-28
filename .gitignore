@@ -1,0 +1,8 @@
+# Python 快取檔案
+__pycache__
+*.py[cod]
+*$py.class
+
+# 資料庫檔案
+*.db
+*.sqlite3
