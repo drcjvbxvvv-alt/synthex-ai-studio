@@ -642,12 +642,53 @@ response = client.chat.completions.create(
 
 ## 環境變數
 
-| 變數 | 說明 | 範例 |
+### 設定方式（建議用 .env 而非 export）
+
+```bash
+# ✅ 推薦：在專案目錄建 .env（自動載入，不污染全域）
+cd /your/project
+cat > .env << 'ENVEOF'
+ANTHROPIC_API_KEY=sk-ant-...
+BRAIN_WORKDIR=/your/project
+GRAPHITI_URL=redis://localhost:6379
+ENVEOF
+
+# ❌ 避免：export 會讓 Key 洩漏給同一系統的所有程式
+# export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### 完整環境變數表
+
+| 變數 | 用途 | 預設值 | 費用相關 |
+|------|------|--------|---------|
+| `ANTHROPIC_API_KEY` | Anthropic LLM（scan/learn/validate 用）| 無 | ⚠ 有費用 |
+| `BRAIN_LLM_PROVIDER` | LLM 提供者：`anthropic`（預設）或 `openai` | `anthropic` | — |
+| `BRAIN_LLM_BASE_URL` | 本地 LLM 端點（Ollama/LM Studio）| `http://localhost:11434/v1` | 免費 |
+| `BRAIN_LLM_MODEL` | 模型名稱 | `llama3.1:8b`（local）| — |
+| `BRAIN_WORKDIR` | 預設工作目錄（省略 --workdir）| 當前目錄 | — |
+| `GRAPHITI_URL` | Graphiti L2 連線 | `redis://localhost:6379` | — |
+| `SYNTHEX_WORKDIR` | SYNTHEX 預設工作目錄 | — | — |
+| `SYNTHEX_BUDGET` | SYNTHEX 預設預算上限 USD | `5.0` | ⚠ 有費用 |
+
+### 哪些命令會產生費用？
+
+| 命令 | 費用 | 說明 |
 |------|------|------|
-| `ANTHROPIC_API_KEY` | API Key（必要）| `sk-ant-...` |
-| `SYNTHEX_WORKDIR` | 預設工作目錄 | `/home/user/projects` |
-| `SYNTHEX_BUDGET` | 預設預算上限 USD | `5.0` |
-| `GRAPHITI_URL` | Graphiti DB 連線 | `redis://localhost:6379` |
+| `brain scan` | ⚠ 有費用（或免費）| 依 `BRAIN_LLM_PROVIDER` 設定 |
+| `brain learn` | ⚠ 同上 | 每次 commit ~$0.001 |
+| `brain validate` | ⚠ 同上（可限制）| `--max-api-calls 0` = 免費 |
+| `brain init/status/add/context/distill` | 免費 | 純本地操作 |
+| `ship/agent/do` | ⚠ 有費用 | SYNTHEX Agent 呼叫 Claude |
+
+### .env 搜尋順序
+
+```
+1. 當前目錄 .env
+2. $BRAIN_WORKDIR/.env
+3. ~/.brain/.env（全域）
+```
+
+優先順序：`export` 設定的值 > `.env` > 預設值
 | `BRAIN_WORKDIR` | MCP Server 的工作目錄 | `/your/project` |
 | `ANTHROPIC_LOG` | API 日誌級別 | `info` / `debug` |
 

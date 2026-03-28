@@ -153,7 +153,155 @@ python ~/tools/synthex-ai-studio/synthex.py brain scan
 
 ---
 
-## 五點五、Project Brain 獨立使用（不需要完整 SYNTHEX）
+## 五點五、環境變數設定（重要：建議用 .env 而非 export）
+
+### 為什麼不要用 `export`
+
+```bash
+# ❌ 危險：export 設到全域，所有程式都能讀到你的 Key
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# ❌ 更危險：寫進 ~/.zshrc，每個終端都自動帶著 Key
+echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc
+```
+
+問題：
+- 同一台電腦上其他程式（IDE、腳本）會不小心讀到你的 Key
+- 你忘記自己設了，所有呼叫都悄悄消耗費用
+- 無法做到「這個專案用 Claude，那個專案用 Ollama」
+
+### ✅ 推薦做法：用 `.env` 檔案
+
+在**每個專案目錄**建立 `.env`，brain.py 啟動時自動載入：
+
+```bash
+# 在你的專案目錄建立 .env
+cd /your/project
+cat > .env << 'EOF'
+# LLM 設定（選一個方案）
+ANTHROPIC_API_KEY=sk-ant-...      # 方案 A：Anthropic（有費用）
+# BRAIN_LLM_PROVIDER=openai      # 方案 B：本地免費（改這三行）
+# BRAIN_LLM_BASE_URL=http://localhost:11434/v1
+# BRAIN_LLM_MODEL=llama3.1:8b
+
+# Brain 設定
+BRAIN_WORKDIR=/your/project
+GRAPHITI_URL=redis://localhost:6379
+EOF
+```
+
+然後直接在該目錄執行，不需要任何 export：
+```bash
+cd /your/project
+python brain.py scan   # 自動讀取 .env
+python brain.py status
+```
+
+### .env 的搜尋順序
+
+`brain.py` 按以下順序找 `.env`，找到第一個就停止：
+
+```
+1. 當前目錄 .env          ← 專案專屬（最優先）
+2. $BRAIN_WORKDIR/.env    ← 若已設定 BRAIN_WORKDIR
+3. ~/.brain/.env           ← 全域預設值（兜底）
+```
+
+**已用 export 設定的值永遠優先，.env 不會覆蓋它們。**
+
+### .env 範本
+
+```bash
+# ~/your-project/.env
+
+# ══ LLM 設定（二選一）══════════════════════
+
+# 方案 A：Anthropic Claude（scan/learn 時會扣費）
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx
+
+# 方案 B：本地 Ollama（完全免費）
+# BRAIN_LLM_PROVIDER=openai
+# BRAIN_LLM_BASE_URL=http://localhost:11434/v1
+# BRAIN_LLM_MODEL=llama3.1:8b
+
+# 方案 C：LM Studio（完全免費）
+# BRAIN_LLM_PROVIDER=openai
+# BRAIN_LLM_BASE_URL=http://localhost:1234/v1
+# BRAIN_LLM_MODEL=Meta-Llama-3.1-8B-Instruct
+
+# ══ Brain 設定 ══════════════════════════════
+BRAIN_WORKDIR=/Users/your-name/your-project
+GRAPHITI_URL=redis://localhost:6379    # 若有啟動 FalkorDB
+```
+
+### 不同情境的費用對照
+
+| 命令 | Anthropic | Ollama / LM Studio |
+|------|-----------|-------------------|
+| `brain init` | 免費 | 免費 |
+| `brain add` | 免費 | 免費 |
+| `brain status` | 免費 | 免費 |
+| `brain context` | 免費 | 免費 |
+| `brain distill` | 免費 | 免費 |
+| `brain scan` | 有費用（每 commit ~$0.001）| 免費 |
+| `brain learn` | 有費用（每次 ~$0.001）| 免費 |
+| `brain validate` | 有費用（每筆知識 ~$0.001）| 免費 |
+
+**scan 費用估算**：60 個 commit × $0.001 ≈ $0.06（六分之一美金）
+
+---
+
+六、本地 LLM 設定（Ollama / LM Studio）
+
+### Ollama（推薦，最簡單）
+
+```bash
+# 安裝 Ollama（macOS）
+brew install ollama
+
+# 啟動服務
+ollama serve
+
+# 下載模型（擇一，推薦 llama3.1 有繁體中文能力）
+ollama pull llama3.1:8b         # 4.7GB，平衡效能
+ollama pull llama3.1:70b        # 40GB，最佳品質
+ollama pull qwen2.5-coder:7b    # 程式碼專用
+
+# 在 .env 設定
+echo 'BRAIN_LLM_PROVIDER=openai' >> /your/project/.env
+echo 'BRAIN_LLM_BASE_URL=http://localhost:11434/v1' >> /your/project/.env
+echo 'BRAIN_LLM_MODEL=llama3.1:8b' >> /your/project/.env
+
+# 測試
+python brain.py scan --workdir /your/project
+# 輸出：LLM 設定 → 本地 LLM（免費）llama3.1:8b
+```
+
+### LM Studio
+
+```bash
+# 1. 下載 LM Studio：https://lmstudio.ai/
+# 2. 載入模型（建議 Meta-Llama-3.1-8B-Instruct）
+# 3. 點 "Local Server" → Start Server（預設 port 1234）
+
+# 在 .env 設定
+echo 'BRAIN_LLM_PROVIDER=openai' >> /your/project/.env
+echo 'BRAIN_LLM_BASE_URL=http://localhost:1234/v1' >> /your/project/.env
+echo 'BRAIN_LLM_MODEL=Meta-Llama-3.1-8B-Instruct' >> /your/project/.env
+```
+
+### 品質對比
+
+| 模型 | 知識提取品質 | 費用 | 速度 |
+|------|------------|------|------|
+| claude-haiku（Anthropic）| ⭐⭐⭐⭐⭐ | 有費用 | 快 |
+| llama3.1:70b（Ollama）| ⭐⭐⭐⭐ | 免費 | 慢（需 40GB RAM）|
+| llama3.1:8b（Ollama）| ⭐⭐⭐ | 免費 | 快（需 8GB RAM）|
+| qwen2.5-coder:7b（Ollama）| ⭐⭐⭐⭐ | 免費 | 快（程式碼專用）|
+
+---
+
+七、選填：啟用 Graphiti L2 記憶
 
 若你只需要記憶功能，不需要 AI 驅動開發流水線，可以只使用 `brain.py`。
 
@@ -201,7 +349,7 @@ python brain.py export-rules --target cursorrules
 
 ---
 
-六、選填：啟用 Graphiti L2 記憶
+七、選填：啟用 Graphiti L2 記憶
 
 Graphiti 提供時序知識圖譜，可以查詢「這個決策現在還有效嗎？」
 

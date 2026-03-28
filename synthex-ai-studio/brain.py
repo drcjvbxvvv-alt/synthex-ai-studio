@@ -39,6 +39,17 @@ def _brain(workdir: str):
     from core.brain.engine import ProjectBrain
     return ProjectBrain(workdir)
 
+
+def _env_source(key: str) -> str:
+    """說明環境變數的來源（.env 或 export 或預設）"""
+    import os
+    val = os.environ.get(key, "")
+    if not val:
+        return "(未設定)"
+    # 嘗試判斷是否來自 .env（簡單啟發式：.env 在 _load_dotenv 之前 key 不存在）
+    # 無法確定時不顯示 "export"，避免誤導
+    return "(已設定)"
+
 def _ok(msg):  print(f"{G}✓{R} {msg}")
 def _err(msg): print(f"{RE}✗{R} {msg}")
 def _info(msg):print(f"{C}ℹ{R} {msg}")
@@ -79,24 +90,98 @@ def cmd_scan(args):
     import os
     wd = _workdir(args)
 
-    # 前置檢查：確認有 LLM 可用
+    # ── LLM 設定診斷（防呆：讓用戶清楚知道現在用哪個 LLM、會不會收費）──
     provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+
+    print(f"\n{B}LLM 設定{R}")
+    print(f"{GR}{'─' * 44}{R}")
+
     if provider == "openai":
-        # 本地 LLM 模式（Ollama / LM Studio）
         base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
         model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.1:8b")
-        _info(f"使用本地 LLM：{C}{model}{R}  {GR}({base_url}){R}")
-    else:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            _err("缺少 ANTHROPIC_API_KEY — scan 需要 AI 分析 git 歷史")
-            print(f"   {D}export ANTHROPIC_API_KEY='sk-ant-...'{R}")
-            print()
-            print(f"   {B}或改用本地 LLM（免費，需先啟動 Ollama）：{R}")
-            print(f"   {GR}export BRAIN_LLM_PROVIDER=openai{R}")
-            print(f"   {GR}export BRAIN_LLM_BASE_URL=http://localhost:11434/v1{R}")
-            print(f"   {GR}export BRAIN_LLM_MODEL=llama3.1:8b{R}")
+        env_src  = _env_source("BRAIN_LLM_PROVIDER")
+        print(f"  提供者   {G}{B}本地 LLM（免費）{R}  {GR}{env_src}{R}")
+        print(f"  模型     {W}{model}{R}")
+        print(f"  端點     {GR}{base_url}{R}")
+
+        # 確認本地服務有在跑
+        import socket
+        import re as _re
+        m = _re.search(r'https?://([^:/]+)[:/]([0-9]+)', base_url)
+        host, port = (m.group(1), int(m.group(2))) if m else ("localhost", 11434)
+        try:
+            sock = socket.create_connection((host, port), timeout=2.0)
+            sock.close()
+            print(f"  連線     {G}✓ 已連接 {host}:{port}{R}")
+        except Exception:
+            print(f"  連線     {RE}✗ 無法連接 {host}:{port}{R}")
+            svc = "Ollama" if "11434" in base_url else "LM Studio"
+            print(f"\n  請先啟動 {svc}，例如：")
+            if "11434" in base_url:
+                print(f"  {GR}ollama serve{R}")
+                print(f"  {GR}ollama pull {model}{R}")
+            else:
+                print(f"  {GR}開啟 LM Studio → 載入 {model} → 啟動 Local Server{R}")
             return
+
+    else:
+        # Anthropic 模式：明確顯示費用警告
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        env_src = _env_source("ANTHROPIC_API_KEY")
+        model   = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
+
+        if not api_key:
+            print(f"  提供者   {RE}✗ 未設定{R}")
+            print()
+            _err("缺少 ANTHROPIC_API_KEY")
+            print()
+            print(f"  {B}方案 A（雲端 API）{R}：設定 Anthropic Key")
+            print(f"  {GR}  在 {wd} 建立 .env 檔案：{R}")
+            print(f"  {GR}  echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env{R}")
+            print()
+            print(f"  {B}方案 B（本地免費）{R}：改用 Ollama")
+            print(f"  {GR}  echo 'BRAIN_LLM_PROVIDER=openai' >> .env{R}")
+            print(f"  {GR}  echo 'BRAIN_LLM_BASE_URL=http://localhost:11434/v1' >> .env{R}")
+            print(f"  {GR}  echo 'BRAIN_LLM_MODEL=llama3.1:8b' >> .env{R}")
+            print()
+            print(f"  {D}（.env 檔案會自動載入，不需要 export）{R}")
+            return
+
+        # 顯示費用估算
+        masked_key = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "****"
+        print(f"  提供者   {Y}{B}Anthropic API（會產生費用）{R}  {GR}{env_src}{R}")
+        print(f"  模型     {W}{model}{R}")
+        print(f"  API Key  {GR}{masked_key}{R}")
+        print()
+
+        # 估算費用
+        import subprocess as _sp
+        try:
+            log_count = len(_sp.check_output(
+                ["git", "log", "--oneline"], cwd=wd,
+                stderr=_sp.DEVNULL, text=True
+            ).strip().split("\n"))
+        except Exception:
+            log_count = 0
+
+        if log_count > 0:
+            # Haiku: ~$0.001 per commit, skip patterns reduce ~40%
+            est_calls = max(1, int(log_count * 0.6))
+            est_cost  = est_calls * 0.001
+            print(f"  {Y}費用估算{R}  {log_count} 個 commit × ~$0.001 ≈ {C}${est_cost:.2f} USD{R}")
+            print(f"  {D}（只分析含有實質變更的 commit，跳過 Merge/format/bump 等）{R}")
+
+        print()
+        # Ask for confirmation if > 50 commits
+        if log_count > 50:
+            print(f"  {Y}⚠  commit 數量較多（{log_count} 個），確認要繼續嗎？{R}")
+            try:
+                ans = input(f"  輸入 {G}y{R} 繼續，其他取消：").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ans = ""
+            if ans != "y":
+                print(f"  {D}已取消。如需節省費用，可改用本地 LLM。{R}")
+                return
 
     git_dir = Path(wd) / ".git"
     if not git_dir.exists():
