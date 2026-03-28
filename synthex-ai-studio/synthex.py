@@ -2,20 +2,12 @@
 """
 SYNTHEX AI STUDIO v2 — Agentic CLI
 """
-import sys
-import os
-import argparse
+import sys, os, argparse
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
-RESET = "\033[0m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
-PURPLE = "\033[35m"
-CYAN = "\033[96m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
+RESET="\033[0m";BOLD="\033[1m";DIM="\033[2m"
+PURPLE="\033[35m";CYAN="\033[96m";GREEN="\033[92m";YELLOW="\033[93m";RED="\033[91m"
 CONFIG_FILE = Path.home() / ".synthex_config.json"
 
 BANNER = f"""{PURPLE}{BOLD}
@@ -27,120 +19,83 @@ BANNER = f"""{PURPLE}{BOLD}
   ╚══════╝   ╚═╝   ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
                  AI  S T U D I O  v2  ·  Agentic{RESET}"""
 
-
 def check_api_key():
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print(
-            f"\n{RED}✖ 缺少 ANTHROPIC_API_KEY{RESET}\n  export ANTHROPIC_API_KEY='...'")
+        print(f"\n{RED}✖ 缺少 ANTHROPIC_API_KEY{RESET}\n  export ANTHROPIC_API_KEY='...'")
         sys.exit(1)
-
 
 def load_config():
     import json
     if CONFIG_FILE.exists():
-        try:
-            return json.loads(CONFIG_FILE.read_text())
-        except:
-            pass
+        try: return json.loads(CONFIG_FILE.read_text())
+        except: pass
     return {}
-
 
 def save_config(cfg):
     import json
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
 
-
 def get_workdir(args_workdir=None):
-    if args_workdir:
-        return str(Path(args_workdir).resolve())
+    if args_workdir: return str(Path(args_workdir).resolve())
     return load_config().get("workdir", os.getcwd())
 
 # ── Commands ──────────────────────────────────────────────────
 
-
 def cmd_ask(args):
     from core.orchestrator import Orchestrator
-    Orchestrator(workdir=get_workdir(getattr(args, "workdir", None))).run(
-        " ".join(args.task))
-
+    Orchestrator(workdir=get_workdir(getattr(args,"workdir",None))).run(" ".join(args.task))
 
 def cmd_agent(args):
     from agents.all_agents import get_agent
     try:
-        get_agent(args.name.upper(), workdir=get_workdir(
-            getattr(args, "workdir", None))).chat(" ".join(args.task))
-    except ValueError as e:
-        print(f"{RED}✖ {e}{RESET}")
-        sys.exit(1)
-
+        get_agent(args.name.upper(), workdir=get_workdir(getattr(args,"workdir",None))).chat(" ".join(args.task))
+    except ValueError as e: print(f"{RED}✖ {e}{RESET}"); sys.exit(1)
 
 def cmd_do(args):
     from agents.all_agents import get_agent
-    workdir = get_workdir(getattr(args, "workdir", None))
-    auto = getattr(args, "yes", False)
+    workdir = get_workdir(getattr(args,"workdir",None))
+    auto = getattr(args,"yes",False)
     task = " ".join(args.task)
     print(f"\n{CYAN}{BOLD}  🚀 Agentic 模式 · {args.name.upper()}{RESET}")
     print(f"{DIM}  工作目錄: {workdir}{RESET}")
     try:
-        get_agent(args.name.upper(), workdir=workdir,
-                  auto_confirm=auto).run(task)
-    except ValueError as e:
-        print(f"{RED}✖ {e}{RESET}")
-        sys.exit(1)
-
+        get_agent(args.name.upper(), workdir=workdir, auto_confirm=auto).run(task)
+    except ValueError as e: print(f"{RED}✖ {e}{RESET}"); sys.exit(1)
 
 cmd_run = cmd_do
-
 
 def cmd_build(args):
     from core.orchestrator import Orchestrator
     task = " ".join(args.task)
-    workdir = get_workdir(getattr(args, "workdir", None))
+    workdir = get_workdir(getattr(args,"workdir",None))
     print(f"\n{PURPLE}{BOLD}  🏗  Build 模式 — Agentic + 智能路由{RESET}")
     print(f"{DIM}  工作目錄: {workdir}{RESET}")
-    Orchestrator(workdir=workdir).run(task, agentic=True,
-                                      auto_confirm=getattr(args, "yes", False))
-
+    Orchestrator(workdir=workdir).run(task, agentic=True, auto_confirm=getattr(args,"yes",False))
 
 def cmd_chat(args):
     from agents.all_agents import get_agent
-    workdir = get_workdir(getattr(args, "workdir", None))
-    try:
-        agent = get_agent(args.name.upper(), workdir=workdir)
-    except ValueError as e:
-        print(f"{RED}✖ {e}{RESET}")
-        sys.exit(1)
+    workdir = get_workdir(getattr(args,"workdir",None))
+    try: agent = get_agent(args.name.upper(), workdir=workdir)
+    except ValueError as e: print(f"{RED}✖ {e}{RESET}"); sys.exit(1)
     print(f"\n{CYAN}{BOLD}  💬 {agent.emoji} {agent.name} · 對話模式{RESET}")
     print(f"{DIM}  exit=結束  clear=清記憶  !cd <路徑>=切換目錄{RESET}\n")
     while True:
         try:
             u = input(f"{BOLD}你 > {RESET}").strip()
-            if not u:
-                continue
-            if u.lower() in ("exit", "quit", "結束"):
-                break
-            if u.lower() == "clear":
-                agent.clear_memory()
-                continue
-            if u.startswith("!cd "):
-                agent.set_workdir(u[4:].strip())
-                continue
+            if not u: continue
+            if u.lower() in ("exit","quit","結束"): break
+            if u.lower() == "clear": agent.clear_memory(); continue
+            if u.startswith("!cd "): agent.set_workdir(u[4:].strip()); continue
             agent.chat(u)
-        except (KeyboardInterrupt, EOFError):
-            break
+        except (KeyboardInterrupt, EOFError): break
     print(f"\n{DIM}  對話結束{RESET}\n")
-
 
 def cmd_shell(args):
     from agents.all_agents import get_agent
-    workdir = get_workdir(getattr(args, "workdir", None))
-    auto = getattr(args, "yes", False)
-    try:
-        agent = get_agent(args.name.upper(),
-                          workdir=workdir, auto_confirm=auto)
-    except ValueError as e:
-        print(f"{RED}✖ {e}{RESET}")
-        sys.exit(1)
+    workdir = get_workdir(getattr(args,"workdir",None))
+    auto = getattr(args,"yes",False)
+    try: agent = get_agent(args.name.upper(), workdir=workdir, auto_confirm=auto)
+    except ValueError as e: print(f"{RED}✖ {e}{RESET}"); sys.exit(1)
     print(f"\n{PURPLE}{BOLD}  🤖 Agentic Shell · {agent.emoji} {agent.name}{RESET}")
     print(f"{DIM}  工作目錄: {workdir}")
     print(f"  Agent 可讀寫檔案、執行命令")
@@ -148,78 +103,54 @@ def cmd_shell(args):
     while True:
         try:
             u = input(f"{PURPLE}{BOLD}[{agent.name}] > {RESET}").strip()
-            if not u:
-                continue
-            if u.lower() in ("exit", "quit", "結束"):
-                break
-            if u.lower() == "clear":
-                agent.clear_memory()
-                continue
-            if u.startswith("!cd "):
-                agent.set_workdir(u[4:].strip())
-                continue
-            if u == "!workdir":
-                print(f"  {DIM}{agent.workdir}{RESET}")
-                continue
+            if not u: continue
+            if u.lower() in ("exit","quit","結束"): break
+            if u.lower() == "clear": agent.clear_memory(); continue
+            if u.startswith("!cd "): agent.set_workdir(u[4:].strip()); continue
+            if u == "!workdir": print(f"  {DIM}{agent.workdir}{RESET}"); continue
             agent.run(u)
-        except (KeyboardInterrupt, EOFError):
-            break
+        except (KeyboardInterrupt, EOFError): break
     print(f"\n{DIM}  Shell 結束{RESET}\n")
-
 
 def cmd_project(args):
     from core.orchestrator import Orchestrator
     print(BANNER)
-    Orchestrator(workdir=get_workdir(getattr(args, "workdir", None))
-                 ).project(" ".join(args.brief))
-
+    Orchestrator(workdir=get_workdir(getattr(args,"workdir",None))).project(" ".join(args.brief))
 
 def cmd_dept(args):
     from agents.all_agents import DEPT_AGENTS, get_agent
-    workdir = get_workdir(getattr(args, "workdir", None))
-    dm = {"exec": "exec", "engineering": "engineering", "eng": "engineering", "product": "product",
-          "ai": "ai_data", "ai_data": "ai_data", "devops": "devops", "qa": "qa", "biz": "biz",
-          "高層": "exec", "工程": "engineering", "產品": "product", "資料": "ai_data",
-          "基礎架構": "devops", "品質": "qa", "商務": "biz"}
+    workdir = get_workdir(getattr(args,"workdir",None))
+    dm = {"exec":"exec","engineering":"engineering","eng":"engineering","product":"product",
+          "ai":"ai_data","ai_data":"ai_data","devops":"devops","qa":"qa","biz":"biz",
+          "高層":"exec","工程":"engineering","產品":"product","資料":"ai_data",
+          "基礎架構":"devops","品質":"qa","商務":"biz"}
     dk = dm.get(args.dept.lower())
-    if not dk:
-        print(f"{RED}✖ 找不到部門: {args.dept}{RESET}")
-        sys.exit(1)
+    if not dk: print(f"{RED}✖ 找不到部門: {args.dept}{RESET}"); sys.exit(1)
     task = " ".join(args.task)
     print(f"\n{CYAN}{BOLD}  部門協作：{dk}{RESET}")
     for name in DEPT_AGENTS[dk]:
         get_agent(name, workdir=workdir).chat(task)
 
-
 def cmd_review(args):
     from agents.all_agents import get_agent
-    try:
-        agent = get_agent(args.name.upper(), workdir=get_workdir(
-            getattr(args, "workdir", None)))
-    except ValueError as e:
-        print(f"{RED}✖ {e}{RESET}")
-        sys.exit(1)
+    try: agent = get_agent(args.name.upper(), workdir=get_workdir(getattr(args,"workdir",None)))
+    except ValueError as e: print(f"{RED}✖ {e}{RESET}"); sys.exit(1)
     print(f"\n{CYAN}  貼入內容（最後輸入 END）：{RESET}")
     lines = []
     while True:
         try:
             l = input()
-            if l.strip() == "END":
-                break
+            if l.strip() == "END": break
             lines.append(l)
-        except EOFError:
-            break
+        except EOFError: break
     content = "\n".join(lines)
-    if not content.strip():
-        print(f"{RED}✖ 空內容{RESET}")
-        return
+    if not content.strip(): print(f"{RED}✖ 空內容{RESET}"); return
     agent.review(content)
-
 
 def cmd_list(args):
     from agents.all_agents import DEPT_AGENTS, ALL_AGENTS
-    dn = {"exec": "🎯 高層管理", "engineering": "⚙️  工程開發", "product": "💡 產品設計",
-          "ai_data": "🧠 AI 與資料", "devops": "🚀 基礎架構", "qa": "🔍 品質安全", "biz": "📣 商務發展"}
+    dn = {"exec":"🎯 高層管理","engineering":"⚙️  工程開發","product":"💡 產品設計",
+          "ai_data":"🧠 AI 與資料","devops":"🚀 基礎架構","qa":"🔍 品質安全","biz":"📣 商務發展"}
     print(f"\n{BOLD}SYNTHEX AI STUDIO · 全體 24 位 Agent{RESET}\n")
     print(f"  {DIM}對話: python synthex.py agent <n> \"任務\"{RESET}")
     print(f"  {DIM}執行: python synthex.py do <n> \"任務\"{RESET}")
@@ -231,25 +162,16 @@ def cmd_list(args):
             print(f"  {cls.emoji}  {BOLD}{name:<8}{RESET} {cls.title}")
         print()
 
-
 def cmd_clear(args):
     from agents.all_agents import get_agent
-    try:
-        get_agent(args.name.upper()).clear_memory()
-    except ValueError as e:
-        print(f"{RED}✖ {e}{RESET}")
-
+    try: get_agent(args.name.upper()).clear_memory()
+    except ValueError as e: print(f"{RED}✖ {e}{RESET}")
 
 def cmd_workdir(args):
     path = str(Path(args.path).resolve())
-    if not Path(path).exists():
-        print(f"{RED}✖ 路徑不存在: {path}{RESET}")
-        sys.exit(1)
-    cfg = load_config()
-    cfg["workdir"] = path
-    save_config(cfg)
+    if not Path(path).exists(): print(f"{RED}✖ 路徑不存在: {path}{RESET}"); sys.exit(1)
+    cfg = load_config(); cfg["workdir"] = path; save_config(cfg)
     print(f"\n{GREEN}✔ 預設工作目錄：{BOLD}{path}{RESET}\n")
-
 
 def cmd_help(args=None):
     print(BANNER)
@@ -287,7 +209,6 @@ def cmd_help(args=None):
 
 # ── Main ──────────────────────────────────────────────────────
 
-
 def main():
     parser = argparse.ArgumentParser(prog="synthex", add_help=False)
     sub = parser.add_subparsers(dest="command")
@@ -299,49 +220,37 @@ def main():
         return p
 
     mkp("ask").add_argument("task", nargs="+")
-    p = mkp("agent")
-    p.add_argument("name")
-    p.add_argument("task", nargs="+")
-    for cmd in ("do", "run"):
-        p = mkp(cmd)
-        p.add_argument("name")
-        p.add_argument("task", nargs="+")
+    p=mkp("agent"); p.add_argument("name"); p.add_argument("task", nargs="+")
+    for cmd in ("do","run"):
+        p=mkp(cmd); p.add_argument("name"); p.add_argument("task", nargs="+")
     mkp("build").add_argument("task", nargs="+")
     mkp("chat").add_argument("name")
     mkp("shell").add_argument("name")
     mkp("project").add_argument("brief", nargs="+")
-    p = mkp("dept")
-    p.add_argument("dept")
-    p.add_argument("task", nargs="+")
+    p=mkp("dept"); p.add_argument("dept"); p.add_argument("task", nargs="+")
     mkp("review").add_argument("name")
     sub.add_parser("list")
     sub.add_parser("help")
-    p = sub.add_parser("clear")
-    p.add_argument("name")
-    p = sub.add_parser("workdir")
-    p.add_argument("path")
+    p=sub.add_parser("clear"); p.add_argument("name")
+    p=sub.add_parser("workdir"); p.add_argument("path")
 
     args = parser.parse_args()
     if args.command is None or args.command == "help":
-        cmd_help()
-        return
+        cmd_help(); return
     check_api_key()
 
     cmds = {
-        "ask": cmd_ask, "agent": cmd_agent, "chat": cmd_chat,
-        "do": cmd_do, "run": cmd_run, "build": cmd_build, "shell": cmd_shell,
-        "dept": cmd_dept, "project": cmd_project, "review": cmd_review,
-        "list": cmd_list, "clear": cmd_clear, "workdir": cmd_workdir,
+        "ask":cmd_ask,"agent":cmd_agent,"chat":cmd_chat,
+        "do":cmd_do,"run":cmd_run,"build":cmd_build,"shell":cmd_shell,
+        "dept":cmd_dept,"project":cmd_project,"review":cmd_review,
+        "list":cmd_list,"clear":cmd_clear,"workdir":cmd_workdir,
     }
     fn = cmds.get(args.command)
     if fn:
-        try:
-            fn(args)
-        except KeyboardInterrupt:
-            print(f"\n{DIM}  已中止{RESET}\n")
+        try: fn(args)
+        except KeyboardInterrupt: print(f"\n{DIM}  已中止{RESET}\n")
     else:
-        print(f"{RED}✖ 未知命令: {args.command}{RESET}")
-        cmd_help()
+        print(f"{RED}✖ 未知命令: {args.command}{RESET}"); cmd_help()
 
 # (entry point moved to end of file)
 
@@ -367,10 +276,10 @@ def cmd_ship(args):
     from core.web_orchestrator import WebOrchestrator
     from core.base_agent import init_session_budget
     requirement = " ".join(args.requirement)
-    workdir = get_workdir(getattr(args, "workdir", None))
-    auto = getattr(args, "yes", False)
-    budget = getattr(args, "budget", 5.0)
-    no_resume = getattr(args, "no_resume", False)
+    workdir     = get_workdir(getattr(args, "workdir", None))
+    auto        = getattr(args, "yes", False)
+    budget      = getattr(args, "budget", 5.0)
+    no_resume   = getattr(args, "no_resume", False)
     init_session_budget(budget_usd=budget)
     print(f"{DIM}  💰 預算上限：${budget:.1f} USD{RESET}")
 
@@ -440,7 +349,7 @@ def cmd_retro(args):
     """
     from agents.all_agents import get_agent
     workdir = get_workdir(getattr(args, "workdir", None))
-    since = getattr(args, "since", None) or "7 days ago"
+    since   = getattr(args, "since", None) or "7 days ago"
 
     print(f"\n{CYAN}{BOLD}  📊 /retro — 回顧統計{RESET}")
     print(f"{DIM}  時間範圍：{since} · 目錄：{workdir}{RESET}\n")
@@ -454,9 +363,9 @@ def cmd_retro(args):
                            capture_output=True, text=True, timeout=15)
         return r.stdout.strip()
 
-    commits = git(f'git log --since="{since}" --oneline')
+    commits     = git(f'git log --since="{since}" --oneline')
     commit_list = [l for l in commits.splitlines() if l]
-    stat = git(f'git log --since="{since}" --numstat --pretty=format:""')
+    stat        = git(f'git log --since="{since}" --numstat --pretty=format:""')
 
     added = deleted = test_added = 0
     for line in stat.splitlines():
@@ -464,7 +373,7 @@ def cmd_retro(args):
         if len(parts) == 3:
             try:
                 a, d = int(parts[0]), int(parts[1])
-                added += a
+                added   += a
                 deleted += d
                 fname = parts[2]
                 if any(x in fname for x in ["test", "spec", "__test__", ".test.", ".spec."]):
@@ -472,9 +381,9 @@ def cmd_retro(args):
             except ValueError:
                 pass
 
-    net_loc = added - deleted
-    test_pct = round(test_added / added * 100) if added > 0 else 0
-    commit_count = len(commit_list)
+    net_loc       = added - deleted
+    test_pct      = round(test_added / added * 100) if added > 0 else 0
+    commit_count  = len(commit_list)
 
     # 統計數據
     stats_str = f"""
@@ -517,9 +426,8 @@ def cmd_qa_browser(args):
     from core.browser_qa import BrowserToolExecutor, BrowserQA, SCREENSHOT_DIR
     from agents.all_agents import get_agent
 
-    workdir = get_workdir(getattr(args, "workdir", None))
-    base_url = " ".join(args.url) if hasattr(
-        args, "url") and args.url else "http://localhost:3000"
+    workdir  = get_workdir(getattr(args, "workdir", None))
+    base_url = " ".join(args.url) if hasattr(args, "url") and args.url else "http://localhost:3000"
     headless = not getattr(args, "headed", False)
 
     routes_arg = getattr(args, "routes", None)
@@ -535,8 +443,7 @@ def cmd_qa_browser(args):
     print(f"  模式：{'有頭（可見）' if not headless else '無頭（背景）'}{RESET}\n")
 
     executor = BrowserToolExecutor(headless=headless)
-    result = executor.execute(
-        "browser_audit", {"base_url": base_url, "routes": routes})
+    result   = executor.execute("browser_audit", {"base_url": base_url, "routes": routes})
 
     import json
     report = json.loads(result)
@@ -562,9 +469,9 @@ def cmd_qa_browser(args):
 
 完整路由報告：
 {json.dumps({k: {
-            'console_errors': v.get('console_errors', []),
-            'network_errors': v.get('network_errors', [])
-        } for k, v in report.get('routes', {}).items()}, ensure_ascii=False, indent=2)}
+    'console_errors': v.get('console_errors', []),
+    'network_errors': v.get('network_errors', [])
+} for k, v in report.get('routes', {}).items()}, ensure_ascii=False, indent=2)}
 
 請分析這些錯誤，判斷嚴重程度，並給出具體的修復建議。
 """)
@@ -578,10 +485,10 @@ def cmd_investigate(args):
     from core.browser_qa import BrowserToolExecutor
     from agents.all_agents import get_agent
 
-    workdir = get_workdir(getattr(args, "workdir", None))
+    workdir     = get_workdir(getattr(args, "workdir", None))
     description = " ".join(args.description)
-    base_url = getattr(args, "url", None) or "http://localhost:3000"
-    headless = not getattr(args, "headed", False)
+    base_url    = getattr(args, "url", None) or "http://localhost:3000"
+    headless    = not getattr(args, "headed", False)
 
     print(f"\n{RED}{BOLD}  🔎 /investigate — 問題調查{RESET}")
     print(f"{DIM}  問題：{description[:60]}")
@@ -607,8 +514,7 @@ app URL：{base_url}
 """)
 
     # 嘗試解析步驟
-    import json
-    import re
+    import json, re
     try:
         match = re.search(r'\[.*\]', steps_plan, re.DOTALL)
         steps = json.loads(match.group()) if match else []
@@ -618,8 +524,7 @@ app URL：{base_url}
     if steps:
         print(f"\n{CYAN}▶ 用瀏覽器重現問題（{len(steps)} 個步驟）...{RESET}")
         executor = BrowserToolExecutor(headless=headless)
-        result = executor.execute(
-            "browser_flow", {"url": base_url, "steps": steps})
+        result   = executor.execute("browser_flow", {"url": base_url, "steps": steps})
         flow_result = json.loads(result)
 
         # PROBE 分析瀏覽器結果給出診斷
@@ -639,11 +544,8 @@ app URL：{base_url}
 # re-wire main() to include new commands
 _original_main = main
 
-
 def main():
-    import sys
-    import os
-    import argparse
+    import sys, os, argparse
     from pathlib import Path
 
     parser = argparse.ArgumentParser(prog="synthex", add_help=False)
@@ -657,66 +559,49 @@ def main():
 
     # 原有命令
     mkp("ask").add_argument("task", nargs="+")
-    p = mkp("agent")
-    p.add_argument("name")
-    p.add_argument("task", nargs="+")
-    for cmd in ("do", "run"):
-        p = mkp(cmd)
-        p.add_argument("name")
-        p.add_argument("task", nargs="+")
+    p=mkp("agent");   p.add_argument("name"); p.add_argument("task", nargs="+")
+    for cmd in ("do","run"):
+        p=mkp(cmd);   p.add_argument("name"); p.add_argument("task", nargs="+")
     mkp("build").add_argument("task", nargs="+")
     mkp("chat").add_argument("name")
     mkp("shell").add_argument("name")
     mkp("project").add_argument("brief", nargs="+")
-    p = mkp("dept")
-    p.add_argument("dept")
-    p.add_argument("task", nargs="+")
+    p=mkp("dept");    p.add_argument("dept"); p.add_argument("task", nargs="+")
     mkp("review").add_argument("name")
     sub.add_parser("list")
     sub.add_parser("help")
-    p = sub.add_parser("clear")
-    p.add_argument("name")
-    p = sub.add_parser("workdir")
-    p.add_argument("path")
+    p=sub.add_parser("clear");   p.add_argument("name")
+    p=sub.add_parser("workdir"); p.add_argument("path")
 
     # 網頁開發命令
-    p = mkp("discover")
-    p.add_argument("idea", nargs="+")
-    p = mkp("ship")
-    p.add_argument("requirement", nargs="+")
+    p=mkp("discover"); p.add_argument("idea", nargs="+")
+    p=mkp("ship");     p.add_argument("requirement", nargs="+")
     p.add_argument("--budget",    type=float, default=5.0,
                    help="API 費用預算上限 USD（預設 $5.0）")
     p.add_argument("--no-resume", action="store_true",
                    help="不使用斷點續跑，從頭開始")
-    p = mkp("webdev")
-    p.add_argument("requirement", nargs="+")
-    p.add_argument("--name", default=None)
-    p = mkp("feature")
-    p.add_argument("description", nargs="+")
-    p = mkp("fixbug")
-    p.add_argument("description", nargs="+")
+    p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
+    p=mkp("feature");  p.add_argument("description", nargs="+")
+    p=mkp("fixbug");   p.add_argument("description", nargs="+")
     mkp("codereview")
 
     # 新增弱項補強命令
-    p = mkp("retro")
-    p.add_argument("--since", default="7 days ago")
-    p = mkp("qa-browser")
-    p.add_argument("url", nargs="?", default=None)
+    p=mkp("retro");       p.add_argument("--since", default="7 days ago")
+    p=mkp("qa-browser");  p.add_argument("url", nargs="?", default=None)
     p.add_argument("--routes", nargs="+")
     p.add_argument("--headed", action="store_true",
-                   help="顯示瀏覽器視窗（非無頭模式）")
-    p = mkp("investigate")
-    p.add_argument("description", nargs="+")
+                                           help="顯示瀏覽器視窗（非無頭模式）")
+    p=mkp("investigate"); p.add_argument("description", nargs="+")
     p.add_argument("--url", default="http://localhost:3000")
     p.add_argument("--headed", action="store_true")
 
     # ── Project Brain 命令 ──────────────────────────────────
     p = mkp("brain")
     p.add_argument("subcommand", nargs="?", default="status",
-                   choices=["init", "scan", "status", "context", "learn",
-                            "add", "export", "share", "query-shared",
-                            "decay", "counterfactual", "validate",
-                            "distill", "webui"],
+                   choices=["init","scan","status","context","learn",
+                            "add","export","share","query-shared",
+                            "decay","counterfactual","validate",
+                            "distill","webui"],
                    help="Brain 子命令")
     # init
     p.add_argument("--name",       default="",  help="專案名稱（init 用）")
@@ -729,32 +614,30 @@ def main():
     p.add_argument("--title",      nargs="+",   help="知識標題（add/share 用）")
     p.add_argument("--content",    default="",  help="知識內容（add 用）")
     p.add_argument("--kind",       default="Decision",
-                   choices=["Decision", "Pitfall", "Rule", "ADR", "Component"],
+                   choices=["Decision","Pitfall","Rule","ADR","Component"],
                    help="知識類型（add/share 用）")
     p.add_argument("--tags",       nargs="+",   default=[])
     # share
     p.add_argument("--visibility", default="team",
-                   choices=["team", "org", "public"])
+                   choices=["team","org","public"])
     # query-shared
     p.add_argument("--query",      nargs="+",   help="查詢關鍵字（query-shared 用）")
     # decay
     p.add_argument("--action",     default="report",
-                   choices=["report", "update", "invalidate"])
-    p.add_argument("--node-id",    default="",
-                   help="節點 ID（decay invalidate 用）")
-    p.add_argument("--reason",     default="",
-                   help="失效原因（decay invalidate 用）")
+                   choices=["report","update","invalidate"])
+    p.add_argument("--node-id",    default="",  help="節點 ID（decay invalidate 用）")
+    p.add_argument("--reason",     default="",  help="失效原因（decay invalidate 用）")
     # counterfactual
     p.add_argument("--question",   nargs="+",   help="反事實問題")
     p.add_argument("--component",  default="",  help="目標組件")
     p.add_argument("--depth",      default="brief",
-                   choices=["brief", "detailed"])
+                   choices=["brief","detailed"])
     # validate
     p.add_argument("--max-api-calls", type=int, default=20)
     p.add_argument("--dry-run",    action="store_true")
     # distill
     p.add_argument("--layers",     nargs="+",
-                   default=["context", "prompts", "lora"])
+                   default=["context","prompts","lora"])
     # webui
     p.add_argument("--port",       type=int, default=7890)
 
@@ -790,27 +673,26 @@ def main():
     check_api_key()
 
     cmds = {
-        "ask": cmd_ask, "agent": cmd_agent, "chat": cmd_chat,
-        "do": cmd_do, "run": cmd_run, "build": cmd_build, "shell": cmd_shell,
-        "dept": cmd_dept, "project": cmd_project, "review": cmd_review,
-        "list": cmd_list, "clear": cmd_clear, "workdir": cmd_workdir,
-        "discover": cmd_discover, "ship": cmd_ship, "webdev": cmd_webdev,
-        "feature": cmd_feature, "fixbug": cmd_fix, "codereview": cmd_review_project,
+        "ask":cmd_ask,"agent":cmd_agent,"chat":cmd_chat,
+        "do":cmd_do,"run":cmd_run,"build":cmd_build,"shell":cmd_shell,
+        "dept":cmd_dept,"project":cmd_project,"review":cmd_review,
+        "list":cmd_list,"clear":cmd_clear,"workdir":cmd_workdir,
+        "discover":cmd_discover,"ship":cmd_ship,"webdev":cmd_webdev,
+        "feature":cmd_feature,"fixbug":cmd_fix,"codereview":cmd_review_project,
         # 弱項補強
-        "retro": cmd_retro, "qa-browser": cmd_qa_browser, "investigate": cmd_investigate,
+        "retro":cmd_retro,"qa-browser":cmd_qa_browser,"investigate":cmd_investigate,
         # Project Brain
-        "brain": cmd_brain,
+        "brain":cmd_brain,
     }
     fn = cmds.get(args.command)
     if fn:
-        try:
-            fn(args)
-        except KeyboardInterrupt:
-            print(f"\n{DIM}  已中止{RESET}\n")
+        try: fn(args)
+        except KeyboardInterrupt: print(f"\n{DIM}  已中止{RESET}\n")
     else:
         print(f"{RED}✖ 未知命令: {args.command}{RESET}")
 
 # (entry point moved to end of file)
+
 
 
 # ── 弱項補強：新命令 ──────────────────────────────────────────
@@ -823,34 +705,20 @@ def main():
 def cmd_brain(args):
     """Project Brain — 知識積累主命令（分派子命令）"""
     subcmd = getattr(args, "subcommand", None) or "status"
-    if subcmd == "init":
-        cmd_brain_init(args)
-    elif subcmd == "scan":
-        cmd_brain_scan(args)
-    elif subcmd == "context":
-        cmd_brain_context(args)
-    elif subcmd == "learn":
-        cmd_brain_learn(args)
-    elif subcmd == "status":
-        cmd_brain_status(args)
-    elif subcmd == "export":
-        cmd_brain_export(args)
-    elif subcmd == "add":
-        cmd_brain_add(args)
-    elif subcmd == "share":
-        cmd_brain_share(args)
-    elif subcmd == "query-shared":
-        cmd_brain_query_shared(args)
-    elif subcmd == "decay":
-        cmd_brain_decay(args)
-    elif subcmd == "counterfactual":
-        cmd_brain_counterfactual(args)
-    elif subcmd == "validate":
-        cmd_brain_validate(args)
-    elif subcmd == "distill":
-        cmd_brain_distill(args)
-    elif subcmd == "webui":
-        cmd_brain_webui(args)
+    if   subcmd == "init":          cmd_brain_init(args)
+    elif subcmd == "scan":          cmd_brain_scan(args)
+    elif subcmd == "context":       cmd_brain_context(args)
+    elif subcmd == "learn":         cmd_brain_learn(args)
+    elif subcmd == "status":        cmd_brain_status(args)
+    elif subcmd == "export":        cmd_brain_export(args)
+    elif subcmd == "add":           cmd_brain_add(args)
+    elif subcmd == "share":         cmd_brain_share(args)
+    elif subcmd == "query-shared":  cmd_brain_query_shared(args)
+    elif subcmd == "decay":         cmd_brain_decay(args)
+    elif subcmd == "counterfactual":cmd_brain_counterfactual(args)
+    elif subcmd == "validate":      cmd_brain_validate(args)
+    elif subcmd == "distill":       cmd_brain_distill(args)
+    elif subcmd == "webui":         cmd_brain_webui(args)
     else:
         print("用法：synthex brain <init|scan|status|context|learn|add|export|"
               "share|query-shared|decay|counterfactual|validate|distill|webui>")
@@ -860,10 +728,10 @@ def cmd_brain_init(args):
     """初始化 Project Brain（新專案）"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    gurl = getattr(args, "graphiti_url", "") or ""
-    brain = ProjectBrain(workdir, graphiti_url=gurl)
-    name = getattr(args, "name", None) or ""
-    result = brain.init(project_name=name)
+    gurl    = getattr(args, "graphiti_url", "") or ""
+    brain   = ProjectBrain(workdir, graphiti_url=gurl)
+    name    = getattr(args, "name", None) or ""
+    result  = brain.init(project_name=name)
     print(result)
 
 
@@ -873,7 +741,7 @@ def cmd_brain_scan(args):
     workdir = get_workdir(getattr(args, "workdir", None))
     print(f"\n{CYAN}{BOLD}🔍  考古掃描{RESET}  {DIM}{workdir}{RESET}")
     print(f"{DIM}  分析 git 歷史中，視 commit 數量需要數分鐘...{RESET}")
-    brain = ProjectBrain(workdir)
+    brain  = ProjectBrain(workdir)
     report = brain.scan(verbose=True)
     # 儲存報告
     report_path = f"{workdir}/.brain/SCAN_REPORT.md"
@@ -885,10 +753,10 @@ def cmd_brain_context(args):
     """為指定任務生成 Context 注入"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    task = " ".join(args.task)
-    file = getattr(args, "file", None) or ""
-    brain = ProjectBrain(workdir)
-    ctx = brain.get_context(task, file)
+    task    = " ".join(args.task)
+    file    = getattr(args, "file", None) or ""
+    brain   = ProjectBrain(workdir)
+    ctx     = brain.get_context(task, file)
     if ctx:
         print(f"\n{CYAN}{BOLD}🧠  Project Brain Context{RESET}\n{DIM}{'─'*50}{RESET}")
         print(ctx)
@@ -901,10 +769,10 @@ def cmd_brain_context(args):
 def cmd_brain_learn(args):
     """手動觸發從最近 commit 學習"""
     from core.brain import ProjectBrain
-    workdir = get_workdir(getattr(args, "workdir", None))
+    workdir     = get_workdir(getattr(args, "workdir", None))
     commit_hash = getattr(args, "commit", "HEAD")
-    brain = ProjectBrain(workdir)
-    n = brain.learn_from_commit(commit_hash)
+    brain       = ProjectBrain(workdir)
+    n           = brain.learn_from_commit(commit_hash)
     print(f"{GREEN}✓{RESET} 從 {CYAN}{commit_hash}{RESET} 學習了 {BOLD}{n}{RESET} 個知識片段")
 
 
@@ -912,7 +780,7 @@ def cmd_brain_status(args):
     """查看知識庫狀態"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    brain = ProjectBrain(workdir)
+    brain   = ProjectBrain(workdir)
     print(brain.status())
 
 
@@ -920,12 +788,13 @@ def cmd_brain_export(args):
     """匯出知識圖譜（Mermaid 格式）"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    brain = ProjectBrain(workdir)
+    brain   = ProjectBrain(workdir)
     mermaid = brain.export_mermaid()
     out = f"{workdir}/.brain/graph.md"
     open(out, "w").write(f"```mermaid\n{mermaid}\n```")
     print(f"{GREEN}✓{RESET} 知識圖譜已匯出：{CYAN}{out}{RESET}")
     print(f"{DIM}{mermaid[:500]}{RESET}")
+
 
 
 # ══════════════════════════════════════════════════════════════
@@ -936,11 +805,11 @@ def cmd_brain_share(args):
     """發布知識到跨專案共享庫"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    brain = ProjectBrain(workdir)
-    title = " ".join(args.title)
+    brain   = ProjectBrain(workdir)
+    title   = " ".join(args.title)
     content_text = getattr(args, "content", "") or ""
-    kind = getattr(args, "kind", "Pitfall") or "Pitfall"
-    vis = getattr(args, "visibility", "team") or "team"
+    kind    = getattr(args, "kind", "Pitfall") or "Pitfall"
+    vis     = getattr(args, "visibility", "team") or "team"
 
     reg = brain.shared_registry
     new_id = reg.publish(title, content_text, kind,
@@ -955,8 +824,8 @@ def cmd_brain_query_shared(args):
     """查詢跨專案知識庫"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    brain = ProjectBrain(workdir)
-    q = " ".join(args.query)
+    brain   = ProjectBrain(workdir)
+    q       = " ".join(args.query)
 
     results = brain.shared_registry.query(q, limit=10)
     if not results:
@@ -973,9 +842,9 @@ def cmd_brain_decay(args):
     """查看知識衰減報告"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    brain = ProjectBrain(workdir)
-    de = brain.decay_engine
-    action = getattr(args, "action", "report")
+    brain   = ProjectBrain(workdir)
+    de      = brain.decay_engine
+    action  = getattr(args, "action", "report")
     if action == "report":
         summary = de.decay_summary()
         print(f"\n{CYAN}{BOLD}📉  知識衰減報告{RESET}\n{DIM}{chr(45)*50}{RESET}")
@@ -985,13 +854,12 @@ def cmd_brain_decay(args):
         if deprecated:
             print(f"\n  {YELLOW}低信心節點（前 {len(deprecated)} 筆）{RESET}")
             for node in deprecated:
-                conf = node.get("confidence", 0)
-                kind = node.get("kind", "?")
+                conf  = node.get("confidence", 0)
+                kind  = node.get("kind", "?")
                 title = node.get("title", "")
                 c = GREEN if conf >= 0.5 else (YELLOW if conf >= 0.3 else RED)
                 bar = c + "▉" * round(conf * 10) + RESET
-                print(
-                    f"  {bar:<14}  {conf:.2f}  {CYAN}[{kind}]{RESET} {title}")
+                print(f"  {bar:<14}  {conf:.2f}  {CYAN}[{kind}]{RESET} {title}")
         else:
             print(f"  {GREEN}✓ 所有知識信心度正常{RESET}")
     elif action == "update":
@@ -1000,7 +868,7 @@ def cmd_brain_decay(args):
     elif action == "invalidate":
         node_id = getattr(args, "node_id", "") or ""
         ok = de.restore(node_id, confidence=0.05)
-        icon = f"{GREEN}✓{RESET}" if ok else f"{RED}✗{RESET}"
+        icon  = f"{GREEN}✓{RESET}" if ok else f"{RED}✗{RESET}"
         label = "已標記節點失效" if ok else "節點不存在"
         print(f"{icon} {label}：{CYAN}{node_id}{RESET}")
 
@@ -1009,31 +877,29 @@ def cmd_brain_counterfactual(args):
     """反事實推理：如果當初不這樣設計，會怎樣？"""
     from core.brain import ProjectBrain
     from core.brain.v2.counterfactual import CounterfactualQuery
-    workdir = get_workdir(getattr(args, "workdir", None))
-    brain = ProjectBrain(workdir)
-    question = " ".join(args.question)
+    workdir   = get_workdir(getattr(args, "workdir", None))
+    brain     = ProjectBrain(workdir)
+    question  = " ".join(args.question)
     component = getattr(args, "component", "") or ""
-    depth = getattr(args, "depth", "brief") or "brief"
+    depth     = getattr(args, "depth", "brief") or "brief"
 
     print(f"\n🔮 反事實分析中（{depth} 模式）...")
-    q = CounterfactualQuery(question=question,
-                            target_component=component, depth=depth)
+    q      = CounterfactualQuery(question=question,
+                                  target_component=component, depth=depth)
     result = brain.counterfactual.reason(q)
     print(brain.counterfactual.format_result(result))
-
 
 def cmd_brain_add(args):
     """手動加入知識片段"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    brain = ProjectBrain(workdir)
-    title = " ".join(args.title)
+    brain   = ProjectBrain(workdir)
+    title   = " ".join(args.title)
     content = getattr(args, "content", "") or ""
-    kind = getattr(args, "kind", "Decision") or "Decision"
-    tags = getattr(args, "tags", []) or []
+    kind    = getattr(args, "kind", "Decision") or "Decision"
+    tags    = getattr(args, "tags", []) or []
     node_id = brain.add_knowledge(title, content, kind, tags)
     print(f"{GREEN}✓{RESET} 知識已加入：{CYAN}{BOLD}{node_id}{RESET}")
-
 
 def cmd_init(args):
     """
@@ -1046,7 +912,7 @@ def cmd_init(args):
 
     workdir = get_workdir(getattr(args, "workdir", None))
     scanner = ProjectScanner(workdir)
-    scan = scanner.scan()
+    scan    = scanner.scan()
 
     print(scanner.format_report(scan))
 
@@ -1080,10 +946,8 @@ def cmd_init(args):
             # 高優先問題先處理
             high = [i for i in issues if i["severity"] == "high"]
             if high:
-                agent = get_agent("FORGE", workdir=workdir,
-                                  auto_confirm=getattr(args, "yes", False))
-                issues_text = "\n".join(
-                    f"- {i['issue']}：{i['fix']}" for i in high)
+                agent = get_agent("FORGE", workdir=workdir, auto_confirm=getattr(args, "yes", False))
+                issues_text = "\n".join(f"- {i['issue']}：{i['fix']}" for i in high)
                 agent.run(f"""
 掃描發現以下高優先問題，請逐一修復：
 
@@ -1098,8 +962,7 @@ def cmd_init(args):
         # 輸出快速行動清單
         if not scan["health"].get("has_observability"):
             print(f"\n{YELLOW}  ⚠ 缺少可觀測性工具，執行以下命令安裝：{RESET}")
-            print(
-                f"  {DIM}python synthex.py do FORGE \"安裝並設定 Sentry 和 PostHog\"{RESET}")
+            print(f"  {DIM}python synthex.py do FORGE \"安裝並設定 Sentry 和 PostHog\"{RESET}")
 
 
 def cmd_deploy(args):
@@ -1109,14 +972,13 @@ def cmd_deploy(args):
     """
     from core.deploy_pipeline import DeployPipeline
 
-    workdir = get_workdir(getattr(args, "workdir", None))
-    target = getattr(args, "target", None) or "vercel"
-    skip_browser = getattr(args, "skip_browser", False)
-    auto = getattr(args, "yes", False)
-    prod_url = getattr(args, "url", None)
+    workdir       = get_workdir(getattr(args, "workdir", None))
+    target        = getattr(args, "target", None) or "vercel"
+    skip_browser  = getattr(args, "skip_browser", False)
+    auto          = getattr(args, "yes", False)
+    prod_url      = getattr(args, "url", None)
 
-    pipeline = DeployPipeline(
-        workdir=workdir, target=target, auto_confirm=auto)
+    pipeline = DeployPipeline(workdir=workdir, target=target, auto_confirm=auto)
     pipeline.run(skip_browser_qa=skip_browser, production_url=prod_url)
 
 
@@ -1126,9 +988,8 @@ def cmd_vitals(args):
     """
     from core.browser_qa import _check_playwright, install_playwright
 
-    url = " ".join(args.url) if hasattr(
-        args, "url") and args.url else "http://localhost:3000"
-    runs = getattr(args, "runs", 3)
+    url   = " ".join(args.url) if hasattr(args, "url") and args.url else "http://localhost:3000"
+    runs  = getattr(args, "runs", 3)
 
     if not _check_playwright():
         install_playwright()
@@ -1139,12 +1000,10 @@ def cmd_vitals(args):
         from core.browser_qa import ExtendedBrowserQA
     except ImportError:
         # ExtendedBrowserQA 在 append 的程式碼裡，直接 exec browser_qa 後取得
-        import importlib.util
-        import sys
+        import importlib.util, sys
         spec = importlib.util.spec_from_file_location(
             "browser_qa",
-            str(__import__("pathlib").Path(
-                __file__).parent / "core" / "browser_qa.py")
+            str(__import__("pathlib").Path(__file__).parent / "core" / "browser_qa.py")
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -1178,8 +1037,7 @@ def cmd_cross_device(args):
     from core.browser_qa import _check_playwright, install_playwright
     import json
 
-    url = " ".join(args.url) if hasattr(
-        args, "url") and args.url else "http://localhost:3000"
+    url     = " ".join(args.url) if hasattr(args, "url") and args.url else "http://localhost:3000"
     workdir = get_workdir(getattr(args, "workdir", None))
 
     if not _check_playwright():
@@ -1196,8 +1054,7 @@ def cmd_cross_device(args):
         return
 
     # 讓 SPARK 分析截圖結果
-    devices_with_errors = {k: v for k, v in result.get(
-        "devices", {}).items() if v.get("errors")}
+    devices_with_errors = {k: v for k, v in result.get("devices", {}).items() if v.get("errors")}
     if devices_with_errors:
         agent = get_agent("SPARK", workdir=workdir)
         agent.chat(f"""
@@ -1213,13 +1070,11 @@ def cmd_cross_device(args):
 
 # re-wire final main()
 def main():
-    import sys
-    import os
-    import argparse
+    import sys, os, argparse
     from pathlib import Path
 
     parser = argparse.ArgumentParser(prog="synthex", add_help=False)
-    sub = parser.add_subparsers(dest="command")
+    sub    = parser.add_subparsers(dest="command")
 
     def mkp(name, **kw):
         p = sub.add_parser(name, **kw)
@@ -1229,105 +1084,82 @@ def main():
 
     # 核心對話
     mkp("ask").add_argument("task", nargs="+")
-    p = mkp("agent")
-    p.add_argument("name")
-    p.add_argument("task", nargs="+")
-    for c in ("do", "run"):
-        p = mkp(c)
-        p.add_argument("name")
-        p.add_argument("task", nargs="+")
+    p=mkp("agent");  p.add_argument("name"); p.add_argument("task", nargs="+")
+    for c in ("do","run"):
+        p=mkp(c);    p.add_argument("name"); p.add_argument("task", nargs="+")
     mkp("build").add_argument("task", nargs="+")
     mkp("chat").add_argument("name")
     mkp("shell").add_argument("name")
     mkp("project").add_argument("brief", nargs="+")
-    p = mkp("dept")
-    p.add_argument("dept")
-    p.add_argument("task", nargs="+")
+    p=mkp("dept");   p.add_argument("dept"); p.add_argument("task", nargs="+")
     mkp("review").add_argument("name")
-    sub.add_parser("list")
-    sub.add_parser("help")
-    p = sub.add_parser("clear")
-    p.add_argument("name")
-    p = sub.add_parser("workdir")
-    p.add_argument("path")
+    sub.add_parser("list"); sub.add_parser("help")
+    p=sub.add_parser("clear");   p.add_argument("name")
+    p=sub.add_parser("workdir"); p.add_argument("path")
 
     # 規劃流水線
-    p = mkp("discover")
-    p.add_argument("idea", nargs="+")
-    p = mkp("ship")
-    p.add_argument("requirement", nargs="+")
+    p=mkp("discover"); p.add_argument("idea", nargs="+")
+    p=mkp("ship");     p.add_argument("requirement", nargs="+")
     p.add_argument("--budget",    type=float, default=5.0,
                    help="API 費用預算上限 USD（預設 $5.0）")
     p.add_argument("--no-resume", action="store_true",
                    help="不使用斷點續跑，從頭開始")
-    p = mkp("webdev")
-    p.add_argument("requirement", nargs="+")
-    p.add_argument("--name", default=None)
-    p = mkp("feature")
-    p.add_argument("description", nargs="+")
-    p = mkp("fixbug")
-    p.add_argument("description", nargs="+")
+    p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
+    p=mkp("feature");  p.add_argument("description", nargs="+")
+    p=mkp("fixbug");   p.add_argument("description", nargs="+")
     mkp("codereview")
 
     # 弱項補強第一批
-    p = mkp("retro")
-    p.add_argument("--since", default="7 days ago")
-    p = mkp("qa-browser")
-    p.add_argument("url", nargs="?", default=None)
+    p=mkp("retro");       p.add_argument("--since", default="7 days ago")
+    p=mkp("qa-browser");  p.add_argument("url", nargs="?", default=None)
     p.add_argument("--routes", nargs="+")
     p.add_argument("--headed", action="store_true")
-    p = mkp("investigate")
-    p.add_argument("description", nargs="+")
+    p=mkp("investigate"); p.add_argument("description", nargs="+")
     p.add_argument("--url", default="http://localhost:3000")
     p.add_argument("--headed", action="store_true")
 
     # 弱項補強第二批（本次新增）
     mkp("init")
-    p = mkp("deploy")
-    p.add_argument("--target", default="vercel",
-                   choices=["vercel", "railway", "manual"])
+    p=mkp("deploy");      p.add_argument("--target", default="vercel",
+                                          choices=["vercel","railway","manual"])
     p.add_argument("--skip-browser", action="store_true")
     p.add_argument("--url", default=None)
-    p = mkp("vitals")
-    p.add_argument("url", nargs="?", default="http://localhost:3000")
+    p=mkp("vitals");      p.add_argument("url", nargs="?", default="http://localhost:3000")
     p.add_argument("--runs", type=int, default=3)
-    p = mkp("cross-device")
-    p.add_argument("url", nargs="?", default="http://localhost:3000")
+    p=mkp("cross-device"); p.add_argument("url", nargs="?", default="http://localhost:3000")
 
     # ── Project Brain v4.0 ─────────────────────────────────
     p = mkp("brain")
     p.add_argument("subcommand", nargs="?", default="status",
-                   choices=["init", "scan", "status", "context", "learn",
-                            "add", "export", "share", "query-shared",
-                            "decay", "counterfactual", "validate",
-                            "distill", "webui"],
+                   choices=["init","scan","status","context","learn",
+                            "add","export","share","query-shared",
+                            "decay","counterfactual","validate",
+                            "distill","webui"],
                    help="Brain 子命令")
     p.add_argument("--name",          default="",     help="專案名稱（init）")
     p.add_argument("--task",          nargs="+",      help="任務描述（context）")
     p.add_argument("--file",          default="",     help="相關檔案（context）")
-    p.add_argument("--commit",        default="HEAD",
-                   help="commit hash（learn）")
+    p.add_argument("--commit",        default="HEAD", help="commit hash（learn）")
     p.add_argument("--title",         nargs="+",      help="知識標題（add/share）")
     p.add_argument("--content",       default="",     help="知識內容（add）")
     p.add_argument("--kind",          default="Decision",
-                   choices=["Decision", "Pitfall", "Rule", "ADR", "Component"])
+                   choices=["Decision","Pitfall","Rule","ADR","Component"])
     p.add_argument("--tags",          nargs="+",      default=[])
     p.add_argument("--visibility",    default="team",
-                   choices=["team", "org", "public"])
-    p.add_argument("--query",         nargs="+",
-                   help="查詢關鍵字（query-shared）")
+                   choices=["team","org","public"])
+    p.add_argument("--query",         nargs="+",      help="查詢關鍵字（query-shared）")
     p.add_argument("--action",        default="report",
-                   choices=["report", "update", "invalidate"])
+                   choices=["report","update","invalidate"])
     p.add_argument("--node-id",       default="")
     p.add_argument("--reason",        default="")
     p.add_argument("--question",      nargs="+",      help="反事實問題")
     p.add_argument("--component",     default="")
     p.add_argument("--depth",         default="brief",
-                   choices=["brief", "detailed"])
+                   choices=["brief","detailed"])
     p.add_argument("--max-api-calls", type=int, default=20)
     p.add_argument("--dry-run",       action="store_true")
     p.add_argument("--layers",        nargs="+",
-                   default=["context", "prompts", "lora"])
+                   default=["context","prompts","lora"])
     p.add_argument("--port",          type=int, default=7890)
     p.add_argument("--graphiti-url",  default="",
                    help="Graphiti DB URL（預設讀 GRAPHITI_URL 環境變數）")
@@ -1379,25 +1211,23 @@ def main():
         check_api_key()
 
     cmds = {
-        "ask": cmd_ask, "agent": cmd_agent, "chat": cmd_chat,
-        "do": cmd_do, "run": cmd_run, "build": cmd_build, "shell": cmd_shell,
-        "dept": cmd_dept, "project": cmd_project, "review": cmd_review,
-        "list": cmd_list, "clear": cmd_clear, "workdir": cmd_workdir,
-        "discover": cmd_discover, "ship": cmd_ship, "webdev": cmd_webdev,
-        "feature": cmd_feature, "fixbug": cmd_fix, "codereview": cmd_review_project,
-        "retro": cmd_retro, "qa-browser": cmd_qa_browser, "investigate": cmd_investigate,
+        "ask":cmd_ask, "agent":cmd_agent, "chat":cmd_chat,
+        "do":cmd_do, "run":cmd_run, "build":cmd_build, "shell":cmd_shell,
+        "dept":cmd_dept, "project":cmd_project, "review":cmd_review,
+        "list":cmd_list, "clear":cmd_clear, "workdir":cmd_workdir,
+        "discover":cmd_discover, "ship":cmd_ship, "webdev":cmd_webdev,
+        "feature":cmd_feature, "fixbug":cmd_fix, "codereview":cmd_review_project,
+        "retro":cmd_retro, "qa-browser":cmd_qa_browser, "investigate":cmd_investigate,
         # 弱項補強第二批
-        "init": cmd_init, "deploy": cmd_deploy,
-        "vitals": cmd_vitals, "cross-device": cmd_cross_device,
+        "init":cmd_init, "deploy":cmd_deploy,
+        "vitals":cmd_vitals, "cross-device":cmd_cross_device,
         # Project Brain v4.0
-        "brain": cmd_brain,
+        "brain":cmd_brain,
     }
     fn = cmds.get(args.command)
     if fn:
-        try:
-            fn(args)
-        except KeyboardInterrupt:
-            print(f"\n{DIM}  已中止{RESET}\n")
+        try: fn(args)
+        except KeyboardInterrupt: print(f"\n{DIM}  已中止{RESET}\n")
     else:
         print(f"{RED}✖ 未知命令：{args.command}{RESET}")
 
@@ -1409,14 +1239,14 @@ def main():
 def cmd_brain_validate(args):
     """知識自主驗證（v4.0）"""
     from core.brain import ProjectBrain
-    workdir = get_workdir(getattr(args, "workdir", None))
-    max_api = getattr(args, "max_api_calls", 20)
-    dry_run = getattr(args, "dry_run", False)
-    brain = ProjectBrain(workdir)
+    workdir      = get_workdir(getattr(args, "workdir", None))
+    max_api      = getattr(args, "max_api_calls", 20)
+    dry_run      = getattr(args, "dry_run", False)
+    brain        = ProjectBrain(workdir)
     print(f"\n🔍 知識驗證（max_api_calls={max_api}, dry_run={dry_run}）")
     try:
         validator = brain.validator
-        report = validator.run(max_api_calls=max_api, dry_run=dry_run)
+        report    = validator.run(max_api_calls=max_api, dry_run=dry_run)
         print(f"\n{report.summary()}")
     except Exception as e:
         print(f"{RED}✖ 驗證失敗：{e}{RESET}")
@@ -1426,13 +1256,12 @@ def cmd_brain_distill(args):
     """知識蒸餾（v4.0）"""
     from core.brain import ProjectBrain
     workdir = get_workdir(getattr(args, "workdir", None))
-    layers = getattr(args, "layers", ["context", "prompts", "lora"]) or [
-        "context", "prompts", "lora"]
-    brain = ProjectBrain(workdir)
+    layers  = getattr(args, "layers", ["context", "prompts", "lora"]) or ["context", "prompts", "lora"]
+    brain   = ProjectBrain(workdir)
     print(f"\n{PURPLE}{BOLD}⚗  知識蒸餾{RESET}  {DIM}layers={layers}{RESET}")
     try:
         distiller = brain.distiller
-        result = distiller.distill_all(layers=layers)
+        result    = distiller.distill_all(layers=layers)
         print(f"\n{result.summary()}")
     except Exception as e:
         print(f"{RED}✖ 蒸餾失敗：{e}{RESET}")
@@ -1443,10 +1272,10 @@ def cmd_brain_webui(args):
     from core.brain.web_ui.server import run_server
     from pathlib import Path
 
-    workdir = get_workdir(getattr(args, "workdir", None))
-    port = getattr(args, "port", 7890)
+    workdir   = get_workdir(getattr(args, "workdir", None))
+    port      = getattr(args, "port", 7890)
     brain_dir = Path(workdir) / ".brain"
-    db_path = brain_dir / "knowledge_graph.db"
+    db_path   = brain_dir / "knowledge_graph.db"
 
     print(f"{DIM}  工作目錄：{workdir}{RESET}")
 
@@ -1469,7 +1298,6 @@ def cmd_brain_webui(args):
         print("  pip install flask flask-cors")
     except Exception as e:
         print(f"{RED}✖ Web UI 啟動失敗：{e}{RESET}")
-
 
 if __name__ == "__main__":
     main()

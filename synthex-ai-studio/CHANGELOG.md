@@ -481,3 +481,141 @@ synthex: error: argument command: invalid choice: 'brain'
 
 **139/139 測試通過（4.97s）**
 **9/9 CLI 煙霧測試通過**
+
+## v0.17.0（第十七輪 — 運行驗證 Bug 修復，2026-03-28）
+
+### 修復（10 個 Bug）
+
+**P0 安全修復：**
+- `tools.py _resolve()`：未攔截 `..` 路徑穿越，`../outside.py` 可讀取工作目錄外的檔案
+- `tools.py BLOCKED_PATTERNS`：`wget ... | bash` 未封鎖（只封鎖了 `wget | sh`）
+- 新增封鎖：`wget | bash`、`curl | sh`、`fetch | bash`、`eval $(...)` 共 4 個 pattern
+
+**P1 功能修復：**
+- `graphiti_adapter.py`：`asyncio.get_event_loop()` 在 Python 3.12 已廢棄 → 改用 `get_running_loop()`
+- `graphiti_adapter.py`：stdlib `logger.error("msg", key=val)` 不接受 keyword arguments → 改為 `"msg | key=%s"` 格式
+- `web_ui/server.py`：SQL 查詢使用 `kind` 欄位，但 `graph.py` schema 為 `type` → 改為 `type as kind`
+- `web_ui/server.py`：`LIMIT 0` 的 `fetchone()` 返回 `None` → 直接用常數 `0`
+- `web_ui/server.py`：`edges` 表的欄位名為 `relation`，非 `relation_type`
+
+**測試：139/139 通過**
+
+---
+
+## v0.18.0（第十八輪 — brain status 彩色輸出，2026-03-28）
+
+### 新增
+
+**`core/brain/status_renderer.py`（258 行）** — 統一彩色狀態渲染器
+- 三層架構一目了然（L3/L2/L1 獨立區塊）
+- 知識類型有專屬顏色（Decision=藍、Pitfall=紅、Rule=黃、ADR=紫、Component=青）
+- 信心分數熱力圖（綠≥75% / 黃50% / 橙30% / 紅<15%）
+- 橫向進度條（顯示各類型節點佔比）
+- L1 讀寫驗證（每次 status 自動執行 create→view→delete 確認功能正常）
+- v4.0 功能狀態（蒸餾、驗證、聯邦學習執行狀況）
+- 版本號頁尾
+
+### 修復
+- `brain init` 未建立 `knowledge_graph.db`：`graph` 是 lazy property，空 repo 不觸發 → 在 `init()` 加入 `_ = self.graph` 強制建立
+- `brain webui` 路徑錯誤提示：新增顯示實際使用的 workdir，DB 不存在時自動補建
+
+---
+
+## v0.19.0（第十九輪 — Graphiti FalkorDB 連線修復，2026-03-28）
+
+### 修復
+
+**根本原因：** 全專案使用 `bolt://localhost:7687`（Neo4j 協議），FalkorDB 需要 `redis://localhost:6379`（Redis 協議）。
+
+**修復範圍：**
+- `graphiti_adapter.py`：`_init_client()` 重寫，自動偵測 URL 格式
+  - `redis://` / `falkordb://` / port `6379` → 使用 `FalkorDriver(host, port)`
+  - `bolt://` / `neo4j://` → 使用 `Graphiti(uri=...)`
+- 全專案 9 個檔案的 `bolt://localhost:7687` 全部換成 `redis://localhost:6379`
+- `INSTALL.md`：補充「FalkorDB 用 Redis 協議」說明
+
+---
+
+## v0.20.0（第二十輪 — GRAPHITI_URL 環境變數支援，2026-03-28）
+
+### 新增
+
+**環境變數優先順序：**
+```
+--graphiti-url 參數 > GRAPHITI_URL 環境變數 > 預設 redis://localhost:6379
+```
+
+- `engine.py`：`ProjectBrain.__init__` 讀取 `os.environ.get("GRAPHITI_URL")`
+- `graphiti_adapter.py`：`GraphitiAdapter.__init__` 讀取 `GRAPHITI_URL`
+- `synthex.py`：`brain` 命令新增 `--graphiti-url` 參數
+
+---
+
+## v0.21.0（第二十一輪 — 連線深度修復，2026-03-28）
+
+### 修復：`Task was destroyed but it is pending!`
+
+**根因：** `asyncio.new_event_loop()` + `loop.close()` 強制中止未完成的 coroutine。
+
+**修復：** 兩層分離設計：
+
+```
+_try_connect()  → TCP socket probe（不涉及 asyncio）
+                  只確認 port 是否可達，status check 專用
+
+_ensure_client() → 完整 Graphiti 初始化（懶初始化）
+                   用 AnthropicClient 替代 OpenAIClient
+                   實際讀寫時才呼叫
+```
+
+---
+
+## v0.22.0（第二十二輪 — OpenAI 依賴消除，2026-03-28）
+
+### 修復：Graphiti 連線仍失敗（`✗ 未連接`）
+
+**根因：** `Graphiti(llm_client=None)` 第 81 行直接呼叫 `OpenAIClient()`，讀取 `OPENAI_API_KEY`。用戶只有 `ANTHROPIC_API_KEY`，初始化在這裡就失敗，TCP 連線成功也無效。
+
+**修復：**
+- `_try_connect()`：改為純 TCP probe，完全不初始化 Graphiti（不觸發 OpenAI）
+- `_ensure_client()`：懶初始化，使用 `AnthropicClient(config=LLMConfig(api_key=ANTHROPIC_API_KEY))`
+- `add_episode()` / `search()` 改用 `_ensure_client()` 替代 `self.available`
+
+---
+
+## v0.23.0（第二十三輪 — 全面彩色輸出，2026-03-28）
+
+### 新增
+
+**`core/brain/output.py`（45 行）** — ANSI 色彩工具模組（統一色彩常數和工具函數）
+
+**彩色化範圍：**
+
+| 命令 | 彩色化內容 |
+|------|-----------|
+| `brain distill` | Layer 進度、蒸餾報告分隔線、節點/token/耗時 |
+| `brain validate` | 每筆知識的信心分數熱力色、驗證報告統計 |
+| `brain decay` | 進度條式信心分數視覺化 |
+| `brain add` | 綠色 ✓ + 青色節點 ID |
+| `brain learn` | 綠色 ✓ + commit hash 高亮 |
+| `brain export` | 輸出路徑高亮 + Mermaid 灰色顯示 |
+| `brain context` | 區塊標題 + 分隔線 |
+| `brain query-shared` | 知識類型徽章 + 來源資訊 |
+
+---
+
+## v0.24.0（第二十四輪 — 技術文件補齊，2026-03-28）
+
+### 新增
+
+**`PROJECT_BRAIN.md`：**
+- v4.0 規劃 → 完成（`[ ]` 全部改為 `✅`）
+- 新增「Project Brain v4.0 已完成」詳細章節
+- 每個功能的完整說明：架構、用法、輸出範例
+- v4.0 完整測試覆蓋表格
+- Bug 修復歷史（P0/P1 分類）
+
+**`CHANGELOG.md`：**
+- 補充第 17-24 輪的詳細更新記錄
+
+**總計文件：** 11 份，6,018+ 行
