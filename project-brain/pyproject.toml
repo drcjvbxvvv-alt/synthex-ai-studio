@@ -1,0 +1,82 @@
+[build-system]
+requires      = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "project-brain"
+version         = "0.1.0"
+description     = "AI Memory System — stores, retrieves and decays project knowledge for LLM-assisted development"
+readme          = "README.md"
+license         = { text = "MIT" }
+requires-python = ">=3.10"
+
+keywords = [
+    "ai", "memory", "llm", "knowledge-graph", "mcp",
+    "rag", "developer-tools", "context"
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "flask>=3.0.0",
+    "flask-cors>=4.0.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.50.0"]
+l2        = ["graphiti-core>=0.3.0", "falkordb>=1.0.0"]
+dedup     = ["scikit-learn>=1.0.0"]
+mcp       = ["mcp>=1.26.0"]
+production = ["gunicorn>=21.0.0"]
+dev       = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+]
+all = [
+    "project-brain[anthropic,l2,dedup,mcp,production,dev]"
+]
+
+[project.scripts]
+brain = "project_brain.cli:main"
+
+[project.urls]
+Homepage      = "https://github.com/your-org/project-brain"
+Documentation = "https://github.com/your-org/project-brain/docs"
+Issues        = "https://github.com/your-org/project-brain/issues"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["project_brain*"]
+exclude = ["tests*", "docs*", "core*"]
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+source   = ["project_brain"]
+omit     = [
+    "tests/*",
+    "brain.py",
+    "project_brain/cli.py",       # CLI layer，由 test_brain.py 整合測試覆蓋
+    "project_brain/api_server.py", # Flask routes，需要 client 環境測試
+    "project_brain/mcp_server.py", # MCP，需要 mcp 套件
+    "project_brain/web_ui/*",      # 前端靜態檔案
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

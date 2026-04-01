@@ -1,0 +1,17 @@
+# Python 快取檔案
+__pycache__
+*.py[cod]
+*$py.class
+*.pytest_cache
+
+# 資料庫檔案
+*.db
+*.sqlite3
+
+# 測試覆蓋率
+.coverage
+
+.brain
+/project-brain/tests
+.claude
+.cursor

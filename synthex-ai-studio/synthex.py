@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SYNTHEX AI STUDIO v2 — Agentic CLI
+SYNTHEX AI STUDIO v0.0.0 — Agentic CLI
 """
 import sys, os, argparse
 from pathlib import Path
@@ -17,7 +17,7 @@ BANNER = f"""{PURPLE}{BOLD}
   ╚════██║  ╚██╔╝  ██║╚██╗██║   ██║   ██╔══██║██╔══╝   ██╔██╗
   ███████║   ██║   ██║ ╚████║   ██║   ██║  ██║███████╗██╔╝ ██╗
   ╚══════╝   ╚═╝   ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
-                 AI  S T U D I O  v2  ·  Agentic{RESET}"""
+                 AI  S T U D I O  v0.0.0  ·  Agentic{RESET}"""
 
 def check_api_key():
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -252,8 +252,7 @@ def main():
     else:
         print(f"{RED}✖ 未知命令: {args.command}{RESET}"); cmd_help()
 
-if __name__ == "__main__":
-    main()
+# (entry point moved to end of file)
 
 
 # ── Web Dev Commands (appended) ───────────────────────────────
@@ -275,9 +274,14 @@ def cmd_discover(args):
 def cmd_ship(args):
     """/ship — 從決策到實作一氣呵成（11 Phase 完整流水線）"""
     from core.web_orchestrator import WebOrchestrator
+    from core.base_agent import init_session_budget
     requirement = " ".join(args.requirement)
-    workdir = get_workdir(getattr(args, "workdir", None))
-    auto = getattr(args, "yes", False)
+    workdir     = get_workdir(getattr(args, "workdir", None))
+    auto        = getattr(args, "yes", False)
+    budget      = getattr(args, "budget", 5.0)
+    no_resume   = getattr(args, "no_resume", False)
+    init_session_budget(budget_usd=budget)
+    print(f"{DIM}  💰 預算上限：${budget:.1f} USD{RESET}")
 
     print(f"\n{PURPLE}{BOLD}  🚀 /ship — 從決策到實作一氣呵成{RESET}")
     print(f"{DIM}  11 Phase：範疇確認 → PRD → 產品驗證 → 架構 → 可行性")
@@ -330,13 +334,211 @@ def cmd_fix(args):
 
 
 def cmd_review_project(args):
-    """全面代碼審查（PROBE + SHIELD）"""
+    """全面程式碼審查（PROBE + SHIELD）"""
     from core.web_orchestrator import WebOrchestrator
     workdir = get_workdir(getattr(args, "workdir", None))
-
-    print(f"\n{YELLOW}{BOLD}  🔍 全面代碼審查{RESET}")
+    print(f"\n{YELLOW}{BOLD}  🔍 全面程式碼審查{RESET}")
     orc = WebOrchestrator(workdir=workdir, auto_confirm=True)
     orc.review()
+
+
+def cmd_retro(args):
+    """
+    /retro — 回顧統計
+    分析 git log，輸出這段時間的程式碼產出、提交分布、測試比例
+    """
+    from agents.all_agents import get_agent
+    workdir = get_workdir(getattr(args, "workdir", None))
+    since   = getattr(args, "since", None) or "7 days ago"
+
+    print(f"\n{CYAN}{BOLD}  📊 /retro — 回顧統計{RESET}")
+    print(f"{DIM}  時間範圍：{since} · 目錄：{workdir}{RESET}\n")
+
+    import subprocess
+    from pathlib import Path
+
+    # 收集 git 統計
+    def git(cmd):
+        r = subprocess.run(cmd, shell=True, cwd=workdir,
+                           capture_output=True, text=True, timeout=15)
+        return r.stdout.strip()
+
+    commits     = git(f'git log --since="{since}" --oneline')
+    commit_list = [l for l in commits.splitlines() if l]
+    stat        = git(f'git log --since="{since}" --numstat --pretty=format:""')
+
+    added = deleted = test_added = 0
+    for line in stat.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3:
+            try:
+                a, d = int(parts[0]), int(parts[1])
+                added   += a
+                deleted += d
+                fname = parts[2]
+                if any(x in fname for x in ["test", "spec", "__test__", ".test.", ".spec."]):
+                    test_added += a
+            except ValueError:
+                pass
+
+    net_loc       = added - deleted
+    test_pct      = round(test_added / added * 100) if added > 0 else 0
+    commit_count  = len(commit_list)
+
+    # 統計數據
+    stats_str = f"""
+Git 統計（過去 {since}）：
+  提交數：     {commit_count}
+  新增行數：   {added:,}
+  刪除行數：   {deleted:,}
+  淨增行數：   {net_loc:,}
+  測試程式碼：   {test_added:,} 行（佔 {test_pct}%）
+  每天平均：   約 {added // 7:,} 行新增（以 7 天計算）
+
+最近提交：
+{chr(10).join(commit_list[:10])}
+"""
+    print(stats_str)
+
+    # 讓 ARIA 做質化回顧
+    agent = get_agent("ARIA", workdir=workdir)
+    agent.chat(f"""
+請根據以下 Git 統計做一個簡短的回顧分析：
+
+{stats_str}
+
+請評估：
+1. 產出量是否健康（程式碼量、提交頻率）
+2. 測試比例（{test_pct}%）是否足夠
+3. 根據提交訊息，這段時間的工作重心是什麼
+4. 建議下一週應該聚焦什麼
+
+保持簡短，不超過 10 行。
+""")
+
+
+def cmd_qa_browser(args):
+    """
+    qa-browser — 真實瀏覽器 QA
+    開啟 Chromium，截圖每個頁面，檢查 console 錯誤和 network 失敗
+    比 TRACE 的程式碼分析更真實：看到的就是用戶看到的
+    """
+    from core.browser_qa import BrowserToolExecutor, BrowserQA, SCREENSHOT_DIR
+    from agents.all_agents import get_agent
+
+    workdir  = get_workdir(getattr(args, "workdir", None))
+    base_url = " ".join(args.url) if hasattr(args, "url") and args.url else "http://localhost:3000"
+    headless = not getattr(args, "headed", False)
+
+    routes_arg = getattr(args, "routes", None)
+    if routes_arg:
+        routes = [r.strip() for r in " ".join(routes_arg).split(",")]
+    else:
+        routes = ["/", "/login", "/dashboard", "/about"]
+
+    print(f"\n{CYAN}{BOLD}  🌐 Browser QA — 真實瀏覽器驗收{RESET}")
+    print(f"{DIM}  URL：{base_url}")
+    print(f"  路由：{', '.join(routes)}")
+    print(f"  截圖儲存：{SCREENSHOT_DIR}")
+    print(f"  模式：{'有頭（可見）' if not headless else '無頭（背景）'}{RESET}\n")
+
+    executor = BrowserToolExecutor(headless=headless)
+    result   = executor.execute("browser_audit", {"base_url": base_url, "routes": routes})
+
+    import json
+    report = json.loads(result)
+    summary = report.get("summary", {})
+
+    print(f"\n{BOLD}審計摘要{RESET}")
+    print(f"  檢查路由：{summary.get('routes_checked', 0)}")
+    print(f"  {GREEN}無錯誤：{summary.get('routes_clean', 0)}{RESET}")
+    total_err = summary.get("total_errors", 0)
+    if total_err:
+        print(f"  {RED}有錯誤：{total_err} 個{RESET}")
+        for e in summary.get("all_errors", [])[:10]:
+            print(f"    {DIM}• {e}{RESET}")
+
+    # 讓 PROBE 分析結果
+    if total_err > 0:
+        print(f"\n{CYAN}▶ PROBE 分析錯誤...{RESET}")
+        agent = get_agent("PROBE", workdir=workdir)
+        agent.chat(f"""
+瀏覽器 QA 發現以下錯誤：
+
+{json.dumps(summary.get('all_errors', []), ensure_ascii=False, indent=2)}
+
+完整路由報告：
+{json.dumps({k: {
+    'console_errors': v.get('console_errors', []),
+    'network_errors': v.get('network_errors', [])
+} for k, v in report.get('routes', {}).items()}, ensure_ascii=False, indent=2)}
+
+請分析這些錯誤，判斷嚴重程度，並給出具體的修復建議。
+""")
+
+
+def cmd_investigate(args):
+    """
+    investigate — 在真實運行的 app 上互動式調查問題
+    描述問題，PROBE 會用真實瀏覽器重現它，截圖，然後給出診斷
+    """
+    from core.browser_qa import BrowserToolExecutor
+    from agents.all_agents import get_agent
+
+    workdir     = get_workdir(getattr(args, "workdir", None))
+    description = " ".join(args.description)
+    base_url    = getattr(args, "url", None) or "http://localhost:3000"
+    headless    = not getattr(args, "headed", False)
+
+    print(f"\n{RED}{BOLD}  🔎 /investigate — 問題調查{RESET}")
+    print(f"{DIM}  問題：{description[:60]}")
+    print(f"  URL：{base_url}{RESET}\n")
+
+    # 先讓 PROBE 設計重現步驟
+    probe = get_agent("PROBE", workdir=workdir)
+    steps_plan = probe.chat(f"""
+用戶回報以下問題：{description}
+
+app URL：{base_url}
+
+請設計一個在瀏覽器中重現這個問題的步驟計畫。
+輸出格式：用 JSON 描述步驟，例如：
+[
+  {{"action": "screenshot", "label": "初始狀態"}},
+  {{"action": "click", "selector": "#login-btn", "label": "點擊登入"}},
+  {{"action": "fill", "selector": "#email", "value": "test@example.com", "label": "填入 email"}},
+  {{"action": "assert_text", "value": "錯誤訊息", "label": "確認錯誤出現"}}
+]
+
+只輸出 JSON 陣列，不要其他文字。
+""")
+
+    # 嘗試解析步驟
+    import json, re
+    try:
+        match = re.search(r'\[.*\]', steps_plan, re.DOTALL)
+        steps = json.loads(match.group()) if match else []
+    except Exception:
+        steps = [{"action": "screenshot", "label": "問題重現截圖"}]
+
+    if steps:
+        print(f"\n{CYAN}▶ 用瀏覽器重現問題（{len(steps)} 個步驟）...{RESET}")
+        executor = BrowserToolExecutor(headless=headless)
+        result   = executor.execute("browser_flow", {"url": base_url, "steps": steps})
+        flow_result = json.loads(result)
+
+        # PROBE 分析瀏覽器結果給出診斷
+        probe.chat(f"""
+瀏覽器重現結果：
+{json.dumps(flow_result, ensure_ascii=False, indent=2)}
+
+原始問題描述：{description}
+
+請根據以上結果：
+1. 確認問題是否重現
+2. 分析根本原因
+3. 給出具體的修復方案
+""")
 
 
 # re-wire main() to include new commands
@@ -371,30 +573,54 @@ def main():
     p=sub.add_parser("clear");   p.add_argument("name")
     p=sub.add_parser("workdir"); p.add_argument("path")
 
-    # 新增的網頁開發命令
+    # 網頁開發命令
     p=mkp("discover"); p.add_argument("idea", nargs="+")
     p=mkp("ship");     p.add_argument("requirement", nargs="+")
+    p.add_argument("--budget",    type=float, default=5.0,
+                   help="API 費用預算上限 USD（預設 $5.0）")
+    p.add_argument("--no-resume", action="store_true",
+                   help="不使用斷點續跑，從頭開始")
     p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
     p=mkp("feature");  p.add_argument("description", nargs="+")
     p=mkp("fixbug");   p.add_argument("description", nargs="+")
     mkp("codereview")
 
+    # 新增弱項補強命令
+    p=mkp("retro");       p.add_argument("--since", default="7 days ago")
+    p=mkp("qa-browser");  p.add_argument("url", nargs="?", default=None)
+    p.add_argument("--routes", nargs="+")
+    p.add_argument("--headed", action="store_true",
+                                           help="顯示瀏覽器視窗（非無頭模式）")
+    p=mkp("investigate"); p.add_argument("description", nargs="+")
+    p.add_argument("--url", default="http://localhost:3000")
+    p.add_argument("--headed", action="store_true")
+
     args = parser.parse_args()
     if args.command is None or args.command == "help":
         cmd_help()
-        # 額外顯示新命令
-        print(f"""{CYAN}── 網頁開發專用 ──────────────────────────────────────────{RESET}
+        print(f"""{CYAN}── 弱項補強（新增）─────────────────────────────────────{RESET}
 
-{GREEN}webdev{RESET}  <需求描述>       完整建站：PRD→架構→實作→測試→部署
-{GREEN}feature{RESET} <功能描述>       在現有專案新增功能（自動實作）
-{GREEN}fixbug{RESET}  <錯誤描述>       診斷並修復 bug
-{GREEN}codereview{RESET}               全面代碼審查（PROBE + SHIELD）
+{GREEN}retro{RESET}                    回顧統計：git 產出、提交分布、測試比例
+  --since "14 days ago"  統計時間範圍（預設 7 天）
 
-{BOLD}範例{RESET}
-  {DIM}python synthex.py webdev "電商平台，支援商品瀏覽、購物車、Stripe 結帳" --name my-shop
-  python synthex.py feature "新增用戶個人頁面，可編輯頭像和名稱"
-  python synthex.py fixbug "登入後 redirect 到 /dashboard 出現 404"
-  python synthex.py codereview{RESET}
+{GREEN}qa-browser{RESET} [URL]         真實瀏覽器 QA：截圖、console 錯誤、network 失敗
+  --routes /,/login      指定要檢查的路由（逗號分隔）
+  --headed               顯示瀏覽器視窗（debug 用）
+
+{GREEN}investigate{RESET} <問題描述>   用真實瀏覽器重現問題，PROBE 診斷並給修復方案
+  --url http://...       目標 URL（預設 localhost:3000）
+  --headed               顯示瀏覽器視窗
+
+{CYAN}── 網頁開發 ──────────────────────────────────────────────{RESET}
+
+{GREEN}discover{RESET} <想法>           需求模糊時深挖，產出 /ship 指令
+{GREEN}ship{RESET}     <需求>           完整 13 Phase 流水線
+{GREEN}feature{RESET}  <描述>           新增功能
+{GREEN}fixbug{RESET}   <描述>           修復 bug
+{GREEN}codereview{RESET}                PROBE + SHIELD 全面審查
+
+{BOLD}Browser QA 需要安裝：{RESET}
+  {DIM}pip install playwright && playwright install chromium{RESET}
 """)
         return
 
@@ -405,9 +631,10 @@ def main():
         "do":cmd_do,"run":cmd_run,"build":cmd_build,"shell":cmd_shell,
         "dept":cmd_dept,"project":cmd_project,"review":cmd_review,
         "list":cmd_list,"clear":cmd_clear,"workdir":cmd_workdir,
-        # new
-        "discover":cmd_discover,"ship":cmd_ship,"webdev":cmd_webdev,"feature":cmd_feature,
-        "fixbug":cmd_fix,"codereview":cmd_review_project,
+        "discover":cmd_discover,"ship":cmd_ship,"webdev":cmd_webdev,
+        "feature":cmd_feature,"fixbug":cmd_fix,"codereview":cmd_review_project,
+        # 弱項補強
+        "retro":cmd_retro,"qa-browser":cmd_qa_browser,"investigate":cmd_investigate,
     }
     fn = cmds.get(args.command)
     if fn:
@@ -415,6 +642,296 @@ def main():
         except KeyboardInterrupt: print(f"\n{DIM}  已中止{RESET}\n")
     else:
         print(f"{RED}✖ 未知命令: {args.command}{RESET}")
+
+# (entry point moved to end of file)
+
+
+
+# ── 弱項補強：新命令 ──────────────────────────────────────────
+
+
+def cmd_init(args):
+    """
+    init — 智能專案初始化
+    新專案：scaffold 完整起點
+    現有專案：深度掃描，分析健康度，提出行動建議
+    """
+    from core.project_scanner import ProjectScanner
+    from agents.all_agents import get_agent
+
+    workdir = get_workdir(getattr(args, "workdir", None))
+    scanner = ProjectScanner(workdir)
+    scan    = scanner.scan()
+
+    print(scanner.format_report(scan))
+
+    if scan["is_new"]:
+        print(f"\n{CYAN}{BOLD}  🆕 新專案 — 開始 scaffold{RESET}")
+        print(f"{DIM}  FORGE 將建立完整的專案起點（含可觀測性）{RESET}")
+        agent = get_agent("FORGE", workdir=workdir, auto_confirm=True)
+        agent.run(f"""
+這是一個新的 Next.js 16 + TypeScript 專案。
+請依照你的 SKILL.md 完整設定環境，特別注意：
+
+1. 建立標準目錄結構（src/app、src/components、src/services、
+   src/repositories、src/lib、src/types）
+2. 安裝並設定 Sentry（錯誤追蹤）
+3. 安裝並設定 PostHog（使用分析）
+4. 建立 .env.local.example（包含 Sentry 和 PostHog 的 key）
+5. 建立 .github/workflows/ci.yml
+6. 建立 .gitignore、tsconfig.json、next.config.ts
+7. 建立 src/lib/errors.ts（統一錯誤類別）
+8. 建立 src/lib/api-response.ts（統一 API 回應格式）
+9. 執行 git init && git add . && git commit -m "chore: initial setup"
+
+工作目錄：{workdir}
+""")
+    else:
+        issues = scan.get("issues", [])
+        print(f"\n{CYAN}{BOLD}  📁 現有專案 — 分析完成{RESET}")
+
+        if issues:
+            print(f"\n{YELLOW}  發現 {len(issues)} 個問題，交由對應角色處理...{RESET}")
+            # 高優先問題先處理
+            high = [i for i in issues if i["severity"] == "high"]
+            if high:
+                agent = get_agent("FORGE", workdir=workdir, auto_confirm=getattr(args, "yes", False))
+                issues_text = "\n".join(f"- {i['issue']}：{i['fix']}" for i in high)
+                agent.run(f"""
+掃描發現以下高優先問題，請逐一修復：
+
+{issues_text}
+
+工作目錄：{workdir}
+技術棧：{scan.get('project_type', 'unknown')}
+""")
+        else:
+            print(f"  {GREEN}✔ 專案健康度良好，無高優先問題{RESET}")
+
+        # 輸出快速行動清單
+        if not scan["health"].get("has_observability"):
+            print(f"\n{YELLOW}  ⚠ 缺少可觀測性工具，執行以下命令安裝：{RESET}")
+            print(f"  {DIM}python synthex.py do FORGE \"安裝並設定 Sentry 和 PostHog\"{RESET}")
+
+
+def cmd_deploy(args):
+    """
+    deploy — 本地驗證通過後才部署
+    不通過就不部署，通過才推上去
+    """
+    from core.deploy_pipeline import DeployPipeline
+
+    workdir       = get_workdir(getattr(args, "workdir", None))
+    target        = getattr(args, "target", None) or "vercel"
+    skip_browser  = getattr(args, "skip_browser", False)
+    auto          = getattr(args, "yes", False)
+    prod_url      = getattr(args, "url", None)
+
+    pipeline = DeployPipeline(workdir=workdir, target=target, auto_confirm=auto)
+    pipeline.run(skip_browser_qa=skip_browser, production_url=prod_url)
+
+
+def cmd_vitals(args):
+    """
+    vitals — 量測 Core Web Vitals（LCP、CLS、TTI）
+    """
+    from core.browser_qa import _check_playwright, install_playwright
+
+    url   = " ".join(args.url) if hasattr(args, "url") and args.url else "http://localhost:3000"
+    runs  = getattr(args, "runs", 3)
+
+    if not _check_playwright():
+        install_playwright()
+
+    print(f"\n{CYAN}{BOLD}  📊 Core Web Vitals — {url}{RESET}")
+
+    try:
+        from core.browser_qa import ExtendedBrowserQA
+    except ImportError:
+        # ExtendedBrowserQA 在 append 的程式碼裡，直接 exec browser_qa 後取得
+        import importlib.util, sys
+        spec = importlib.util.spec_from_file_location(
+            "browser_qa",
+            str(__import__("pathlib").Path(__file__).parent / "core" / "browser_qa.py")
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        ExtendedBrowserQA = mod.ExtendedBrowserQA
+
+    with ExtendedBrowserQA(headless=True) as qa:
+        result = qa.web_vitals(url, runs=runs)
+
+    from agents.all_agents import get_agent
+    workdir = get_workdir(getattr(args, "workdir", None))
+    if result.get("lcp", {}).get("rating", "").startswith("差") or \
+       result.get("cls", {}).get("rating", "").startswith("差"):
+        print(f"\n{YELLOW}  ⚠ 有需要改善的指標，BYTE + KERN 分析...{RESET}")
+        agent = get_agent("BYTE", workdir=workdir)
+        agent.chat(f"""
+Core Web Vitals 量測結果：
+- LCP：{result.get('lcp', {}).get('value_ms')}ms ({result.get('lcp', {}).get('rating')})
+- CLS：{result.get('cls', {}).get('value')} ({result.get('cls', {}).get('rating')})
+- TTI：{result.get('tti', {}).get('value_ms')}ms
+
+Google 標準：LCP < 2500ms、CLS < 0.1
+
+請分析可能的原因，並給出具體的優化建議（程式碼層面）。
+""")
+
+
+def cmd_cross_device(args):
+    """
+    cross-device — 在桌機、平板、手機三種視窗截圖，找出響應式問題
+    """
+    from core.browser_qa import _check_playwright, install_playwright
+    import json
+
+    url     = " ".join(args.url) if hasattr(args, "url") and args.url else "http://localhost:3000"
+    workdir = get_workdir(getattr(args, "workdir", None))
+
+    if not _check_playwright():
+        install_playwright()
+
+    print(f"\n{CYAN}{BOLD}  📱 跨裝置測試 — {url}{RESET}")
+
+    try:
+        from core.browser_qa import ExtendedBrowserQA
+        with ExtendedBrowserQA(headless=True) as qa:
+            result = qa.cross_device(url)
+    except Exception as e:
+        print(f"{RED}✖ {e}{RESET}")
+        return
+
+    # 讓 SPARK 分析截圖結果
+    devices_with_errors = {k: v for k, v in result.get("devices", {}).items() if v.get("errors")}
+    if devices_with_errors:
+        agent = get_agent("SPARK", workdir=workdir)
+        agent.chat(f"""
+跨裝置測試發現以下問題：
+
+{json.dumps(devices_with_errors, ensure_ascii=False, indent=2)}
+
+截圖已儲存到 ~/.synthex/screenshots/
+
+請分析各裝置的問題，給出 UI/UX 修復建議。
+""")
+
+
+# re-wire final main()
+def main():
+    import sys, os, argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(prog="synthex", add_help=False)
+    sub    = parser.add_subparsers(dest="command")
+
+    def mkp(name, **kw):
+        p = sub.add_parser(name, **kw)
+        p.add_argument("--workdir", default=None)
+        p.add_argument("--yes", action="store_true")
+        return p
+
+    # 核心對話
+    mkp("ask").add_argument("task", nargs="+")
+    p=mkp("agent");  p.add_argument("name"); p.add_argument("task", nargs="+")
+    for c in ("do","run"):
+        p=mkp(c);    p.add_argument("name"); p.add_argument("task", nargs="+")
+    mkp("build").add_argument("task", nargs="+")
+    mkp("chat").add_argument("name")
+    mkp("shell").add_argument("name")
+    mkp("project").add_argument("brief", nargs="+")
+    p=mkp("dept");   p.add_argument("dept"); p.add_argument("task", nargs="+")
+    mkp("review").add_argument("name")
+    sub.add_parser("list"); sub.add_parser("help")
+    p=sub.add_parser("clear");   p.add_argument("name")
+    p=sub.add_parser("workdir"); p.add_argument("path")
+
+    # 規劃流水線
+    p=mkp("discover"); p.add_argument("idea", nargs="+")
+    p=mkp("ship");     p.add_argument("requirement", nargs="+")
+    p.add_argument("--budget",    type=float, default=5.0,
+                   help="API 費用預算上限 USD（預設 $5.0）")
+    p.add_argument("--no-resume", action="store_true",
+                   help="不使用斷點續跑，從頭開始")
+    p=mkp("webdev");   p.add_argument("requirement", nargs="+"); p.add_argument("--name", default=None)
+    p=mkp("feature");  p.add_argument("description", nargs="+")
+    p=mkp("fixbug");   p.add_argument("description", nargs="+")
+    mkp("codereview")
+
+    # 弱項補強第一批
+    p=mkp("retro");       p.add_argument("--since", default="7 days ago")
+    p=mkp("qa-browser");  p.add_argument("url", nargs="?", default=None)
+    p.add_argument("--routes", nargs="+")
+    p.add_argument("--headed", action="store_true")
+    p=mkp("investigate"); p.add_argument("description", nargs="+")
+    p.add_argument("--url", default="http://localhost:3000")
+    p.add_argument("--headed", action="store_true")
+
+    # 弱項補強第二批（本次新增）
+    mkp("init")
+    p=mkp("deploy");      p.add_argument("--target", default="vercel",
+                                          choices=["vercel","railway","manual"])
+    p.add_argument("--skip-browser", action="store_true")
+    p.add_argument("--url", default=None)
+    p=mkp("vitals");      p.add_argument("url", nargs="?", default="http://localhost:3000")
+    p.add_argument("--runs", type=int, default=3)
+    p=mkp("cross-device"); p.add_argument("url", nargs="?", default="http://localhost:3000")
+
+    args = parser.parse_args()
+
+    if args.command is None or args.command == "help":
+        cmd_help()
+        print(f"""
+{CYAN}── 完整命令表（最新版）──────────────────────────────────────{RESET}
+
+{BOLD}弱項一：智能專案初始化{RESET}
+  {GREEN}init{RESET}                     偵測新/現有專案，自動 scaffold 或掃描健康度
+
+{BOLD}弱項二：部署路徑{RESET}
+  {GREEN}deploy{RESET}                   本地驗證通過才部署（Vercel/Railway/Manual）
+    --target vercel|railway|manual
+    --skip-browser           跳過瀏覽器 QA
+    --url https://...        指定線上驗證 URL
+
+{BOLD}弱項三：可觀測性（在 FORGE SKILL.md 中定義，init 自動安裝）{RESET}
+
+{BOLD}弱項四：架構約束（在 NEXUS SKILL.md 中定義，ship 時強制遵守）{RESET}
+
+{BOLD}弱項五：完整瀏覽器 QA{RESET}
+  {GREEN}qa-browser{RESET} [URL]         截圖 + console 錯誤 + network 失敗
+  {GREEN}vitals{RESET} [URL]             Core Web Vitals（LCP、CLS、TTI）
+    --runs N                 量測次數取平均（預設 3）
+  {GREEN}cross-device{RESET} [URL]        桌機 + 平板 + 手機三種視窗截圖
+  {GREEN}investigate{RESET} <問題描述>    用瀏覽器重現問題，PROBE 診斷
+
+{BOLD}回顧{RESET}
+  {GREEN}retro{RESET}                    Git 統計 + ARIA 質化回顧
+    --since "14 days ago"
+""")
+        return
+
+    if not args.command in ("list", "clear", "workdir"):
+        check_api_key()
+
+    cmds = {
+        "ask":cmd_ask, "agent":cmd_agent, "chat":cmd_chat,
+        "do":cmd_do, "run":cmd_run, "build":cmd_build, "shell":cmd_shell,
+        "dept":cmd_dept, "project":cmd_project, "review":cmd_review,
+        "list":cmd_list, "clear":cmd_clear, "workdir":cmd_workdir,
+        "discover":cmd_discover, "ship":cmd_ship, "webdev":cmd_webdev,
+        "feature":cmd_feature, "fixbug":cmd_fix, "codereview":cmd_review_project,
+        "retro":cmd_retro, "qa-browser":cmd_qa_browser, "investigate":cmd_investigate,
+        # 弱項補強第二批
+        "init":cmd_init, "deploy":cmd_deploy,
+        "vitals":cmd_vitals, "cross-device":cmd_cross_device,
+    }
+    fn = cmds.get(args.command)
+    if fn:
+        try: fn(args)
+        except KeyboardInterrupt: print(f"\n{DIM}  已中止{RESET}\n")
+    else:
+        print(f"{RED}✖ 未知命令：{args.command}{RESET}")
+
 
 if __name__ == "__main__":
     main()

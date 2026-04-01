@@ -1,0 +1,47 @@
+# Project Brain — 依賴清單
+# 獨立 AI 記憶系統，可搭配任何 LLM
+
+# ── 必要依賴 ─────────────────────────────────────────────────────
+anthropic>=0.50.0            # Claude API（scan/learn/validate 需要）
+
+# ── Web UI（brain serve / brain webui）──────────────────────────
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# ── 生產部署（brain serve --production）─────────────────────────
+# pip install gunicorn
+# gunicorn>=21.0.0
+
+# ── MCP Server（brain serve --mcp）──────────────────────────────
+# pip install mcp
+# mcp>=1.26.0    # 讓 Claude Code / Cursor 直接連接 Project Brain
+
+# ── L2 時序記憶（選填，不安裝自動降級到 L1a+L3）────────────────
+# pip install graphiti-core falkordb
+# graphiti-core>=0.3.0
+# falkordb>=1.0.0
+# 啟動 FalkorDB：docker run -p 6379:6379 falkordb/falkordb
+
+# ── L3 語意搜尋加速（選填）──────────────────────────────────────
+# pip install scikit-learn    # brain dedup 語意去重
+
+# ── 測試 ────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-cov>=5.0.0
+
+# ── 安裝指令 ─────────────────────────────────────────────────────
+# 最小安裝（L1a + L3，免費）：
+#   pip install flask flask-cors
+#
+# 完整安裝（含 L2 時序記憶）：
+#   pip install flask flask-cors graphiti-core falkordb
+#   docker run -p 6379:6379 falkordb/falkordb
+#
+# 使用 Anthropic API（scan/learn 功能）：
+#   pip install anthropic
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#
+# 使用本地 LLM（完全免費）：
+#   export BRAIN_LLM_PROVIDER=openai
+#   export BRAIN_LLM_BASE_URL=http://localhost:11434/v1
+#   export BRAIN_LLM_MODEL=llama3.1:8b

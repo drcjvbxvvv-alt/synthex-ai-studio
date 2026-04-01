@@ -1,0 +1,124 @@
+
+<style>
+*{box-sizing:border-box}
+.w{padding:8px 0;font-size:13px;color:var(--color-text-primary)}
+.rl{font-size:11px;color:var(--color-text-secondary);text-align:center;margin:10px 0 5px;letter-spacing:.06em;text-transform:uppercase}
+.row{display:flex;gap:7px;justify-content:center}
+.b{border:.5px solid var(--color-border-secondary);border-radius:8px;padding:7px 8px;text-align:center;background:var(--color-background-secondary);cursor:pointer;transition:border-color .18s,background .18s;min-width:0;flex:1}
+.bt{font-weight:500;font-size:13px;color:var(--color-text-primary);white-space:nowrap}
+.bs{font-size:11px;color:var(--color-text-secondary);margin-top:2px;white-space:nowrap}
+.b:hover{border-color:var(--color-border-primary)}
+.la{background:rgba(127,119,221,.13);border-color:#7F77DD;border-width:1.5px}
+.ia{background:rgba(29,158,117,.13);border-color:#1D9E75;border-width:1.5px}
+.ma{background:rgba(55,138,221,.13);border-color:#378ADD;border-width:1.5px}
+.sep{text-align:center;color:var(--color-text-tertiary);font-size:18px;margin:3px 0;letter-spacing:6px}
+.brain{border:1.5px dashed var(--color-border-secondary);border-radius:12px;padding:8px;margin-top:4px}
+.brain-lbl{font-size:10px;color:var(--color-text-secondary);text-align:center;margin-bottom:6px;letter-spacing:.04em;text-transform:uppercase}
+.info{margin-top:10px;padding:9px 13px;background:var(--color-background-secondary);border-radius:8px;border-left:3px solid #AFA9EC;font-size:12px;color:var(--color-text-secondary);line-height:1.7;min-height:44px}
+.info code{background:var(--color-background-tertiary);padding:1px 5px;border-radius:3px;font-family:var(--font-mono);font-size:11px;color:var(--color-text-primary)}
+.vd{margin-top:14px}
+.vd-title{font-size:11px;color:var(--color-text-secondary);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px}
+.vg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.vc{border:.5px solid var(--color-border-secondary);border-radius:8px;padding:10px;background:var(--color-background-secondary)}
+.vct{font-weight:500;font-size:12px;color:var(--color-text-primary);margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.vc code{display:block;background:var(--color-background-tertiary);padding:4px 8px;border-radius:4px;font-family:var(--font-mono);font-size:11px;color:var(--color-text-primary);margin:4px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vcx{font-size:11px;color:var(--color-text-secondary);line-height:1.5}
+.chip{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:500}
+.cp{background:#EEEDFE;color:#3C3489}
+.cg{background:#EAF3DE;color:#3B6D11}
+.cb{background:#E6F1FB;color:#0C447C}
+.ca{background:#FAEEDA;color:#633806}
+</style>
+
+<div class="w">
+  <div class="rl">LLM 工具層 — 點擊查看調用路徑</div>
+  <div class="row">
+    <div class="b" id="b-cursor" onclick="sel('cursor')"><div class="bt">Cursor</div><div class="bs">.cursorrules</div></div>
+    <div class="b" id="b-cc" onclick="sel('cc')"><div class="bt">Claude Code</div><div class="bs">CLAUDE.md / MCP</div></div>
+    <div class="b" id="b-gpt" onclick="sel('gpt')"><div class="bt">ChatGPT</div><div class="bs">Gemini 同</div></div>
+    <div class="b" id="b-ola" onclick="sel('ola')"><div class="bt">Ollama</div><div class="bs">LM Studio</div></div>
+    <div class="b" id="b-sdk" onclick="sel('sdk')"><div class="bt">OpenAI SDK</div><div class="bs">任何框架</div></div>
+  </div>
+
+  <div class="sep">↓</div>
+
+  <div class="rl">接口層</div>
+  <div class="row">
+    <div class="b" id="b-sf" style="cursor:default"><div class="bt">靜態文件</div><div class="bs">export-rules</div></div>
+    <div class="b" id="b-mcp" style="cursor:default"><div class="bt">MCP Server</div><div class="bs">4 個 MCP Tools</div></div>
+    <div class="b" id="b-sp" style="cursor:default"><div class="bt">System Prompt</div><div class="bs">手動複製貼上</div></div>
+    <div class="b" id="b-srv" style="cursor:default"><div class="bt">brain serve</div><div class="bs">:7891 / OpenAI 相容</div></div>
+  </div>
+
+  <div class="sep">↓</div>
+
+  <div class="brain">
+    <div class="brain-lbl">Project Brain 記憶系統</div>
+    <div class="row">
+      <div class="b" id="b-l1" style="cursor:default">
+        <div class="bt">L1 工作記憶</div>
+        <div class="bs">Memory Tool</div>
+        <div class="bs">SQLite WAL</div>
+        <div class="bs">session 即時</div>
+      </div>
+      <div class="b" id="b-l2" style="cursor:default">
+        <div class="bt">L2 時序記憶</div>
+        <div class="bs">Graphiti</div>
+        <div class="bs">FalkorDB :6379</div>
+        <div class="bs">雙時態模型</div>
+      </div>
+      <div class="b" id="b-l3" style="cursor:default">
+        <div class="bt">L3 語義記憶</div>
+        <div class="bs">SQLite 知識圖譜</div>
+        <div class="bs">Decision · Pitfall</div>
+        <div class="bs">Rule · ADR · Component</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info" id="info">點擊上方任一 LLM 工具，查看它與 Brain 記憶的完整調用路徑。</div>
+
+  <div class="vd">
+    <div class="vd-title">如何確認 Brain 記憶有被調用</div>
+    <div class="vg">
+      <div class="vc">
+        <div class="vct"><span class="chip cg">L3 查詢</span>brain context</div>
+        <code>brain context "實作支付退款"</code>
+        <div class="vcx">有輸出 = L3 有知識且被查到。<br>輸出空白 = 知識庫為空，先執行 scan。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip cb">三層驗證</span>brain status</div>
+        <code>brain status</code>
+        <div class="vcx">L1 讀寫驗證 ✓ = Memory Tool 正常。<br>L2 ✓ = FalkorDB 已連接並可查詢。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip ca">API 測試</span>/v1/context</div>
+        <code>GET /v1/context?q=JWT</code>
+        <div class="vcx"><code>found: true</code> 表示查詢到相關知識。<br>是 brain serve 的精準驗證端點。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip cp">回應觀察</span>knowledge_injected</div>
+        <code>POST /v1/messages → 回應欄位</code>
+        <div class="vcx"><code>knowledge_injected: true</code> = 本次有注入。<br>AI 提及具體踩坑/決策名稱也是信號。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const m = {
+  cursor:{i:['b-sf'],l:['b-l3'],d:'Cursor 路徑：<code>.cursorrules</code> → L3 蒸餾知識。每次對話 Cursor 自動讀取，無感知。更新命令：<code>brain export-rules --target cursorrules</code>。知識來源是 L3 的 <code>brain distill</code> 輸出。'},
+  cc:{i:['b-sf','b-mcp'],l:['b-l2','b-l3'],d:'Claude Code 雙路徑：啟動時讀取 <code>CLAUDE.md</code>（L3 蒸餾），同時透過 MCP Server 直接查詢 L2 Graphiti 時序圖。可問「這個決策現在還有效嗎？」命令：<code>brain export-rules --target claude</code>'},
+  gpt:{i:['b-sp'],l:['b-l3'],d:'ChatGPT / Gemini 路徑：需手動操作。執行 <code>brain export-rules --target system-prompt</code> 產生文件，複製內容貼到 ChatGPT Custom Instructions 或每次對話的開頭。'},
+  ola:{i:['b-srv'],l:['b-l3'],d:'Ollama / LM Studio 路徑：啟動 <code>brain serve --port 7891</code>，執行 <code>GET /v1/knowledge</code> 取得完整知識文字，貼到 Ollama Modelfile SYSTEM 欄位或 LM Studio System Prompt 設定。'},
+  sdk:{i:['b-srv'],l:['b-l1','b-l2','b-l3'],d:'OpenAI SDK 路徑（最完整）：把 <code>base_url</code> 設為 <code>http://localhost:7891</code>。<code>POST /v1/messages</code> 觸發 BrainRouter 三層聚合查詢，相關知識自動插入 system message。<code>knowledge_injected: true</code> 代表注入成功。'}
+};
+function sel(id){
+  document.querySelectorAll('.b').forEach(b=>b.classList.remove('la','ia','ma'));
+  const p=m[id];
+  document.getElementById('b-'+id).classList.add('la');
+  p.i.forEach(i=>document.getElementById(i).classList.add('ia'));
+  p.l.forEach(l=>document.getElementById(l).classList.add('ma'));
+  document.getElementById('info').innerHTML=p.d;
+}
+</script>

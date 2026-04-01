@@ -1,1 +1,27 @@
-anthropic>=0.40.0
+# SYNTHEX AI STUDIO — 依賴清單
+# 28 個 AI Agent · 12 Phase 自動化開發流水線
+
+# ── 核心（必要）─────────────────────────────────────────────────
+anthropic>=0.50.0            # Claude API SDK
+
+# ── 設定管理 ────────────────────────────────────────────────────
+pydantic-settings>=2.3.0
+pydantic>=2.7.0
+
+# ── 結構化日誌 ──────────────────────────────────────────────────
+structlog>=24.1.0
+
+# ── 測試 ────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-cov>=5.0.0
+
+# ── 瀏覽器 QA（選填）────────────────────────────────────────────
+# pip install playwright && playwright install chromium
+# playwright>=1.40.0
+
+# ── 安裝指令 ─────────────────────────────────────────────────────
+# 最小安裝：
+#   pip install anthropic pydantic-settings structlog
+#
+# 完整安裝：
+#   pip install -r requirements.txt

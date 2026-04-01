@@ -28,7 +28,7 @@
 
 ## 角色啟動規則
 
-**以下 8 個高頻角色有獨立的 SKILL.md，被呼叫前必須先讀取：**
+**以下 9 個高頻角色有獨立的 SKILL.md，被呼叫前必須先讀取：**
 
 | 角色 | SKILL.md 路徑 | 負責的 Phase |
 |------|-------------|------------|
@@ -39,7 +39,27 @@
 | BYTE  | `agents/BYTE/SKILL.md`  | Phase 9 前端實作 |
 | STACK | `agents/STACK/SKILL.md` | Phase 10 後端實作 |
 | PROBE | `agents/PROBE/SKILL.md` | Phase 11 測試策略 |
+| TRACE | `agents/TRACE/SKILL.md` | Phase 11 測試執行 + 瀏覽器 QA |
 | SHIELD| `agents/SHIELD/SKILL.md`| Phase 12 安全審查 |
+| ECHO  | `agents/ECHO/SKILL.md`  | Phase 2 PRD 撰寫（GIVEN-WHEN-THEN AC 格式）|
+| LUMI  | `agents/LUMI/SKILL.md`  | Phase 3 產品驗證（JTBD、RICE 框架）|
+| ARIA  | `agents/ARIA/SKILL.md`  | Phase 1 任務確認 + Phase 12 交付總結 |
+| SIGMA | `agents/SIGMA/SKILL.md` | Phase 5 可行性評估（成本、風險矩陣）|
+| KERN  | `agents/KERN/SKILL.md`  | /perf 效能分析（Flamegraph、慢查詢）|
+| RIFT  | `agents/RIFT/SKILL.md`  | 行動端（React Native + Expo）|
+| QUANT | `agents/QUANT/SKILL.md` | A/B 測試設計、指標框架、統計分析 |
+| ATLAS | `agents/ATLAS/SKILL.md` | ETL Pipeline、dbt 建模、資料品質 |
+| VISTA | `agents/VISTA/SKILL.md` | Sprint 規劃、Roadmap、ICE 框架 |
+| FLUX  | `agents/FLUX/SKILL.md`  | 全端整合、第三方服務、PoC 快速原型 |
+| MEMO  | `agents/MEMO/SKILL.md`  | GDPR、台灣個資法、隱私工程 |
+| PULSE | `agents/PULSE/SKILL.md` | SEO、GTM、AARRR 成長框架 |
+| BRIDGE| `agents/BRIDGE/SKILL.md`| MEDDIC 銷售、提案設計、合作框架 |
+| NOVA  | `agents/NOVA/SKILL.md`  | AI 功能設計（LLM 整合、RAG、Prompt Injection 防護）|
+| RELAY | `agents/RELAY/SKILL.md` | 雲端部署（Vercel、Neon、FinOps）|
+| BOLT  | `agents/BOLT/SKILL.md`  | 韌體實作（MCU/RTOS/Bootloader）|
+| VOLT  | `agents/VOLT/SKILL.md`  | 嵌入式 Linux BSP / Device Driver |
+| WIRE  | `agents/WIRE/SKILL.md`  | 硬體整合驗證 / Board Bring-up |
+| ATOM  | `agents/ATOM/SKILL.md`  | 系統程式 / eBPF / 效能分析 |
 
 **啟動流程：**
 ```
@@ -50,7 +70,30 @@
 ```
 
 沒有讀取 SKILL.md 就直接行動，視為違反工作準則。
-其他 16 位角色的能力定義在本文件的「全體 24 位 Agent」表格中。
+
+---
+
+## 工作流分工
+
+```
+Python CLI（synthex.py）    規劃層，需要多角色深度分析時使用
+────────────────────────    ──────────────────────────────────
+/discover                   需求深挖（6 個角色，60 分鐘）
+/ship                       完整流水線（13 Phase，適合新專案）
+/retro                      回顧統計（git 產出 + ARIA 質化分析）
+qa-browser                  真實瀏覽器 QA（截圖 + console 錯誤）
+investigate                 用瀏覽器重現並調查問題
+
+
+Claude Code（CLAUDE.md）    執行層，日常開發在這裡
+────────────────────────    ──────────────────────────────────
+/ship + 角色呼叫             實作、修改、重構
+@BYTE、@STACK 等            直接在專案裡操作檔案
+/review、/security          程式碼審查、安全審計
+/fix、/test                 修 bug、補測試
+```
+
+**原則：需要深度規劃、多角色討論 → Python CLI；需要在程式碼裡實際操作 → Claude Code。**
 
 ---
 
@@ -63,17 +106,18 @@
 Phase  1  ARIA   → 任務確認與範疇
 Phase  2  ECHO   → 需求分析與 PRD
 Phase  3  LUMI   → 產品驗證
-Phase  4  SPARK  → UX 設計
-Phase  5  PRISM  → UI 設計系統（輸出真實程式碼）
-Phase  6  NEXUS  → 技術架構（以設計為基礎）
-Phase  7  SIGMA  → 可行性評估
-Phase  8  FORGE  → 環境準備
-Phase  9  BYTE   → 前端實作（依設計 Token 開發）
-Phase 10  STACK  → 後端實作
-Phase 11  PROBE + TRACE → 測試
-Phase 12  SHIELD → 安全審查
-Phase 13  ARIA   → 交付總結
+Phase  4  NEXUS  → 技術架構設計
+Phase  5  SIGMA  → 可行性評估
+Phase  6  FORGE  → 環境準備（含 Sentry/PostHog）
+Phase  7  SPARK  → UX 設計（用戶旅程、線框）
+Phase  8  PRISM  → UI 設計系統（tokens.css、components.css）
+Phase  9  BYTE + STACK → 前後端並行實作
+Phase 10  PROBE + TRACE → 測試（單元、整合、E2E、負載、契約）
+Phase 11  SHIELD → 安全審查（SAST、Secret 掃描、OWASP）
+Phase 12  ARIA   → 交付總結（docs/DELIVERY.md + git commit）
 ```
+
+> **CLI 和 Claude Code 完全同步**：`python synthex.py ship` 和在 Claude Code 裡輸入 `/ship` 執行的是完全相同的 12 Phase 流程。
 
 ---
 
@@ -801,7 +845,7 @@ SHIELD 必須檢查並**立即修復**（不是只列出來）：
 
 ---
 
-### ▌Phase 13 — ARIA：交付總結
+### ▌Phase 12b — ARIA：交付總結
 
 **角色：** ARIA（執行長）  
 **目標：** 確認全部完成，產出交付摘要
@@ -883,12 +927,12 @@ ARIA 必須產出 `docs/DELIVERY.md`：
 ### 技術棧
 
 ```
-前端：Next.js 14 App Router + TypeScript（固定，不更換）
+前端：Next.js 16 App Router + TypeScript（固定，不更換）
 其他選型：由 NEXUS 在 Phase 6 根據需求決定，說明選擇理由
 ```
 
 **NEXUS 在 Phase 6 決定技術選型時，必須遵守：**
-- 前端框架固定為 Next.js 14，不得建議替換
+- 前端框架固定為 Next.js 16，不得建議替換
 - 其他選型（資料庫、後端框架、第三方服務）需說明：
   1. 為什麼選這個而不是常見替代方案
   2. 月費預估（如有）
@@ -930,9 +974,9 @@ npm run test         # 執行測試
 ### 禁止事項
 
 ```
-- 不替換 Next.js 14，不建議換成其他前端框架
-- 不在 BYTE 的代碼裡寫死顏色數值（一律用 tokens.css 變數）
-- 不把 API Key 寫進代碼或 git
+- 不替換 Next.js 16，不建議換成其他前端框架
+- 不在 BYTE 的程式碼裡寫死顏色數值（一律用 tokens.css 變數）
+- 不把 API Key 寫進程式碼或 git
 - 不留 // TODO 或未完成的實作
 ```
 
@@ -945,7 +989,7 @@ npm run test         # 執行測試
 1. **完全實作**：不留 `// TODO`、placeholder、假資料、mock function
 2. **說明決策**：每個重要選擇都要說明理由和 trade-off
 3. **主動發現**：完成任務的同時，指出相關的潛在問題
-4. **保持一致**：和現有代碼的風格、架構、命名保持一致
+4. **保持一致**：和現有程式碼的風格、架構、命名保持一致
 5. **驗證完成**：每個 Phase 結束前，驗證產出物是正確的
 6. **設計優先**：BYTE 的所有視覺決策必須依據 PRISM 的 tokens.css，不自行發明數值
 7. **AI 決策需說明**：SPARK、PRISM、NEXUS 自主決定的內容（品牌、設計、技術棧），
@@ -955,33 +999,170 @@ npm run test         # 執行測試
 
 ## 全體 24 位 Agent
 
-| 部門     | Agent  | 職位             | /ship 中的角色 |
-| -------- | ------ | ---------------- | -------------- |
-| 高層     | ARIA   | 執行長 CEO       | Phase 1、13    |
-| 高層     | NEXUS  | 技術長 CTO       | Phase 6        |
-| 高層     | LUMI   | 產品長 CPO       | Phase 3        |
-| 高層     | SIGMA  | 財務長 CFO       | Phase 7        |
-| 工程     | BYTE   | 前端技術主管     | Phase 9        |
-| 工程     | STACK  | 後端技術主管     | Phase 10       |
-| 工程     | FLUX   | 全端工程師       | 彈性支援       |
-| 工程     | KERN   | 系統工程師       | /perf          |
-| 工程     | RIFT   | 行動端工程師     | 行動端擴充     |
-| 產品     | SPARK  | UX 設計主管      | **Phase 4**    |
-| 產品     | PRISM  | UI 設計師        | **Phase 5**    |
-| 產品     | ECHO   | 商業分析師       | Phase 2        |
-| 產品     | VISTA  | 產品經理         | Sprint 管理    |
-| AI       | NOVA   | ML 主管          | /ai            |
-| AI       | QUANT  | 資料科學家       | 數據分析       |
-| AI       | ATLAS  | 資料工程師       | 資料管道       |
-| 基礎架構 | FORGE  | DevOps 主管      | Phase 8        |
-| 基礎架構 | SHIELD | 資安工程師       | Phase 12       |
-| 基礎架構 | RELAY  | 雲端架構師       | /deploy        |
-| QA       | PROBE  | QA 主管          | Phase 11       |
-| QA       | TRACE  | 自動化測試工程師 | Phase 11       |
-| 商務     | PULSE  | 行銷主管         | 上線後行銷     |
-| 商務     | BRIDGE | 業務主管         | 提案撰寫       |
-| 商務     | MEMO   | 法務合規主管     | 合規審查       |
+| 部門 | Agent | 職位 |
+|------|-------|------|
+| 高層 | ARIA | 執行長 CEO |
+| 高層 | NEXUS | 技術長 CTO |
+| 高層 | LUMI | 產品長 CPO |
+| 高層 | SIGMA | 財務長 CFO |
+| 工程 | BYTE | 前端技術主管 |
+| 工程 | STACK | 後端技術主管 |
+| 工程 | FLUX | 全端工程師 |
+| 工程 | KERN | 系統工程師 |
+| 工程 | RIFT | 行動端工程師 |
+| 產品 | SPARK | UX 設計主管 |
+| 產品 | PRISM | UI 設計師 |
+| 產品 | ECHO | 商業分析師 |
+| 產品 | VISTA | 產品經理 |
+| AI | NOVA | ML 主管 |
+| AI | QUANT | 資料科學家 |
+| AI | ATLAS | 資料工程師 |
+| 基礎架構 | FORGE | DevOps 主管 |
+| 基礎架構 | SHIELD | 資安工程師 |
+| 基礎架構 | RELAY | 雲端架構師 |
+| QA | PROBE | QA 主管 |
+| QA | TRACE | 自動化測試工程師 |
+| 商務 | PULSE | 行銷主管 |
+| 商務 | BRIDGE | 業務主管 |
+| 商務 | MEMO | 法務合規主管 |
+| **系統工程** | **BOLT** | **韌體技術主管** |
+| **系統工程** | **VOLT** | **嵌入式系統工程師** |
+| **系統工程** | **WIRE** | **硬體軟體整合工程師** |
+| **系統工程** | **ATOM** | **系統程式工程師** |
 
 ---
 
 _SYNTHEX AI STUDIO · 輸入 `/ship` 讓整個公司為你工作_
+
+
+---
+
+## Project Brain — 使用場景與觸發說明
+
+> Project Brain 是 SYNTHEX 的長期記憶，讓 AI 永遠帶著專案歷史工作。
+
+## Project Brain × SYNTHEX — 兩種使用場景
+
+> **核心原則**
+> - **自動觸發**：Context 注入（每次 `ship`/`feature`/`fix` 都自動）、Git Hook 學習（每次 `git commit` 都自動）
+> - **手動觸發**：`brain init` 或 `brain scan`（只需一次）、`brain add`（選填補充）
+
+---
+
+### 場景一：全新專案
+
+從零開始，同時建立開發系統和長期記憶。
+
+**完整流程：**
+
+```
+[你] python synthex.py brain init          ← 手動（僅一次）
+      │
+      │  建立 .brain/、設定 Git Hook、建立知識圖譜
+      ▼
+[你] python synthex.py discover "模糊想法"  ← 手動
+      │
+      │  (自動) Brain.get_context() 注入已知背景知識
+      │  6 個 Agent 深挖需求，產出 docs/DISCOVER_FINAL.md
+      ▼
+[你] python synthex.py ship "完整需求" --budget 5.0  ← 手動
+      │
+      │  Phase 4 NEXUS 架構設計
+      │    (自動) Brain 注入相關踩坑 + ADR
+      │  Phase 9+10 BYTE+STACK 實作
+      │    (自動) Brain 注入業務規則 + 依賴關係
+      │  Phase 11 PROBE+TRACE 測試
+      │    (自動) Brain 注入已知的邊界條件
+      ▼
+[你] git commit -m "feat: 完成登入功能"      ← 正常 git 操作
+      │
+      │  (自動) Git Hook → Brain.learn_from_commit()
+      │  Claude 分析 diff，提取決策 / 踩坑 / 規則
+      │  存入知識圖譜（背景執行，不阻塞你）
+      ▼
+ 知識圖譜自動成長（每次 commit 都在積累）
+      ↻ 下次工作，Brain 知道得更多
+```
+
+**時間線：**
+
+| 時間 | commit 數 | 知識節點 | Brain 效果 |
+|------|-----------|---------|-----------|
+| 第 1 週 | ~20 | ~5 | 基礎結構知識 |
+| 第 1 個月 | ~100 | ~30 | 開始有決策記錄 |
+| 第 3 個月 | ~300 | ~100 | 踩坑記錄豐富，不再重蹈覆轍 |
+| 第 1 年 | ~1000 | ~300 | 完整機構記憶 |
+
+---
+
+### 場景二：現有專案（接手 / 新功能 / 修復 / 重構）
+
+接手沒有記錄的舊專案，或在現有專案上持續開發。
+
+**接手舊專案（只需一次）：**
+
+```
+[你] python synthex.py brain scan           ← 手動（僅一次，約 3-10 分鐘）
+      │
+      │  Step 1：分析目錄結構，建立組件節點
+      │  Step 2：分析 Git 歷史（最近 200 commits）
+      │          Claude 提取每個 commit 的決策知識
+      │  Step 3：掃描「熱點」程式碼（修改最頻繁的檔案）
+      │          提取 TODO/FIXME/HACK 注釋
+      │  Step 4：整合現有 README / docs / ADR
+      │  Step 5：產出 .brain/SCAN_REPORT.md
+      ▼
+ 知識圖譜重建完成，可以立即使用
+```
+
+**日常開發（完全自動）：**
+
+```
+[你] python synthex.py feature "新增訂單退款功能"  ← 手動
+      │
+      │  (自動) Brain.get_context("新增訂單退款功能", "src/order/")
+      │          搜尋 → 「支付模組有重複扣款的踩坑記錄」
+      │          搜尋 → 「金額必須以分為單位儲存（業務規則）」
+      │          搜尋 → 「ADR-042：冪等性設計」
+      │          → 全部注入 Agent 的 Prompt 前端
+      ▼
+ AI Agent 帶著完整記憶工作
+ 知道之前踩過什麼坑，不會重複犯錯
+      │
+      ▼
+[你] git commit -m "feat: 加入退款 API"      ← 正常 git 操作
+      │
+      │  (自動) Git Hook 學習新知識
+      ▼
+ 知識圖譜持續成長 ↻
+```
+
+**四種操作的觸發方式：**
+
+| 操作 | 命令 | Brain 介入方式 |
+|------|------|----------------|
+| 新增功能 | `synthex.py feature "描述"` | 自動注入相關踩坑 + 依賴關係 |
+| 修復 Bug | `synthex.py fix "bug 描述"` | 自動注入歷史相似 bug 的解法 |
+| 除錯 | `synthex.py investigate "問題"` | 自動注入可能的根本原因 |
+| 重構 | `synthex.py ship "重構需求"` | 自動注入完整架構脈絡 |
+
+---
+
+### 哪些是自動的，哪些是手動的
+
+```
+自動（完全不需要手動觸發）：
+  ✓ git commit 後，知識自動積累（Git Hook）
+  ✓ 每次 AI 工作前，Context 自動注入（orchestrator 內建）
+  ✓ 知識圖譜自動成長
+
+手動（只需一次）：
+  ✓ brain init — 新專案初始化
+  ✓ brain scan — 舊專案考古掃描
+
+選填（隨時補充）：
+  ✓ brain add "知識" — 手動記錄重要決策
+  ✓ brain status    — 查看目前記憶狀態
+  ✓ brain context   — 測試 Context 注入效果
+```
+

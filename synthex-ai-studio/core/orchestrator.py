@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import anthropic
 from agents.all_agents import ALL_AGENTS, DEPT_AGENTS, get_agent
+from core.config import cfg, ModelID
 
 RESET  = "\033[0m"
 BOLD   = "\033[1m"
@@ -60,14 +61,27 @@ ROUTING_SYSTEM = """你是 SYNTHEX AI STUDIO 的任務路由系統。
   "supporting_agents": ["AGENT_NAME"],  // 協作時才有
   "reasoning": "路由理由（一句話）",
   "task_summary": "任務摘要（一句話，中文）",
-  "suggested_approach": "建議的工作方式（一句話）"
+  "suggested_approach": "建議的工作方式（一句話）",
+  "complexity": "low" 或 "medium" 或 "high"
 }
+
+complexity 判斷標準：
+- low: 單一問題、快速回答、文字生成（用 Haiku 4.5 路由）
+- medium: 多步驟分析、文件撰寫、需要領域知識（用 Sonnet 4.6）
+- high: 系統設計、跨部門協調、需要深度推理（用 Opus 4.6 + Extended Thinking）
 
 routing_type 說明：
 - single: 一個 Agent 獨立處理
 - multi: 多個 Agent 同時各自處理，再整合結果
 - sequential: 需要 A 先做，B 再做（有依賴順序）
 """
+
+# ── 複雜度對應的路由模型 ──────────────────────────────────────────
+_ROUTING_MODEL_BY_COMPLEXITY = {
+    "low":    ModelID.HAIKU_45,
+    "medium": ModelID.SONNET_46,
+    "high":   ModelID.OPUS_46,
+}
 
 
 class Orchestrator:
@@ -85,11 +99,11 @@ class Orchestrator:
         return self._agent_cache[name]
 
     def route(self, task: str) -> dict:
-        """讓 ARIA 決定哪個 Agent 處理這個任務"""
+        """讓路由器決定哪個 Agent 處理這個任務（帶複雜度感知的模型選擇）"""
         self._print_routing(task)
         try:
             resp = self.client.messages.create(
-                model="claude-opus-4-5",
+                model=cfg.model_sonnet,   # Sonnet 4.6 做路由決策（夠快且夠聰明）
                 max_tokens=512,
                 system=ROUTING_SYSTEM,
                 messages=[{"role": "user", "content": task}],
@@ -100,7 +114,14 @@ class Orchestrator:
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:]
-            return json.loads(raw.strip())
+            result = json.loads(raw.strip())
+
+            # 記錄複雜度決策到 log
+            complexity = result.get("complexity", "medium")
+            chosen_model = _ROUTING_MODEL_BY_COMPLEXITY.get(complexity, cfg.model_sonnet)
+            result["_routing_model"] = chosen_model
+            return result
+
         except Exception as e:
             # fallback to ARIA
             return {
@@ -110,6 +131,8 @@ class Orchestrator:
                 "reasoning": f"路由失敗，交由 ARIA 處理: {e}",
                 "task_summary": task[:60],
                 "suggested_approach": "直接處理",
+                "complexity": "medium",
+                "_routing_model": cfg.model_sonnet,
             }
 
     def run(self, task: str, force_agent: str = None, show_routing: bool = True,
@@ -249,12 +272,16 @@ class Orchestrator:
         print(f"\n{DIM}  🔀 分析任務並路由... · \"{task[:60]}{'...' if len(task)>60 else ''}\"{RESET}")
 
     def _print_routing_result(self, r: dict):
+        complexity_icons = {"low": "⚡", "medium": "🧠", "high": "🔮"}
+        complexity = r.get("complexity", "medium")
+        icon = complexity_icons.get(complexity, "🧠")
         print(f"\n{CYAN}{'─'*50}")
         print(f"  路由決策：{r.get('task_summary', '')}")
         print(f"  主責 Agent：{BOLD}{r.get('primary_agent', '?')}{RESET}{CYAN}")
         if r.get('supporting_agents'):
             print(f"  協作 Agent：{', '.join(r['supporting_agents'])}")
         print(f"  模式：{r.get('routing_type', '?')} · {r.get('reasoning', '')}")
+        print(f"  複雜度：{icon} {complexity}")
         print(f"{'─'*50}{RESET}")
 
     def list_agents(self):

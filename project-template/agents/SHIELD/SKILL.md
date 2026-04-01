@@ -11,7 +11,7 @@
 
 ## Phase 10 完整安全審查清單
 
-每個項目都必須實際確認，不能只看代碼就說「應該沒問題」。
+每個項目都必須實際確認，不能只看程式碼就說「應該沒問題」。
 
 ### 1. 輸入驗證
 
@@ -98,7 +98,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
 □ 密碼使用 bcrypt（cost factor ≥ 12）或 argon2 雜湊
 □ API 回應不包含 password、secret、token 等欄位
 □ Log 不記錄密碼、信用卡號、完整的 JWT
-□ 環境變數不在代碼中（grep "API_KEY\s*=" 確認）
+□ 環境變數不在程式碼中（grep "API_KEY\s*=" 確認）
 □ 沒有把敏感資料存在 localStorage（XSS 可竊取）
 □ 信用卡等高敏感資料完全交給第三方（Stripe），不自己儲存
 ```

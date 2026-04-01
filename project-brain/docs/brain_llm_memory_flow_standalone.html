@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project Brain — LLM 調用流程圖</title>
+<style>
+:root {
+  --color-text-primary: #1f2328;
+  --color-text-secondary: #656d76;
+  --color-text-tertiary: #9198a1;
+  --color-background-primary: #ffffff;
+  --color-background-secondary: #f6f8fa;
+  --color-background-tertiary: #eaeef2;
+  --color-border-secondary: #d0d7de;
+  --color-border-primary: #1f2328;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-text-primary: #e6edf3;
+    --color-text-secondary: #8b949e;
+    --color-text-tertiary: #484f58;
+    --color-background-primary: #0d1117;
+    --color-background-secondary: #161b22;
+    --color-background-tertiary: #1c2128;
+    --color-border-secondary: #30363d;
+    --color-border-primary: #8b949e;
+  }
+  .cp { background: #2d2a5e; color: #b8b3f5; }
+  .cg { background: #1a3a1a; color: #7ee787; }
+  .cb { background: #0d2a4a; color: #79c0ff; }
+  .ca { background: #3d2600; color: #ffa657; }
+  .la { background: rgba(127,119,221,.18) !important; border-color: #7F77DD !important; }
+  .ia { background: rgba(29,158,117,.18) !important; border-color: #1D9E75 !important; }
+  .ma { background: rgba(55,138,221,.18) !important; border-color: #378ADD !important; }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 24px;
+  max-width: 860px;
+  margin: 0 auto;
+}
+header {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-border-secondary);
+}
+header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+header p { font-size: 13px; color: var(--color-text-secondary); }
+.w { padding: 8px 0; font-size: 13px; color: var(--color-text-primary); }
+.rl {
+  font-size: 11px; color: var(--color-text-secondary);
+  text-align: center; margin: 10px 0 5px;
+  letter-spacing: .06em; text-transform: uppercase;
+  font-weight: 500;
+}
+.row { display: flex; gap: 7px; justify-content: center; }
+.b {
+  border: .5px solid var(--color-border-secondary);
+  border-radius: 8px; padding: 7px 8px; text-align: center;
+  background: var(--color-background-secondary);
+  cursor: pointer;
+  transition: border-color .18s, background .18s;
+  min-width: 0; flex: 1;
+}
+.bt { font-weight: 500; font-size: 13px; color: var(--color-text-primary); white-space: nowrap; }
+.bs { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; white-space: nowrap; }
+.b:hover { border-color: var(--color-border-primary); }
+.la { background: rgba(127,119,221,.13); border-color: #7F77DD; border-width: 1.5px; }
+.ia { background: rgba(29,158,117,.13);  border-color: #1D9E75; border-width: 1.5px; }
+.ma { background: rgba(55,138,221,.13);  border-color: #378ADD; border-width: 1.5px; }
+.sep { text-align: center; color: var(--color-text-tertiary); font-size: 18px; margin: 3px 0; letter-spacing: 6px; }
+.brain {
+  border: 1.5px dashed var(--color-border-secondary);
+  border-radius: 12px; padding: 8px; margin-top: 4px;
+}
+.brain-lbl {
+  font-size: 10px; color: var(--color-text-secondary);
+  text-align: center; margin-bottom: 6px;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.info {
+  margin-top: 10px; padding: 9px 13px;
+  background: var(--color-background-secondary);
+  border-radius: 8px; border-left: 3px solid #AFA9EC;
+  font-size: 12px; color: var(--color-text-secondary);
+  line-height: 1.7; min-height: 44px;
+}
+.info code {
+  background: var(--color-background-tertiary);
+  padding: 1px 5px; border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px; color: var(--color-text-primary);
+}
+.vd { margin-top: 14px; }
+.vd-title {
+  font-size: 11px; color: var(--color-text-secondary);
+  font-weight: 500; letter-spacing: .05em;
+  text-transform: uppercase; margin-bottom: 6px;
+}
+.vg { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.vc {
+  border: .5px solid var(--color-border-secondary);
+  border-radius: 8px; padding: 10px;
+  background: var(--color-background-secondary);
+}
+.vct {
+  font-weight: 500; font-size: 12px;
+  color: var(--color-text-primary);
+  margin-bottom: 5px; display: flex; align-items: center; gap: 6px;
+}
+.vc code {
+  display: block;
+  background: var(--color-background-tertiary);
+  padding: 4px 8px; border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px; color: var(--color-text-primary);
+  margin: 4px 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.vcx { font-size: 11px; color: var(--color-text-secondary); line-height: 1.5; }
+.chip {
+  display: inline-block; padding: 1px 7px;
+  border-radius: 10px; font-size: 10px; font-weight: 500;
+}
+.cp { background: #EEEDFE; color: #3C3489; }
+.cg { background: #EAF3DE; color: #3B6D11; }
+.cb { background: #E6F1FB; color: #0C447C; }
+.ca { background: #FAEEDA; color: #633806; }
+
+/* Legend */
+.legend {
+  margin-top: 16px; padding: 10px 14px;
+  background: var(--color-background-secondary);
+  border-radius: 8px; border: .5px solid var(--color-border-secondary);
+}
+.legend-title { font-size: 11px; font-weight: 500; color: var(--color-text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em; }
+.legend-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--color-text-secondary); }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+footer {
+  margin-top: 24px; padding-top: 12px;
+  border-top: 1px solid var(--color-border-secondary);
+  font-size: 11px; color: var(--color-text-tertiary);
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🧠 Project Brain — LLM 調用流程</h1>
+  <p>點擊上方任一 LLM 工具，查看它與三層記憶的完整調用路徑與驗證方式。</p>
+</header>
+
+<div class="w">
+  <div class="rl">LLM 工具層 — 點擊查看調用路徑</div>
+  <div class="row">
+    <div class="b" id="b-cursor" onclick="sel('cursor')">
+      <div class="bt">Cursor</div>
+      <div class="bs">.cursorrules</div>
+    </div>
+    <div class="b" id="b-cc" onclick="sel('cc')">
+      <div class="bt">Claude Code</div>
+      <div class="bs">CLAUDE.md / MCP</div>
+    </div>
+    <div class="b" id="b-gpt" onclick="sel('gpt')">
+      <div class="bt">ChatGPT</div>
+      <div class="bs">Gemini 同</div>
+    </div>
+    <div class="b" id="b-ola" onclick="sel('ola')">
+      <div class="bt">Ollama</div>
+      <div class="bs">LM Studio</div>
+    </div>
+    <div class="b" id="b-sdk" onclick="sel('sdk')">
+      <div class="bt">OpenAI SDK</div>
+      <div class="bs">任何框架</div>
+    </div>
+  </div>
+
+  <div class="sep">↓</div>
+
+  <div class="rl">接口層</div>
+  <div class="row">
+    <div class="b" id="b-sf" style="cursor:default">
+      <div class="bt">靜態文件</div>
+      <div class="bs">export-rules</div>
+    </div>
+    <div class="b" id="b-mcp" style="cursor:default">
+      <div class="bt">MCP Server</div>
+      <div class="bs">4 個 MCP Tools</div>
+    </div>
+    <div class="b" id="b-sp" style="cursor:default">
+      <div class="bt">System Prompt</div>
+      <div class="bs">手動複製貼上</div>
+    </div>
+    <div class="b" id="b-srv" style="cursor:default">
+      <div class="bt">brain serve</div>
+      <div class="bs">:7891 / OpenAI 相容</div>
+    </div>
+  </div>
+
+  <div class="sep">↓</div>
+
+  <div class="brain">
+    <div class="brain-lbl">Project Brain 記憶系統 · v5.0</div>
+    <div class="row">
+      <div class="b" id="b-l1" style="cursor:default">
+        <div class="bt">L1a Session Store</div>
+        <div class="bs">SessionStore</div>
+        <div class="bs">SQLite WAL</div>
+        <div class="bs">任意 LLM 讀寫</div>
+      </div>
+      <div class="b" id="b-l1b" style="cursor:default">
+        <div class="bt">L1b Memory Tool</div>
+        <div class="bs">Anthropic SDK</div>
+        <div class="bs">Claude tool_use</div>
+        <div class="bs">選填橋接</div>
+      </div>
+      <div class="b" id="b-l2" style="cursor:default">
+        <div class="bt">L2 時序記憶</div>
+        <div class="bs">Graphiti</div>
+        <div class="bs">FalkorDB :6379</div>
+        <div class="bs">雙時態模型</div>
+      </div>
+      <div class="b" id="b-l3" style="cursor:default">
+        <div class="bt">L3 語義記憶</div>
+        <div class="bs">SQLite 知識圖譜</div>
+        <div class="bs">Decision · Pitfall</div>
+        <div class="bs">Rule · ADR · Component</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info" id="info">
+    點擊上方任一 LLM 工具，查看它與 Brain 記憶的完整調用路徑。
+  </div>
+
+  <div class="legend">
+    <div class="legend-title">色彩說明</div>
+    <div class="legend-row">
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(127,119,221,.4);border:1.5px solid #7F77DD"></div>
+        <span>你選擇的工具（紫色）</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(29,158,117,.4);border:1.5px solid #1D9E75"></div>
+        <span>對應的接口層（綠色）</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(55,138,221,.4);border:1.5px solid #378ADD"></div>
+        <span>存取的記憶層（藍色）</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="vd">
+    <div class="vd-title">如何確認 Brain 記憶有被調用</div>
+    <div class="vg">
+      <div class="vc">
+        <div class="vct"><span class="chip cg">L3 查詢</span>brain context</div>
+        <code>brain context "實作支付退款"</code>
+        <div class="vcx">有輸出 = L3 有知識且被查到。<br>輸出空白 = 知識庫為空，先執行 scan。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip cb">三層驗證</span>brain status</div>
+        <code>brain status</code>
+        <div class="vcx">L1 讀寫驗證 ✓ = Memory Tool 正常。<br>L2 ✓ = FalkorDB 已連接並可查詢。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip ca">API 測試</span>/v1/context</div>
+        <code>GET /v1/context?q=JWT</code>
+        <div class="vcx"><code>found: true</code> 表示查詢到相關知識。<br>是 brain serve 的精準驗證端點。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip cp">回應觀察</span>knowledge_injected</div>
+        <code>POST /v1/messages → 回應欄位</code>
+        <div class="vcx"><code>knowledge_injected: true</code> = 本次有注入。<br>AI 提及具體踩坑/決策名稱也是信號。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip cg">L1a 驗證</span>/v1/session</div>
+        <code>GET /v1/session/search?q=關鍵字</code>
+        <div class="vcx">任何 LLM 寫入的工作記憶。<br><code>total > 0</code> = L1a 有資料。</div>
+      </div>
+      <div class="vc">
+        <div class="vct"><span class="chip ca">標記測試</span>BRAIN-VERIFY</div>
+        <code>brain add --title "BRAIN-VERIFY-001"</code>
+        <div class="vcx">加入後問 LLM：「你知道 BRAIN-VERIFY-001 嗎？」<br>能描述 = 端對端成功。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Project Brain v5.0 · docs/brain_llm_memory_flow_standalone.html · 
+  互動圖表，用瀏覽器開啟
+</footer>
+
+<script>
+const m = {
+  cursor: {
+    i: ['b-sf'],
+    l: ['b-l3'],
+    d: 'Cursor 路徑：<code>.cursorrules</code> → L3 蒸餾知識。每次對話 Cursor 自動讀取，無感知。<br><br>更新命令：<code>brain export-rules --target cursorrules</code><br>知識來源：L3 的 <code>brain distill</code> 輸出（靜態快照）。<br>更新時機：執行 <code>brain scan</code> 或 <code>brain add</code> 後重新執行 export-rules。'
+  },
+  cc: {
+    i: ['b-sf', 'b-mcp'],
+    l: ['b-l2', 'b-l3'],
+    d: 'Claude Code 雙路徑：<br><br>① <strong>CLAUDE.md</strong>（靜態）：啟動時讀取 L3 蒸餾知識。命令：<code>brain export-rules --target claude</code><br>② <strong>MCP Server</strong>（即時）：直接查詢 L2 Graphiti 時序圖，可問「這個決策現在還有效嗎？」<br><br>建議兩者同時啟用：CLAUDE.md 作底、MCP 補即時查詢。'
+  },
+  gpt: {
+    i: ['b-sp'],
+    l: ['b-l3'],
+    d: 'ChatGPT / Gemini 路徑：需手動操作。<br><br>執行 <code>brain export-rules --target system-prompt</code> 產生 <code>.brain/system-prompt.md</code>，複製內容貼到 ChatGPT Custom Instructions 或每次對話的開頭。<br><br>讀取 L3 靜態蒸餾，無法即時查詢 L1a/L2。'
+  },
+  ola: {
+    i: ['b-srv'],
+    l: ['b-l1', 'b-l3'],
+    d: 'Ollama / LM Studio 路徑：<br><br>① 啟動 <code>brain serve --port 7891</code><br>② 把 base_url 設為 <code>http://localhost:7891</code><br>③ <code>POST /v1/messages</code> 自動查詢 L1a + L3，注入知識<br><br>也可以主動寫入工作記憶：<code>POST /v1/session {key, value, category}</code>'
+  },
+  sdk: {
+    i: ['b-srv'],
+    l: ['b-l1', 'b-l2', 'b-l3'],
+    d: 'OpenAI SDK 路徑（最完整）：<br><br>把 <code>base_url</code> 設為 <code>http://localhost:7891</code>，<code>api_key</code> 設為任意字串。<br><br><code>POST /v1/messages</code> 觸發 BrainRouter 三層聚合查詢（L1a + L2 + L3），相關知識自動插入 system message。<br><br>回應欄位 <code>knowledge_injected: true</code> 代表本次有注入知識。'
+  }
+};
+
+function sel(id) {
+  document.querySelectorAll('.b').forEach(b => b.classList.remove('la', 'ia', 'ma'));
+  const p = m[id];
+  document.getElementById('b-' + id).classList.add('la');
+  p.i.forEach(i => document.getElementById(i).classList.add('ia'));
+  p.l.forEach(l => {
+    const el = document.getElementById(l);
+    if (el) el.classList.add('ma');
+  });
+  document.getElementById('info').innerHTML = p.d;
+}
+</script>
+</body>
+</html>
