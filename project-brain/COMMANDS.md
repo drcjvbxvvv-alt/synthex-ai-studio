@@ -43,6 +43,41 @@ brain add "JWT 規則" \
 
 ---
 
+## brain doctor 詳細說明
+
+```bash
+# 完整健康檢查（環境、資料庫、Git、MCP、套件、向量搜尋引擎）
+brain doctor
+
+# 自動修復可修復的問題（git hook、MCP 設定）
+brain doctor --fix
+```
+
+**向量搜尋引擎驗證（三層）**：
+
+```
+向量搜尋引擎
+────────────────────────────────────────────
+✓  Layer 1  套件已安裝  (sqlite-vec 0.1.9)
+✓  Layer 2  SQLite C 擴充載入成功
+✓  Layer 3  vec_distance_cosine 運算正確  (dist=0.0000)
+✓  搜尋路徑  C 擴充加速  （FTS5 × 0.4 + 向量 × 0.6）
+✓  Embedding  LocalTFIDF  (256 dim，零依賴)
+```
+
+若 Layer 2 失敗（`enable_load_extension` 被禁用），修復方式：
+
+```bash
+# pyenv 用戶（重新編譯 Python）
+PYTHON_CONFIGURE_OPTS='--enable-loadable-sqlite-extensions' \
+  pyenv install --force $(pyenv version-name)
+
+# 或改用 Homebrew Python（已內建擴充支援）
+brew install python@3.12
+```
+
+---
+
 ## brain review 詳細說明
 
 `brain scan` 提取的知識先進 KRB Staging 暫存區，需人工審核才進入 L3：

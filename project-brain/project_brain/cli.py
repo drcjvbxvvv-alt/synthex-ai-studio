@@ -941,6 +941,91 @@ def cmd_index(args):
         _info("brain ask 現在使用混合搜尋（FTS5 × 0.4 + 向量 × 0.6）")
 
 
+def _verify_sqlite_vec():
+    """
+    sqlite-vec 三層端對端驗證：
+      Layer 1 — import sqlite_vec          套件是否安裝
+      Layer 2 — sqlite_vec.load(conn)      能否載入 SQLite C 擴充
+      Layer 3 — vec_distance_cosine(...)   SQL 函數是否可執行
+
+    同時偵測 embedding 後端（決定向量品質）。
+    """
+    import sqlite3, struct
+
+    # ── Layer 1：套件安裝 ──────────────────────────────────────
+    try:
+        import sqlite_vec as sv
+        ver = getattr(sv, "__version__", "unknown")
+        print(f"  {G}✓{R}  Layer 1  套件已安裝  {D}(sqlite-vec {ver}){R}")
+    except ImportError:
+        print(f"  {RE}✗{R}  Layer 1  套件未安裝")
+        print(f"     {D}pip install sqlite-vec{R}")
+        print(f"  {GR}  → 向量搜尋不可用，使用純 FTS5 關鍵字搜尋{R}")
+        return
+
+    # ── Layer 2：載入 SQLite C 擴充 ───────────────────────────
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.enable_load_extension(True)
+        sv.load(conn)
+        conn.enable_load_extension(False)
+        print(f"  {G}✓{R}  Layer 2  SQLite C 擴充載入成功")
+    except Exception as e:
+        print(f"  {RE}✗{R}  Layer 2  C 擴充載入失敗：{e}")
+        err_str = str(e).lower()
+        if "enable_load_extension" in err_str or "no attribute" in err_str:
+            print(f"     {D}原因：Python 編譯時未開啟 SQLite 擴充支援{R}")
+            print(f"     {D}pyenv 修復：PYTHON_CONFIGURE_OPTS='--enable-loadable-sqlite-extensions' \\{R}")
+            print(f"     {D}            pyenv install --force $(pyenv version-name){R}")
+            print(f"     {D}Homebrew：brew install python@3.12（已內建擴充支援）{R}")
+        else:
+            print(f"     {D}錯誤詳情：{e}{R}")
+        print(f"  {GR}  → 目前使用純 Python cosine fallback（功能完整，速度較慢）{R}")
+        conn.close()
+        return
+
+    # ── Layer 3：SQL 函數執行 ─────────────────────────────────
+    try:
+        dim   = 4
+        vec_a = struct.pack(f'{dim}f', 1.0, 0.0, 0.0, 0.0)
+        vec_b = struct.pack(f'{dim}f', 1.0, 0.0, 0.0, 0.0)
+        dist  = conn.execute(
+            "SELECT vec_distance_cosine(?, ?)", (vec_a, vec_b)
+        ).fetchone()[0]
+        if abs(dist) < 0.001:   # 相同向量距離應接近 0
+            print(f"  {G}✓{R}  Layer 3  vec_distance_cosine 運算正確  {D}(dist={dist:.4f}){R}")
+        else:
+            print(f"  {Y}⚠{R}  Layer 3  vec_distance_cosine 結果異常  {D}(dist={dist:.4f}，預期 ≈ 0){R}")
+    except Exception as e:
+        print(f"  {RE}✗{R}  Layer 3  SQL 函數執行失敗：{e}")
+        conn.close()
+        return
+
+    conn.close()
+
+    # ── 顯示使用中的搜尋路徑 ──────────────────────────────────
+    print(f"  {G}✓{R}  搜尋路徑  {B}C 擴充加速{R}  {D}（FTS5 × 0.4 + 向量 × 0.6）{R}")
+
+    # ── Embedding 後端 ────────────────────────────────────────
+    try:
+        from project_brain.embedder import get_embedder
+        emb = get_embedder()
+        if emb is None:
+            print(f"  {Y}⚠{R}  Embedding  已停用  {D}(BRAIN_EMBED_PROVIDER=none，純 FTS5){R}")
+        else:
+            model = getattr(emb, 'MODEL', type(emb).__name__)
+            dim_  = getattr(emb, 'dim', '?')
+            if "tfidf" in model.lower():
+                print(f"  {Y}⚠{R}  Embedding  {Y}LocalTFIDF{R}  {D}({dim_} dim，零依賴但品質有限){R}")
+                print(f"     {D}更高品質：ollama pull nomic-embed-text{R}")
+            elif "ollama" in type(emb).__name__.lower():
+                print(f"  {G}✓{R}  Embedding  {G}Ollama{R}  {D}({model}，{dim_} dim，本地免費){R}")
+            else:
+                print(f"  {G}✓{R}  Embedding  {G}{type(emb).__name__}{R}  {D}({model}，{dim_} dim){R}")
+    except Exception as e:
+        print(f"  {Y}⚠{R}  Embedding 後端偵測失敗：{e}")
+
+
 def cmd_doctor(args):
     """系統健康檢查與自動修復（brain doctor [--fix]）"""
     import sqlite3, shutil, stat, json
@@ -1202,10 +1287,13 @@ def cmd_doctor(args):
 
     _check_pkg("flask")
     _check_pkg("flask-cors",  "flask_cors")
-    _check_pkg("sqlite-vec",  "sqlite_vec",  extra="  （向量語意搜尋核心）")
     _check_pkg("anthropic",   optional=True)
     _check_pkg("mcp",         optional=True)
     _check_pkg("openai",      optional=True, extra="  （Ollama / LM Studio）")
+
+    # sqlite-vec 端對端驗證（安裝 + 載入 + SQL 函數三層）
+    _section("向量搜尋引擎")
+    _verify_sqlite_vec()
 
     # ── 6. 知識庫健康 ───────────────────────────────────────────
     _section("知識庫健康")

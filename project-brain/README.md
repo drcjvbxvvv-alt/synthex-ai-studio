@@ -616,6 +616,36 @@ pip install "project-brain[all]"
 
 **系統需求：** Python 3.10+，無需外部服務
 
+### 驗證 sqlite-vec 是否正常運作
+
+`pip install sqlite-vec` 裝上只是第一步。sqlite-vec 需要 Python 編譯時開啟 SQLite 擴充支援才能實際運作，用 `brain doctor` 做三層驗證：
+
+```bash
+brain doctor
+```
+
+```
+向量搜尋引擎
+────────────────────────────────────────────
+✓  Layer 1  套件已安裝  (sqlite-vec 0.1.9)
+✓  Layer 2  SQLite C 擴充載入成功          ← 關鍵：這層才代表真正啟用
+✓  Layer 3  vec_distance_cosine 運算正確  (dist=0.0000)
+✓  搜尋路徑  C 擴充加速  （FTS5 × 0.4 + 向量 × 0.6）
+```
+
+若 Layer 2 顯示 `✗`（常見於 pyenv 預設編譯的 Python）：
+
+```bash
+# pyenv 修復：重新編譯 Python 並開啟擴充支援
+PYTHON_CONFIGURE_OPTS='--enable-loadable-sqlite-extensions' \
+  pyenv install --force $(pyenv version-name)
+
+# 或改用 Homebrew Python（已內建）
+brew install python@3.12
+```
+
+Layer 2 失敗時系統自動回退至純 Python cosine similarity，功能完整但速度較慢。
+
 ---
 
 ## 貢獻
