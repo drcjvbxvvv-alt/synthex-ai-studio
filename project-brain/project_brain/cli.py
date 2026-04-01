@@ -77,7 +77,8 @@ class _Spinner:
               end="", flush=True)
 
 def _banner() -> str:
-    """大型 ASCII Art 標題（v5.0）"""
+    """大型 ASCII Art 標題"""
+    from project_brain import __version__
     B = "\033[1m"; R = "\033[0m"
     _c = lambda n: f"\033[38;5;{n}m"
     ramp = [75,81,93,99,111,123,129,141,153,165,171,183,195,207,213]
@@ -92,7 +93,7 @@ def _banner() -> str:
     out = ""
     for i, ln in enumerate(art):
         out += B + _c(ramp[min(i*2, len(ramp)-1)]) + ln + R + "\n"
-    sub = "  AI  M E M O R Y  S Y S T E M  ·  v5.0"
+    sub = f"  AI  M E M O R Y  S Y S T E M  ·  v{__version__}"
     colored_sub = "".join(_c(ramp[min(j%len(ramp), len(ramp)-1)]) + ch for j, ch in enumerate(sub))
     out += B + colored_sub + R
     return out
