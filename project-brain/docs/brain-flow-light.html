@@ -1,0 +1,1318 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Project Brain · 記憶架構流程圖</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+TC:wght@300;400;500;700;900&family=Roboto+Mono:wght@300;400;600&display=swap");
+
+      :root {
+        --bg: #f5f2ec;
+        --surf: #ffffff;
+        --surf2: #ede9e1;
+        --bord: #ddd7cc;
+        --cyan: #4368e4;
+        --blue: #3558cc;
+        --amber: #d4763a;
+        --red: #d64e48;
+        --purple: #8668ce;
+        --green: #2daa86;
+        --teal: #2daa86;
+        --white: #1a1612;
+        --muted: #9a8f84;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--bg);
+        color: var(--white);
+        font-family: "Noto Sans TC", sans-serif;
+        padding: 28px 32px 40px;
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(67, 104, 228, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(67, 104, 228, 0.04) 1px, transparent 1px);
+        background-size: 52px 52px;
+      }
+
+      /* ─ HEADER ─ */
+      .hdr {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 20px;
+        max-width: 1100px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+      .hdr-left {
+      }
+      .hdr-badge {
+        font-family: "Roboto Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--cyan);
+        background: #ebf0fc;
+        border: 1px solid #c0cefa;
+        border-radius: 3px;
+        padding: 3px 10px;
+        display: inline-block;
+        margin-bottom: 8px;
+      }
+      .hdr-title {
+        font-family: "Space Mono", monospace;
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--white);
+        letter-spacing: -0.02em;
+      }
+      .hdr-title span {
+        color: var(--cyan);
+      }
+      .hdr-sub {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 5px;
+        font-family: "Roboto Mono", monospace;
+      }
+
+      .mode-btns {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        margin-top: 6px;
+      }
+      .mbtn {
+        font-family: "Roboto Mono", monospace;
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 7px 15px;
+        border-radius: 5px;
+        border: 1px solid var(--bord);
+        background: var(--surf);
+        color: var(--muted);
+        cursor: pointer;
+        transition: all 0.2s;
+        letter-spacing: 0.04em;
+      }
+      .mbtn:hover {
+        color: var(--white);
+        border-color: #999;
+      }
+      .mbtn.m-all {
+        background: #ebf0fc;
+        border-color: #c0cefa;
+        color: var(--cyan);
+        box-shadow: 0 2px 10px rgba(67, 104, 228, 0.14);
+      }
+      .mbtn.m-write {
+        background: #fdf0e6;
+        border-color: #edcaaa;
+        color: var(--amber);
+        box-shadow: 0 2px 10px rgba(212, 118, 58, 0.14);
+      }
+      .mbtn.m-read {
+        background: #ebf0fc;
+        border-color: #c0cefa;
+        color: var(--blue);
+        box-shadow: 0 2px 10px rgba(53, 88, 204, 0.14);
+      }
+      .mbtn.m-maint {
+        background: #f0ecfb;
+        border-color: #c8b8f0;
+        color: var(--purple);
+        box-shadow: 0 2px 10px rgba(134, 104, 206, 0.14);
+      }
+
+      /* ─ LEGEND ─ */
+      .legend {
+        display: flex;
+        gap: 22px;
+        margin-bottom: 14px;
+        font-family: "Roboto Mono", monospace;
+        font-size: 11px;
+        max-width: 1100px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+      .lgi {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+      }
+      .lgl {
+        width: 28px;
+        height: 2px;
+        border-radius: 1px;
+      }
+      .lgl-dash {
+        background: linear-gradient(90deg, var(--teal) 50%, transparent 50%);
+        background-size: 8px 2px;
+      }
+
+      /* ─ DIAGRAM WRAPPER ─ */
+      .diag-wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        position: relative;
+        height: 710px;
+      }
+      .col-label {
+        position: absolute;
+        top: 5px;
+        font-family: "Roboto Mono", monospace;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        padding: 4px 12px;
+        border-radius: 3px;
+        border: 1px solid;
+        opacity: 0.55;
+      }
+      .cl-write {
+        left: 22px;
+        color: var(--amber);
+        border-color: #edcaaa;
+        background: #fdf0e6;
+      }
+      .cl-mem {
+        left: 345px;
+        color: var(--cyan);
+        border-color: #c0cefa;
+        background: #ebf0fc;
+      }
+      .cl-read {
+        left: 680px;
+        color: var(--blue);
+        border-color: #c0cefa;
+        background: #ebf0fc;
+      }
+
+      /* SVG overlay */
+      .diag-wrap svg.lines {
+        position: absolute;
+        inset: 0;
+        width: 1100px;
+        height: 710px;
+        pointer-events: none;
+      }
+
+      /* ─ CONNECTIONS ─ */
+      .conn {
+        fill: none;
+        stroke-width: 1.5;
+        transition:
+          opacity 0.35s,
+          stroke-width 0.25s;
+      }
+      .cw {
+        stroke: var(--amber);
+        opacity: 0.22;
+      }
+      .cr {
+        stroke: var(--blue);
+        opacity: 0.22;
+      }
+      .cm {
+        stroke: var(--purple);
+        opacity: 0.22;
+      }
+      .cc {
+        stroke: var(--teal);
+        stroke-dasharray: 5 4;
+        opacity: 0.18;
+      }
+
+      /* per-mode visibility */
+      .dg-all .cw,
+      .dg-all .cr,
+      .dg-all .cm,
+      .dg-all .cc {
+        opacity: 0.5;
+      }
+
+      .dg-write .cw {
+        opacity: 1;
+        stroke-width: 2.2;
+      }
+      .dg-write .cr,
+      .dg-write .cm,
+      .dg-write .cc {
+        opacity: 0.05;
+      }
+
+      .dg-read .cr {
+        opacity: 1;
+        stroke-width: 2.2;
+      }
+      .dg-read .cc {
+        opacity: 0.7;
+        stroke-width: 1.8;
+      }
+      .dg-read .cw,
+      .dg-read .cm {
+        opacity: 0.05;
+      }
+
+      .dg-maint .cm {
+        opacity: 1;
+        stroke-width: 2.2;
+      }
+      .dg-maint .cw,
+      .dg-maint .cr,
+      .dg-maint .cc {
+        opacity: 0.05;
+      }
+
+      /* ─ NODES ─ */
+      .node {
+        position: absolute;
+        border-radius: 10px;
+        background: var(--surf);
+        border: 1.5px solid var(--bord);
+        padding: 11px 14px;
+        cursor: pointer;
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s,
+          border-color 0.2s;
+        box-shadow:
+          0 1px 4px rgba(0, 0, 0, 0.06),
+          0 2px 8px rgba(0, 0, 0, 0.04);
+      }
+      .node:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+      }
+      .node.picked {
+        transform: translateY(-3px);
+      }
+
+      .ni {
+        font-size: 17px;
+        display: block;
+        margin-bottom: 5px;
+      }
+      .nn {
+        font-family: "Roboto Mono", monospace;
+        font-size: 11.5px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        display: block;
+        line-height: 1.2;
+      }
+      .ns {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 3px;
+        display: block;
+        line-height: 1.45;
+      }
+
+      /* Agent */
+      .n-agent {
+        left: 200px;
+        top: 35px;
+        width: 700px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 14px 22px;
+        border-color: #c0cefa;
+        background: #f4f7fe;
+      }
+      .n-agent:hover {
+        border-color: var(--cyan);
+        box-shadow: 0 4px 20px rgba(67, 104, 228, 0.12);
+      }
+      .n-agent.picked {
+        border-color: var(--cyan);
+        box-shadow: 0 4px 24px rgba(67, 104, 228, 0.18);
+      }
+      .n-agent .nn {
+        font-size: 16px;
+        color: var(--white);
+        letter-spacing: 0.08em;
+      }
+      .n-agent .ns {
+        font-size: 12px;
+      }
+      .agent-tags {
+        margin-left: auto;
+        display: flex;
+        gap: 7px;
+        flex-shrink: 0;
+      }
+      .atag {
+        font-family: "Roboto Mono", monospace;
+        font-size: 10px;
+        padding: 3px 9px;
+        border-radius: 3px;
+        border: 1px solid;
+        white-space: nowrap;
+      }
+
+      /* Write column */
+      .n-git,
+      .n-llm,
+      .n-krb,
+      .n-madd {
+        left: 22px;
+        width: 178px;
+      }
+      .n-git {
+        top: 148px;
+        border-color: #edcaaa;
+      }
+      .n-llm {
+        top: 286px;
+        border-color: #a8dfcf;
+      }
+      .n-krb {
+        top: 422px;
+        border-color: #a8dfcf;
+      }
+      .n-madd {
+        top: 560px;
+        border-color: #c0cefa;
+      }
+      .n-git .nn {
+        color: var(--amber);
+      }
+      .n-git:hover {
+        border-color: var(--amber);
+        box-shadow: 0 4px 16px rgba(212, 118, 58, 0.18);
+      }
+      .n-llm .nn,
+      .n-krb .nn {
+        color: var(--teal);
+      }
+      .n-llm:hover,
+      .n-krb:hover {
+        border-color: var(--teal);
+        box-shadow: 0 4px 16px rgba(45, 170, 134, 0.16);
+      }
+      .n-madd .nn {
+        color: var(--blue);
+      }
+      .n-madd:hover {
+        border-color: var(--blue);
+        box-shadow: 0 4px 16px rgba(53, 88, 204, 0.16);
+      }
+      .n-git.picked {
+        border-color: var(--amber);
+        box-shadow: 0 4px 20px rgba(212, 118, 58, 0.22);
+      }
+      .n-llm.picked,
+      .n-krb.picked {
+        border-color: var(--teal);
+        box-shadow: 0 4px 20px rgba(45, 170, 134, 0.22);
+      }
+      .n-madd.picked {
+        border-color: var(--blue);
+        box-shadow: 0 4px 20px rgba(53, 88, 204, 0.22);
+      }
+
+      /* Memory layers */
+      .n-l1a,
+      .n-l2,
+      .n-l3 {
+        left: 345px;
+        width: 195px;
+      }
+      .n-l1a {
+        top: 138px;
+        /* height: 84px; */
+        height: auto;
+        border-color: #edcaaa;
+        background: #fdf8f3;
+      }
+      .n-l2 {
+        top: 305px;
+        height: 84px;
+        border-color: #c0cefa;
+        background: #f4f7fe;
+      }
+      .n-l3 {
+        top: 474px;
+        height: 90px;
+        border-color: #c0cefa;
+        background: #f4f7fe;
+      }
+      .n-l1a .nn {
+        color: var(--amber);
+        font-size: 13.5px;
+      }
+      .n-l1a:hover {
+        border-color: var(--amber);
+        box-shadow: 0 4px 18px rgba(212, 118, 58, 0.18);
+      }
+      .n-l2 .nn {
+        color: var(--blue);
+        font-size: 13.5px;
+      }
+      .n-l2:hover {
+        border-color: var(--blue);
+        box-shadow: 0 4px 18px rgba(53, 88, 204, 0.18);
+      }
+      .n-l3 .nn {
+        color: var(--cyan);
+        font-size: 13.5px;
+      }
+      .n-l3:hover {
+        border-color: var(--cyan);
+        box-shadow: 0 4px 18px rgba(67, 104, 228, 0.2);
+      }
+      .n-l1a.picked {
+        border-color: var(--amber);
+        box-shadow: 0 4px 22px rgba(212, 118, 58, 0.24);
+      }
+      .n-l2.picked {
+        border-color: var(--blue);
+        box-shadow: 0 4px 22px rgba(53, 88, 204, 0.24);
+      }
+      .n-l3.picked {
+        border-color: var(--cyan);
+        box-shadow: 0 4px 22px rgba(67, 104, 228, 0.28);
+      }
+      .lbadge {
+        font-family: "Space Mono", monospace;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 3px;
+        border: 1px solid;
+        display: inline-block;
+        margin-bottom: 6px;
+      }
+
+      /* Read column */
+      .n-gctx,
+      .n-synth,
+      .n-decay {
+        left: 685px;
+        width: 195px;
+      }
+      .n-gctx {
+        top: 205px;
+        border-color: #c0cefa;
+      }
+      .n-synth {
+        top: 375px;
+        border-color: #c8b8f0;
+      }
+      .n-decay {
+        top: 546px;
+        border-color: #f0c4c2;
+      }
+      .n-gctx .nn {
+        color: var(--cyan);
+      }
+      .n-gctx:hover {
+        border-color: var(--cyan);
+        box-shadow: 0 4px 16px rgba(67, 104, 228, 0.18);
+      }
+      .n-synth .nn {
+        color: var(--purple);
+      }
+      .n-synth:hover {
+        border-color: var(--purple);
+        box-shadow: 0 4px 16px rgba(134, 104, 206, 0.18);
+      }
+      .n-decay .nn {
+        color: var(--red);
+      }
+      .n-decay:hover {
+        border-color: var(--red);
+        box-shadow: 0 4px 16px rgba(214, 78, 72, 0.18);
+      }
+      .n-gctx.picked {
+        border-color: var(--cyan);
+        box-shadow: 0 4px 20px rgba(67, 104, 228, 0.24);
+      }
+      .n-synth.picked {
+        border-color: var(--purple);
+        box-shadow: 0 4px 20px rgba(134, 104, 206, 0.24);
+      }
+      .n-decay.picked {
+        border-color: var(--red);
+        box-shadow: 0 4px 20px rgba(214, 78, 72, 0.22);
+      }
+
+      /* Edge labels */
+      .elabel {
+        position: absolute;
+        pointer-events: none;
+        z-index: 10;
+        font-family: "Roboto Mono", monospace;
+        font-size: 10px;
+        background: var(--surf);
+        padding: 2px 7px;
+        border-radius: 3px;
+        border: 1px solid;
+        white-space: nowrap;
+        opacity: 0.75;
+        transition: opacity 0.35s;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+      }
+      .el-w {
+        color: var(--amber);
+        border-color: #edcaaa;
+      }
+      .el-r {
+        color: var(--blue);
+        border-color: #c0cefa;
+      }
+      .el-m {
+        color: var(--purple);
+        border-color: #c8b8f0;
+      }
+      .el-c {
+        color: var(--teal);
+        border-color: #a8dfcf;
+      }
+
+      .dg-write .el-r,
+      .dg-write .el-m,
+      .dg-write .el-c {
+        opacity: 0.08;
+      }
+      .dg-write .el-w {
+        opacity: 1;
+      }
+      .dg-read .el-w,
+      .dg-read .el-m {
+        opacity: 0.08;
+      }
+      .dg-read .el-r,
+      .dg-read .el-c {
+        opacity: 1;
+      }
+      .dg-maint .el-w,
+      .dg-maint .el-r,
+      .dg-maint .el-c {
+        opacity: 0.08;
+      }
+      .dg-maint .el-m {
+        opacity: 1;
+      }
+
+      /* Particles */
+      .pt {
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+        z-index: 20;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+      }
+      .pt-w {
+        background: var(--amber);
+      }
+      .pt-r {
+        background: var(--blue);
+      }
+      .pt-m {
+        background: var(--purple);
+      }
+      .pt-c {
+        background: var(--teal);
+      }
+
+      /* ─ DETAIL PANEL ─ */
+      .dp {
+        max-width: 1100px;
+        margin: 16px auto 0;
+        background: var(--surf);
+        border: 1px solid var(--bord);
+        border-radius: 12px;
+        padding: 20px 24px;
+        display: none;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+      }
+      .dp.show {
+        display: block;
+      }
+      .dp-top {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 12px;
+      }
+      .dp-ico {
+        font-size: 22px;
+      }
+      .dp-name {
+        font-family: "Roboto Mono", monospace;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .dp-desc {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.75;
+      }
+      .dp-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin-top: 13px;
+      }
+      .dpt {
+        font-family: "Roboto Mono", monospace;
+        font-size: 11px;
+        padding: 3px 11px;
+        border-radius: 4px;
+        background: var(--surf2);
+        border: 1px solid var(--bord);
+        color: var(--muted);
+      }
+      .dpt em {
+        color: var(--white);
+        font-style: normal;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- HEADER -->
+    <div class="hdr">
+      <div class="hdr-left">
+        <div class="hdr-badge">Interactive Architecture Diagram</div>
+        <div class="hdr-title">
+          Project <span>Brain</span> · 記憶與 LLM 關係流程圖
+        </div>
+        <div class="hdr-sub">點擊節點查看詳情 · 切換模式高亮對應路徑</div>
+      </div>
+      <div class="mode-btns">
+        <button class="mbtn m-all" data-m="all">全路徑</button>
+        <button class="mbtn" data-m="write">⬡ 寫入路徑</button>
+        <button class="mbtn" data-m="read">◈ 讀取路徑</button>
+        <button class="mbtn" data-m="maint">⊙ 維護路徑</button>
+      </div>
+    </div>
+
+    <!-- LEGEND -->
+    <div class="legend">
+      <div class="lgi">
+        <div class="lgl" style="background: var(--amber)"></div>
+        <span>寫入路徑</span>
+      </div>
+      <div class="lgi">
+        <div class="lgl" style="background: var(--blue)"></div>
+        <span>讀取路徑</span>
+      </div>
+      <div class="lgi">
+        <div class="lgl" style="background: var(--purple)"></div>
+        <span>維護路徑</span>
+      </div>
+      <div class="lgi">
+        <div class="lgl lgl-dash"></div>
+        <span>記憶整合（定期）</span>
+      </div>
+    </div>
+
+    <!-- DIAGRAM -->
+    <div class="diag-wrap dg-all" id="dg">
+      <!-- Column labels -->
+      <div style="position: relative">
+        <div class="col-label cl-write">Write Sources</div>
+        <div class="col-label cl-mem" style="left: 370px">Memory Layers</div>
+        <div class="col-label cl-read" style="left: 710px">Read Path</div>
+      </div>
+
+      <!-- SVG CONNECTIONS -->
+      <svg class="lines" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker
+            id="aw"
+            markerWidth="8"
+            markerHeight="7"
+            refX="6"
+            refY="3.5"
+            orient="auto"
+          >
+            <path d="M0 0 L7 3.5 L0 7Z" fill="#D4763A" opacity=".9" />
+          </marker>
+          <marker
+            id="ar"
+            markerWidth="8"
+            markerHeight="7"
+            refX="6"
+            refY="3.5"
+            orient="auto"
+          >
+            <path d="M0 0 L7 3.5 L0 7Z" fill="#3558CC" opacity=".9" />
+          </marker>
+          <marker
+            id="am"
+            markerWidth="8"
+            markerHeight="7"
+            refX="6"
+            refY="3.5"
+            orient="auto"
+          >
+            <path d="M0 0 L7 3.5 L0 7Z" fill="#8668CE" opacity=".9" />
+          </marker>
+          <marker
+            id="ac"
+            markerWidth="8"
+            markerHeight="7"
+            refX="6"
+            refY="3.5"
+            orient="auto"
+          >
+            <path d="M0 0 L7 3.5 L0 7Z" fill="#2DAA86" opacity=".9" />
+          </marker>
+        </defs>
+
+        <!-- WRITE PATH (amber) -->
+        <!-- Agent → git commit -->
+        <path
+          id="ag-git"
+          class="conn cw"
+          d="M 350 80 C 230 80 111 118 111 148"
+          marker-end="url(#aw)"
+        />
+        <!-- git → LLM Extractor -->
+        <path
+          id="git-llm"
+          class="conn cw"
+          d="M 111 213 L 111 286"
+          marker-end="url(#aw)"
+        />
+        <!-- LLM → L2 Episodic -->
+        <path
+          id="llm-l2"
+          class="conn cw"
+          d="M 200 317 C 272 317 272 347 345 347"
+          marker-end="url(#aw)"
+        />
+        <!-- LLM → KRB -->
+        <path
+          id="llm-krb"
+          class="conn cw"
+          d="M 111 351 L 111 422"
+          marker-end="url(#aw)"
+        />
+        <!-- KRB → L3 Semantic -->
+        <path
+          id="krb-l3"
+          class="conn cw"
+          d="M 200 455 C 272 455 272 519 345 519"
+          marker-end="url(#aw)"
+        />
+        <!-- brain add → L3 -->
+        <path
+          id="madd-l3"
+          class="conn cw"
+          d="M 200 592 C 275 592 280 548 345 548"
+          marker-end="url(#aw)"
+        />
+
+        <!-- READ PATH (blue) -->
+        <!-- Agent → get_context -->
+        <path
+          id="ag-gctx"
+          class="conn cr"
+          d="M 730 80 C 830 80 782 175 782 205"
+          marker-end="url(#ar)"
+        />
+        <!-- get_context → L1a -->
+        <path
+          id="gctx-l1a"
+          class="conn cr"
+          d="M 685 215 C 640 215 585 175 540 175"
+          marker-end="url(#ar)"
+        />
+        <!-- get_context → L2 -->
+        <path
+          id="gctx-l2"
+          class="conn cr"
+          d="M 685 237 C 650 237 610 347 540 347"
+          marker-end="url(#ar)"
+        />
+        <!-- get_context → L3 -->
+        <path
+          id="gctx-l3"
+          class="conn cr"
+          d="M 685 255 C 660 255 645 519 540 519"
+          marker-end="url(#ar)"
+        />
+        <!-- L1a → MemSynth -->
+        <path
+          id="l1a-syn"
+          class="conn cr"
+          d="M 540 187 C 610 187 630 390 685 395"
+          marker-end="url(#ar)"
+        />
+        <!-- L2 → MemSynth -->
+        <path
+          id="l2-syn"
+          class="conn cr"
+          d="M 540 357 C 610 357 645 405 685 408"
+          marker-end="url(#ar)"
+        />
+        <!-- L3 → MemSynth -->
+        <path
+          id="l3-syn"
+          class="conn cr"
+          d="M 540 530 C 612 530 640 430 685 425"
+          marker-end="url(#ar)"
+        />
+        <!-- MemSynth → Agent -->
+        <path
+          id="syn-ag"
+          class="conn cr"
+          d="M 880 385 C 980 385 990 55 850 55"
+          marker-end="url(#ar)"
+        />
+
+        <!-- MAINTENANCE (purple) -->
+        <!-- DecayEngine → L3 -->
+        <path
+          id="dec-l3"
+          class="conn cm"
+          d="M 685 575 C 650 575 580 555 540 549"
+          marker-end="url(#am)"
+        />
+
+        <!-- CONSOLIDATION (teal dashed) -->
+        <!-- L1a bottom → L3 top (curve left) -->
+        <path
+          id="l1a-l3"
+          class="conn cc"
+          d="M 400 222 C 295 310 295 440 400 474"
+          marker-end="url(#ac)"
+        />
+      </svg>
+
+      <!-- EDGE LABELS -->
+      <div class="elabel el-w" style="left: 48px; top: 236px">
+        post-commit hook
+      </div>
+      <div class="elabel el-w" style="left: 205px; top: 298px">
+        store episode
+      </div>
+      <div class="elabel el-w" style="left: 48px; top: 374px">候選知識</div>
+      <div class="elabel el-w" style="left: 205px; top: 434px">
+        human approved
+      </div>
+      <div class="elabel el-r" style="left: 832px; top: 90px">
+        MCP / REST API
+      </div>
+      <div class="elabel el-m" style="left: 555px; top: 616px">
+        六因子重算（每 7 天）
+      </div>
+      <div class="elabel el-c" style="left: 255px; top: 365px">定期整合</div>
+
+      <!-- ───── NODES ───── -->
+
+      <!-- AI Agent -->
+      <div class="node n-agent" data-id="agent">
+        <span style="font-size: 24px">🤖</span>
+        <div>
+          <span class="nn">AI AGENT</span>
+          <span class="ns">Claude Code / Cursor / 任何 MCP 工具</span>
+        </div>
+        <div class="agent-tags">
+          <div
+            class="atag"
+            style="
+              background: #ebf0fc;
+              border-color: #c0cefa;
+              color: var(--cyan);
+            "
+          >
+            MCP
+          </div>
+          <div
+            class="atag"
+            style="
+              background: #ebf0fc;
+              border-color: #c0cefa;
+              color: var(--blue);
+            "
+          >
+            REST
+          </div>
+          <div
+            class="atag"
+            style="
+              background: #e6f6f1;
+              border-color: #a8dfcf;
+              color: var(--teal);
+            "
+          >
+            SDK
+          </div>
+        </div>
+      </div>
+
+      <!-- WRITE SOURCES -->
+      <div class="node n-git" data-id="git">
+        <span class="ni">⑂</span>
+        <span class="nn">git commit</span>
+        <span class="ns"
+          >feat: / fix: / refactor:<br />AI Agent 結構化 commit</span
+        >
+      </div>
+      <div class="node n-llm" data-id="llm">
+        <span class="ni">⟳</span>
+        <span class="nn">LLM Extractor</span>
+        <span class="ns">分類知識類型<br />提取決策與踩坑</span>
+      </div>
+      <div class="node n-krb" data-id="krb">
+        <span class="ni">👁</span>
+        <span class="nn">KRB 審核委員會</span>
+        <span class="ns">候選知識暫存<br />等待人工審核確認</span>
+      </div>
+      <div class="node n-madd" data-id="madd">
+        <span class="ni">✚</span>
+        <span class="nn">brain add</span>
+        <span class="ns">人工直接加入<br />confidence 0.8</span>
+      </div>
+
+      <!-- MEMORY LAYERS -->
+      <div class="node n-l1a" data-id="l1a">
+        <div
+          class="lbadge"
+          style="
+            color: var(--amber);
+            border-color: #edcaaa;
+            background: #fdf0e6;
+          "
+        >
+          L1a
+        </div>
+        <span class="nn">工作記憶</span>
+        <span class="ns">Working Memory · 當前任務脈絡</span>
+      </div>
+      <div class="node n-l2" data-id="l2">
+        <div
+          class="lbadge"
+          style="color: var(--blue); border-color: #c0cefa; background: #ebf0fc"
+        >
+          L2
+        </div>
+        <span class="nn">情節記憶</span>
+        <span class="ns">Episodic Memory · git 歷史</span>
+      </div>
+      <div class="node n-l3" data-id="l3">
+        <div
+          class="lbadge"
+          style="color: var(--cyan); border-color: #c0cefa; background: #ebf0fc"
+        >
+          L3
+        </div>
+        <span class="nn">語意記憶</span>
+        <span class="ns">Semantic Memory · 知識圖譜</span>
+      </div>
+
+      <!-- READ PATH -->
+      <div class="node n-gctx" data-id="gctx">
+        <span class="ni">⊛</span>
+        <span class="nn">get_context()</span>
+        <span class="ns">統一讀取三層<br />組裝 + 因果鏈推理</span>
+      </div>
+      <div class="node n-synth" data-id="synth">
+        <span class="ni">◈</span>
+        <span class="nn">Memory Synthesizer</span>
+        <span class="ns"
+          >LLM 融合三層輸出<br /><span
+            style="color: var(--muted); font-size: 10px"
+            >BRAIN_SYNTHESIZE=1 啟用</span
+          ></span
+        >
+      </div>
+      <div class="node n-decay" data-id="decay">
+        <span class="ni">⊖</span>
+        <span class="nn">DecayEngine</span>
+        <span class="ns">六因子信心重算<br />每 7 天執行</span>
+      </div>
+
+      <!-- Particle container -->
+      <div id="pts"></div>
+    </div>
+
+    <!-- DETAIL PANEL -->
+    <div class="dp" id="dp">
+      <div class="dp-top">
+        <span class="dp-ico" id="dico"></span>
+        <span class="dp-name" id="dname"></span>
+      </div>
+      <div class="dp-desc" id="ddesc"></div>
+      <div class="dp-tags" id="dtags"></div>
+    </div>
+
+    <script>
+      /* ─── Node metadata ─── */
+      const META = {
+        agent: {
+          ico: "🤖",
+          name: "AI Agent",
+          color: "#4368E4",
+          desc: "Claude Code、Cursor 或任何支援 MCP/REST 的工具。每次任務開始時呼叫 get_context() 獲取相關知識，完成任務後寫入結構化 git commit（Conventional Commits 格式），形成完整的自動閉環。Agent 寫的 commit 品質遠優於人類隨意的提交，是系統的主要知識素材來源。",
+          tags: [
+            { k: "整合方式", v: "MCP / REST API / Python SDK" },
+            { k: "讀取介面", v: "get_context(task, scope)" },
+            { k: "寫入觸發", v: "git commit → post-commit hook" },
+            { k: "commit 信心", v: "feat/fix → 0.5，wip → 0.2" },
+          ],
+        },
+        git: {
+          ico: "⑂",
+          name: "git commit",
+          color: "#D4763A",
+          desc: 'AI Agent 完成任務後產生的結構化 commit。使用 Conventional Commits 格式（feat:/fix:/refactor:），意圖明確完整，直接來自任務描述，與人類隨意的 "fix bug" 或 "wip" 提交截然不同。這種高品質的結構化記錄，是 Brain 自動閉環的關鍵原料。',
+          tags: [
+            { k: "格式", v: "Conventional Commits" },
+            { k: "feat/fix/refactor", v: "confidence 0.5" },
+            { k: "wip / 無 prefix", v: "confidence 0.2" },
+            { k: "觸發機制", v: "post-commit hook 自動執行" },
+          ],
+        },
+        llm: {
+          ico: "⟳",
+          name: "LLM Extractor",
+          color: "#2DAA86",
+          desc: "讀取 git commit message 與 diff，使用 LLM 分類知識類型（Pitfall/Decision/Rule/ADR）、提取決策內容，並評估信心分數。同時將事件存入 L2 情節記憶，並將候選知識送至 KRB 等待人工審核。無 API Key 時靜默跳過，仍存儲 commit 基本資訊。",
+          tags: [
+            { k: "預設模型", v: "claude-haiku-4-5-20251001" },
+            { k: "本地替代", v: "Ollama / LM Studio" },
+            { k: "無 API Key", v: "靜默降級，仍記錄基本資訊" },
+            { k: "預估費用", v: "每次 commit 約 $0.0001" },
+          ],
+        },
+        krb: {
+          ico: "👁",
+          name: "KRB 知識審核委員會",
+          color: "#2DAA86",
+          desc: "Knowledge Review Board。LLM 自動提取的候選知識暫存在此 staging 區域，等待工程師人工審核。審核通過後信心分數從 0.5 提升至 0.9，正式進入 L3 知識圖譜。這是「人機協作非全自動」設計哲學的核心體現——自動化降低摩擦，但判斷仍由人類負責。",
+          tags: [
+            { k: "候選來源", v: "LLM Extractor 自動提取" },
+            { k: "審核指令", v: "brain review approve <id>" },
+            { k: "核准後信心", v: "0.9（確認正確）" },
+            { k: "目的", v: "防止低品質知識污染 L3 圖譜" },
+          ],
+        },
+        madd: {
+          ico: "✚",
+          name: "brain add（人工加入）",
+          color: "#3558CC",
+          desc: "工程師主動加入的知識，直接進入 L3 語意記憶，不需要 KRB 審核流程。信心預設 0.8，可透過 --confidence 參數調整。這是唯一能捕捉「不言而喻的隱性知識」的途徑——那些工程師覺得理所當然、從未寫入 commit 的技術約定。",
+          tags: [
+            { k: "預設信心", v: "0.8（信任但未驗證）" },
+            { k: "種類", v: "--kind Pitfall/Decision/Rule/ADR/Note" },
+            { k: "作用域", v: "--scope payment_service" },
+            { k: "範例", v: 'brain add "JWT 必須用 RS256" --kind Rule' },
+          ],
+        },
+        l1a: {
+          ico: "⚡",
+          name: "L1a 工作記憶 (Working Memory)",
+          color: "#D4763A",
+          desc: "對應 Atkinson-Shiffrin 認知模型的 Working Memory 層。儲存當前任務的即時脈絡——今日筆記、任務上下文、當前對話狀態。Agent 對話結束後自動清除。優質的工作記憶內容會定期整合（consolidate）至 L3 語意記憶長期保存。",
+          tags: [
+            { k: "生命週期", v: "單次對話，結束後清除" },
+            { k: "內容", v: "今日筆記、當前任務脈絡、對話歷史" },
+            { k: "整合去向", v: "定期 consolidate → L3 語意記憶" },
+            { k: "SQLite table", v: "sessions" },
+          ],
+        },
+        l2: {
+          ico: "📚",
+          name: "L2 情節記憶 (Episodic Memory)",
+          color: "#3558CC",
+          desc: "對應認知科學的 Episodic Memory 層。儲存 git commit 歷史與工程事件序列，支援「時光機查詢」——可查詢任意時間點或 git 分支的知識狀態（temporal_query）。回答「那次 JWT 漏洞事件是什麼時候發生的？當時做了什麼決策？」",
+          tags: [
+            { k: "MCP 工具", v: "temporal_query(at_time, git_branch)" },
+            { k: "主要來源", v: "git commits via post-commit hook" },
+            { k: "SQLite tables", v: "episodes, temporal_edges" },
+            { k: "特色", v: "支援時序關聯查詢與 git 分支隔離" },
+          ],
+        },
+        l3: {
+          ico: "🕸",
+          name: "L3 語意記憶 (Semantic Memory)",
+          color: "#4368E4",
+          desc: "系統的核心資產，對應 Semantic Memory 層。儲存結構化知識圖譜，包含工程特化的節點類型（Pitfall/Decision/Rule/ADR/Note）與因果關係邊（PREVENTS/CAUSES/REQUIRES/BLOCKS）。DecayEngine 每 7 天以六因子公式重算所有節點的信心分數，確保知識隨 codebase 演進動態更新。",
+          tags: [
+            { k: "知識類型", v: "Pitfall / Decision / Rule / ADR / Note" },
+            { k: "邊類型", v: "PREVENTS / CAUSES / REQUIRES / BLOCKS" },
+            { k: "衰減公式", v: "F1×F2×F3×F4×F5 + F7" },
+            { k: "SQLite tables", v: "nodes, edges" },
+          ],
+        },
+        gctx: {
+          ico: "⊛",
+          name: "get_context()",
+          color: "#4368E4",
+          desc: "系統對外的統一讀取介面，也是 MCP 最核心的工具。同時查詢 L1a（當前脈絡）、L2（相關歷史事件）、L3（知識圖譜+因果鏈），並透過 NudgeEngine 主動插入風險警告（如「此功能歷史上曾發生 JWT 安全事故，建議確認 RS256 設定」）。支援 scope 過濾防止跨模組知識污染。",
+          tags: [
+            { k: "函式簽名", v: "get_context(task: str, scope?: str)" },
+            { k: "回傳類型", v: "ContextResult（含 to_prompt() 方法）" },
+            { k: "NudgeEngine", v: "主動插入風險警告，零額外 LLM 成本" },
+            { k: "信心閾值", v: "confidence > 0.20 才回傳" },
+          ],
+        },
+        synth: {
+          ico: "◈",
+          name: "Memory Synthesizer（融合層）",
+          color: "#8668CE",
+          desc: "可選的 LLM 融合層（設定 BRAIN_SYNTHESIZE=1 啟用）。將 get_context() 回傳的三層原始資料交由 LLM 融合成一份精簡的「戰術摘要」，消除 L2 和 L3 之間的重複資訊，並將最重要的警告置頂。預設關閉以控制成本，可搭配本地 Ollama 免費使用。",
+          tags: [
+            { k: "啟用方式", v: "export BRAIN_SYNTHESIZE=1" },
+            { k: "費用（雲端）", v: "每次約 $0.0002（claude-haiku）" },
+            { k: "費用（本地）", v: "Ollama 免費" },
+            { k: "預設行為", v: "關閉，直接拼接三層原始輸出" },
+          ],
+        },
+        decay: {
+          ico: "⊖",
+          name: "DecayEngine（信心衰減引擎）",
+          color: "#D64E48",
+          desc: "每 7 天對 L3 所有知識節點執行六因子信心重算。這是「以 git 歷史作為知識有效性真值來源」的核心機制——知識有效性不由 AI 自判，而由 codebase 的實際演進決定。信心低於 0.20 的節點自動標記為過時（不刪除，只降低查詢可見度）。",
+          tags: [
+            { k: "執行週期", v: "每 7 天（定期批次任務）" },
+            {
+              k: "衰減公式",
+              v: "F1(時間) × F2(版本差距) × F3(git活動) × F4(矛盾) × F5(程式碼引用) + F7(查詢頻率)",
+            },
+            { k: "過時閾值", v: "confidence < 0.20 → 標記 stale" },
+            { k: "哲學", v: "降低可見度，不刪除知識" },
+          ],
+        },
+      };
+
+      /* ─── Mode switching ─── */
+      const dg = document.getElementById("dg");
+      const btns = document.querySelectorAll(".mbtn");
+      let curMode = "all";
+
+      btns.forEach((b) =>
+        b.addEventListener("click", () => {
+          const m = b.dataset.m;
+          curMode = m;
+          btns.forEach((x) => (x.className = "mbtn"));
+          b.className = `mbtn m-${m}`;
+          dg.className = `diag-wrap dg-${m}`;
+        }),
+      );
+
+      /* ─── Node click → detail panel ─── */
+      const dp = document.getElementById("dp");
+      const dico = document.getElementById("dico");
+      const dname = document.getElementById("dname");
+      const ddesc = document.getElementById("ddesc");
+      const dtags = document.getElementById("dtags");
+      let selNode = null;
+
+      document.querySelectorAll(".node").forEach((n) => {
+        n.addEventListener("click", () => {
+          const id = n.dataset.id;
+          const d = META[id];
+          if (!d) return;
+          if (selNode === n) {
+            selNode.classList.remove("picked");
+            selNode = null;
+            dp.classList.remove("show");
+            return;
+          }
+          if (selNode) selNode.classList.remove("picked");
+          selNode = n;
+          n.classList.add("picked");
+
+          dico.textContent = d.ico;
+          dname.textContent = d.name;
+          dname.style.color = d.color;
+          ddesc.textContent = d.desc;
+          dtags.innerHTML = d.tags
+            .map((t) => `<div class="dpt">${t.k}：<em>${t.v}</em></div>`)
+            .join("");
+          dp.classList.add("show");
+          dp.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      });
+
+      /* ─── Particle system ─── */
+      const PATHS = [
+        { id: "ag-git", cls: "pt-w", spd: 0.008 },
+        { id: "git-llm", cls: "pt-w", spd: 0.012 },
+        { id: "llm-l2", cls: "pt-w", spd: 0.01 },
+        { id: "llm-krb", cls: "pt-w", spd: 0.011 },
+        { id: "krb-l3", cls: "pt-w", spd: 0.009 },
+        { id: "madd-l3", cls: "pt-w", spd: 0.01 },
+        { id: "ag-gctx", cls: "pt-r", spd: 0.013 },
+        { id: "gctx-l1a", cls: "pt-r", spd: 0.011 },
+        { id: "gctx-l2", cls: "pt-r", spd: 0.009 },
+        { id: "gctx-l3", cls: "pt-r", spd: 0.007 },
+        { id: "l1a-syn", cls: "pt-r", spd: 0.009 },
+        { id: "l2-syn", cls: "pt-r", spd: 0.01 },
+        { id: "l3-syn", cls: "pt-r", spd: 0.008 },
+        { id: "syn-ag", cls: "pt-r", spd: 0.006 },
+        { id: "dec-l3", cls: "pt-m", spd: 0.007 },
+        { id: "l1a-l3", cls: "pt-c", spd: 0.006 },
+      ];
+
+      const TYPE_FOR = {
+        "pt-w": "write",
+        "pt-r": "read",
+        "pt-m": "maint",
+        "pt-c": "read",
+      };
+
+      const pts = document.getElementById("pts");
+      const STATE = [];
+
+      PATHS.forEach((p) => {
+        const el = document.createElement("div");
+        el.className = `pt ${p.cls}`;
+        pts.appendChild(el);
+        STATE.push({ el, p, t: Math.random() });
+      });
+
+      function visible(cls) {
+        const t = TYPE_FOR[cls];
+        if (curMode === "all") return true;
+        if (curMode === "write") return t === "write";
+        if (curMode === "read") return t === "read";
+        if (curMode === "maint") return t === "maint";
+        return false;
+      }
+
+      function tick() {
+        STATE.forEach((s) => {
+          if (!visible(s.p.cls)) {
+            s.el.style.opacity = "0";
+            return;
+          }
+          s.t = (s.t + s.p.spd) % 1;
+          const path = document.getElementById(s.p.id);
+          if (!path) return;
+          const len = path.getTotalLength();
+          const pt = path.getPointAtLength(s.t * len);
+          s.el.style.left = pt.x + "px";
+          s.el.style.top = pt.y + "px";
+          s.el.style.opacity = "0.88";
+        });
+        requestAnimationFrame(tick);
+      }
+      tick();
+    </script>
+  </body>
+</html>
