@@ -186,8 +186,7 @@ function runBrainCommand(
   return new Promise((resolve, reject) => {
     // 安全：用 argv 陣列而不是 shell string
     const proc = cp.spawn(pythonPath, [
-      path.join(workdir, '..', 'synthex.py'),  // 固定腳本路徑
-      'brain',
+      path.join(workdir, 'brain.py'),
       ...args,
     ], {
       cwd:     workdir,
@@ -335,6 +334,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }));
 
+  // ── 指令：在瀏覽器開啟知識圖譜 ────────────────────────────
+  disposables.push(vscode.commands.registerCommand('projectBrain.openGraph', () => {
+    const port = 7890;
+    vscode.env.openExternal(vscode.Uri.parse(`http://127.0.0.1:${port}`));
+  }));
+
   // ── 指令：顯示 Context ──────────────────────────────────────
   disposables.push(vscode.commands.registerCommand('projectBrain.showContext', async () => {
     const editor = vscode.window.activeTextEditor;
@@ -400,13 +405,13 @@ export function deactivate(): void {
 async function loadStatus(workdir: string, python: string): Promise<void> {
   try {
     const out = await runBrainCommand(python, workdir, ['status']);
-    // 解析簡單統計
-    const nodeMatch = out.match(/(\d+)\s*個知識節點/);
-    const edgeMatch = out.match(/(\d+)\s*條關係/);
-    if (nodeMatch && edgeMatch) {
+    // 支援中英文格式：「123 個知識節點」或「nodes: 123」
+    const nodeMatch = out.match(/(\d+)\s*(?:個知識節點|nodes)/i);
+    const edgeMatch = out.match(/(\d+)\s*(?:條關係|edges)/i);
+    if (nodeMatch) {
       provider?.updateStatus({
         nodes: parseInt(nodeMatch[1], 10),
-        edges: parseInt(edgeMatch[1], 10),
+        edges: edgeMatch ? parseInt(edgeMatch[1], 10) : 0,
       });
     }
   } catch {
@@ -454,10 +459,11 @@ function parseContextOutput(raw: string): KnowledgeNode[] {
   for (const section of sections.slice(1)) {
     const lines = section.split('\n');
     const header = lines[0] || '';
-    const typeMatch = header.match(/^([⚠🎯📋📄])\s+(.+?)：(.+)/u);
+    const typeMatch = header.match(/^(⚠️?|🎯|📋|📄)\s+(.+?)：(.+)/u);
     if (typeMatch) {
       const typeMap: Record<string, string> = {
-        '⚠': 'Pitfall', '🎯': 'Decision', '📋': 'Rule', '📄': 'ADR',
+        '⚠️': 'Pitfall', '⚠': 'Pitfall',
+        '🎯': 'Decision', '📋': 'Rule', '📄': 'ADR',
       };
       items.push({
         type:    typeMap[typeMatch[1]] ?? 'Decision',
