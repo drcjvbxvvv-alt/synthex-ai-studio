@@ -101,14 +101,14 @@ def _workdir(args) -> str:
     """
     Resolve working directory — same pattern as git:
     1. --workdir flag
-    2. BRAIN_WORKDIR env var
-    3. Auto-detect: walk up from cwd until .brain/ is found
+    2. Auto-detect: walk up from cwd until .brain/ is found
+    3. BRAIN_WORKDIR env var (fallback for MCP server / global default)
     4. Fallback: current directory
 
-    This means `brain status` works from any subdirectory of the project,
-    exactly like `git status`.
+    Local .brain/ always takes priority over BRAIN_WORKDIR so that
+    switching between projects works correctly without stale env vars.
     """
-    explicit = getattr(args, 'workdir', None) or os.environ.get('BRAIN_WORKDIR')
+    explicit = getattr(args, 'workdir', None)
     if explicit:
         return str(Path(explicit).resolve())
 
@@ -122,6 +122,11 @@ def _workdir(args) -> str:
         if parent == candidate:  # reached filesystem root
             break
         candidate = parent
+
+    # Fall back to BRAIN_WORKDIR env var (set by MCP server or user)
+    env_wd = os.environ.get('BRAIN_WORKDIR')
+    if env_wd:
+        return str(Path(env_wd).resolve())
 
     # Fallback: current directory (brain init will create .brain here)
     return str(cwd)
@@ -751,22 +756,47 @@ def _show_guide():
 """)
 
 
+def _scan_banner(mode: str, provider: str = "", model: str = "", scope: str = "") -> str:
+    """印出模式 banner，回傳模式字串"""
+    W = "\033[1;37m"; G = "\033[92m"; Y = "\033[93m"; R = "\033[0m"; D = "\033[2m"
+    width = 55
+    border = "─" * width
+    if mode == "local":
+        title  = f"{G}模式：本機 Python{R}"
+        detail = f"{D}零費用，無任何 API 呼叫  ·  {scope}{R}"
+        icon   = "✓"
+        color  = G
+    else:
+        title  = f"{Y}模式：LLM API{R}"
+        detail = f"{D}{provider} / {model}  ·  {scope}{R}"
+        icon   = "⚡"
+        color  = Y
+    print(f"\n{color}┌{border}┐{R}")
+    print(f"{color}│{R}  {icon}  {title:<40}      {color}│{R}")
+    print(f"{color}│{R}  {detail:<60}  {color}│{R}")
+    print(f"{color}└{border}┘{R}\n")
+    return mode
+
+
 def cmd_scan(args):
     """舊專案考古掃描：分析 git 歷史，重建 L3 知識圖譜"""
     import os, subprocess as _sp
     wd        = _workdir(args)
     verbose   = not getattr(args, 'quiet', False)
-    heuristic = getattr(args, 'heuristic', False)
+    # --local / --heuristic → 本機模式；--llm → 強制 LLM 模式
+    use_local = getattr(args, 'local', False) or getattr(args, 'heuristic', False)
+    use_llm   = getattr(args, 'llm', False)
+    yes       = getattr(args, 'yes', False)
     scan_all  = getattr(args, 'scan_all', False)
     limit     = 999_999 if scan_all else 100
     bd        = Path(wd) / ".brain"
     if not bd.exists():
         _err("Brain 尚未初始化，請先執行：brain setup"); return
 
-    # ── Heuristic 模式（零費用）──────────────────────────────────
-    if heuristic:
-        scope_msg = "全部 commit" if scan_all else f"最近 100 個 commit"
-        _info(f"Heuristic 掃描：{scope_msg}（零費用，零 API）")
+    # ── 本機模式（--local / --heuristic，零費用）──────────────────
+    if use_local:
+        scope_msg = "全部 commit" if scan_all else "最近 100 個 commit"
+        _scan_banner("local", scope=scope_msg)
         try:
             log = _sp.check_output(
                 ["git", "log", f"--max-count={limit}",
@@ -810,32 +840,40 @@ def cmd_scan(args):
                     os.environ.get("OPENAI_API_KEY") or
                     provider == "openai")
     if not has_key:
-        _err("brain scan 需要 LLM（付費 API 或本地 Ollama）")
+        _err("找不到 API key，無法使用 LLM 模式")
         print(f"""
-替代方案（擇一）：
+  選擇一種方式繼續：
 
-  {G}1. 本地 Ollama（免費）{R}
+  {G}1. 本機掃描（免費，無需 API）{R}
+     brain scan --local
+
+  {G}2. 本地 Ollama{R}
      ollama pull qwen2.5:7b
      export BRAIN_LLM_PROVIDER=openai
      export BRAIN_LLM_BASE_URL=http://localhost:11434/v1
      export BRAIN_LLM_MODEL=qwen2.5:7b
-     brain scan
+     brain scan --llm
 
-  {G}2. 便宜 Claude Haiku（約 $0.08）{R}
+  {G}3. Claude Haiku（約 $0.05 / 100 commits）{R}
      export ANTHROPIC_API_KEY=sk-ant-...
-     export BRAIN_LLM_MODEL=claude-haiku-4-5-20251001
-     brain scan
-
-  {G}3. 純 Heuristic（零費用，無 LLM）{R}
-     brain scan --heuristic          # 最近 100 個 commit
-     brain scan --heuristic --all    # 全部 commit
+     brain scan --llm
 """)
         return
 
-    model_name = os.environ.get("BRAIN_LLM_MODEL", "預設")
+    model_name = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
     scope_msg  = "全部 commit" if scan_all else "最近 100 個 commit"
-    _info(f"LLM 掃描（{provider} / {model_name}）")
-    _info(f"掃描 {scope_msg}，每個 commit 呼叫一次 LLM...")
+    _scan_banner("llm", provider=provider, model=model_name, scope=scope_msg)
+
+    # 確認提示（LLM 模式會產生 API 費用）
+    if not yes:
+        try:
+            ans = input("  繼續？ [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = "n"
+        if ans not in ("y", "yes"):
+            _info("已取消。使用 --local 可零費用掃描。")
+            return
+        print()
 
     # 先取 commit 清單（不加 --diff-filter，與 archaeologist 保持一致）
     try:
@@ -1467,8 +1505,15 @@ def main():
     p.add_argument('--fix', action='store_true', help='嘗試自動修復發現的問題')
 
     p = mkp('scan', '舊專案考古掃描，重建 L3 知識')
-    p.add_argument('--heuristic', action='store_true',
-                   help='零費用模式：只用 Conventional Commits 解析，不呼叫任何 LLM')
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--local', action='store_true',
+                      help='本機模式：零費用，無 API 呼叫（推薦入門）')
+    mode.add_argument('--llm', action='store_true',
+                      help='LLM 模式：高品質，需要 API key')
+    mode.add_argument('--heuristic', action='store_true',
+                      help='同 --local（向下相容）')
+    p.add_argument('--yes', '-y', action='store_true',
+                   help='LLM 模式跳過確認提示')
     p.add_argument('--all', dest='scan_all', action='store_true',
                    help='掃描全部 commit（預設只掃最近 100 個）')
     p.add_argument('--quiet', action='store_true', help='靜默模式')
