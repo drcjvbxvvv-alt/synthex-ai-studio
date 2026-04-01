@@ -941,6 +941,345 @@ def cmd_index(args):
         _info("brain ask 現在使用混合搜尋（FTS5 × 0.4 + 向量 × 0.6）")
 
 
+def cmd_doctor(args):
+    """系統健康檢查與自動修復（brain doctor [--fix]）"""
+    import sqlite3, shutil, stat, json
+    from project_brain import __version__
+
+    fix   = getattr(args, 'fix', False)
+    wd    = _workdir(args)
+    bd    = Path(wd) / ".brain"
+
+    ok_n = warn_n = err_n = 0
+    fixes_applied = []
+
+    def _ok2(msg):
+        nonlocal ok_n; ok_n += 1
+        print(f"  {G}✓{R}  {msg}")
+
+    def _warn2(msg, hint=""):
+        nonlocal warn_n; warn_n += 1
+        print(f"  {Y}⚠{R}  {msg}")
+        if hint:
+            print(f"     {D}{hint}{R}")
+
+    def _err2(msg, hint="", fix_desc=""):
+        nonlocal err_n; err_n += 1
+        print(f"  {RE}✗{R}  {msg}")
+        if hint:
+            print(f"     {D}{hint}{R}")
+        if fix_desc:
+            tag = f"{G}[已修復]{R}" if fix else f"{C}[--fix 可修復]{R}"
+            print(f"     {tag} {fix_desc}")
+
+    def _section(title):
+        print(f"\n  {B}{C}{title}{R}")
+        print(f"  {D}{'─' * 44}{R}")
+
+    print(f"\n  {B}{P}🔍  brain doctor  —  系統健康檢查{R}  {D}v{__version__}{R}")
+
+    # ── 1. 環境 ────────────────────────────────────────────────
+    _section("環境")
+
+    # Python 版本
+    import sys
+    pv = sys.version_info
+    if pv >= (3, 10):
+        _ok2(f"Python {pv.major}.{pv.minor}.{pv.micro}")
+    else:
+        _err2(f"Python {pv.major}.{pv.minor}.{pv.micro}（需要 3.10+）",
+              "請升級 Python")
+
+    # brain 指令可執行
+    brain_bin = shutil.which("brain")
+    if brain_bin:
+        _ok2(f"brain 指令已安裝  {D}({brain_bin}){R}")
+    else:
+        _warn2("brain 指令不在 PATH 中", "執行：pip install -e . 或確認 PATH 設定")
+
+    # LLM 設定
+    provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+    api_key  = os.environ.get("ANTHROPIC_API_KEY", "")
+    if provider == "openai":
+        base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
+        model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.1:8b")
+        _ok2(f"本地 LLM 模式  {D}({model} @ {base_url}){R}")
+    elif api_key:
+        masked = api_key[:8] + "..." + api_key[-4:]
+        _ok2(f"ANTHROPIC_API_KEY 已設定  {D}({masked}){R}")
+    else:
+        _warn2("ANTHROPIC_API_KEY 未設定，AI 提取功能不可用",
+               "設定後可使用 brain scan / brain sync 自動提取知識\n"
+               "     或改用本地 LLM：export BRAIN_LLM_PROVIDER=openai")
+
+    # BRAIN_WORKDIR
+    env_wd = os.environ.get("BRAIN_WORKDIR", "")
+    if env_wd:
+        _ok2(f"BRAIN_WORKDIR={env_wd}")
+    else:
+        _warn2(f"BRAIN_WORKDIR 未設定（自動偵測：{wd}）",
+               "可設定 export BRAIN_WORKDIR=/your/project 省略 --workdir")
+
+    # ── 2. 資料庫 ───────────────────────────────────────────────
+    _section("資料庫")
+
+    if not bd.exists():
+        _err2(".brain/ 目錄不存在", "執行：brain setup", "brain setup")
+        if fix:
+            import subprocess
+            subprocess.run(["brain", "setup", "--workdir", wd], check=False)
+            fixes_applied.append("執行 brain setup")
+    else:
+        _ok2(f".brain/ 目錄存在  {D}({bd}){R}")
+
+        db_path = bd / "brain.db"
+        if not db_path.exists():
+            _err2("brain.db 不存在", "執行：brain setup")
+        else:
+            size_kb = db_path.stat().st_size // 1024
+            try:
+                conn = sqlite3.connect(str(db_path))
+                conn.row_factory = sqlite3.Row
+
+                # 檢查 WAL 模式
+                wal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+                if wal == "wal":
+                    _ok2(f"brain.db 正常  {D}({size_kb} KB, WAL 模式){R}")
+                else:
+                    _warn2(f"brain.db 未使用 WAL 模式（當前：{wal}）",
+                           "多進程並發讀寫時建議 WAL 模式")
+
+                # 檢查關鍵表格
+                tables = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+                required = {"nodes", "edges", "episodes", "sessions"}
+                missing  = required - tables
+                if missing:
+                    _err2(f"資料庫缺少表格：{', '.join(missing)}",
+                          "Schema 可能需要遷移，執行：brain setup")
+                else:
+                    nodes    = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+                    edges    = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+                    episodes = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+                    _ok2(f"Schema 完整  {D}(節點 {nodes}  邊 {edges}  情節 {episodes}){R}")
+
+                    # 過時知識
+                    deprecated = conn.execute(
+                        "SELECT COUNT(*) FROM nodes WHERE confidence < 0.2"
+                    ).fetchone()[0]
+                    if deprecated:
+                        _warn2(f"{deprecated} 個節點信心值 < 0.2（可能過時）",
+                               "執行：brain status 查看詳情")
+                    else:
+                        _ok2("無過時知識（confidence ≥ 0.2）")
+
+                conn.close()
+            except Exception as e:
+                _err2(f"brain.db 讀取失敗：{e}")
+
+        # KRB 待審
+        krb_path = bd / "review_board.db"
+        if krb_path.exists():
+            try:
+                kc = sqlite3.connect(str(krb_path))
+                pending = kc.execute(
+                    "SELECT COUNT(*) FROM staged_nodes WHERE status='pending'"
+                ).fetchone()[0]
+                kc.close()
+                if pending > 0:
+                    _warn2(f"KRB 有 {pending} 筆待審知識",
+                           "執行：brain review list")
+                else:
+                    _ok2("KRB 暫存區清空")
+            except Exception:
+                pass
+
+    # ── 3. Git 整合 ─────────────────────────────────────────────
+    _section("Git 整合")
+
+    git_root = Path(wd)
+    if not (git_root / ".git").exists():
+        for p in git_root.parents:
+            if (p / ".git").exists():
+                git_root = p
+                break
+
+    if not (git_root / ".git").exists():
+        _warn2("未偵測到 git repo",
+               "brain 的自動學習功能需要 git")
+    else:
+        _ok2(f"git repo  {D}({git_root}){R}")
+
+        hook_path = git_root / ".git" / "hooks" / "post-commit"
+        if not hook_path.exists():
+            _err2("post-commit hook 未安裝，commit 後不會自動學習",
+                  "執行：brain setup",
+                  "重新安裝 git hook")
+            if fix:
+                from project_brain.setup_wizard import run_setup
+                run_setup(wd)
+                fixes_applied.append("重新安裝 git hook")
+        else:
+            # 可執行
+            mode = hook_path.stat().st_mode
+            if mode & stat.S_IXUSR:
+                _ok2("post-commit hook 已安裝且可執行")
+            else:
+                _err2("post-commit hook 存在但不可執行",
+                      "", "設定可執行權限")
+                if fix:
+                    hook_path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP)
+                    fixes_applied.append("設定 hook 可執行權限")
+
+            # 內容驗證
+            content = hook_path.read_text(errors="ignore")
+            if "brain" in content or "project_brain" in content:
+                _ok2("hook 內容有效（含 brain 指令）")
+            else:
+                _warn2("hook 存在但不含 brain 指令，可能是其他工具安裝的",
+                       f"檢查：{hook_path}")
+
+    # ── 4. MCP 整合 ─────────────────────────────────────────────
+    _section("MCP 整合")
+
+    try:
+        import mcp  # noqa: F401
+        _ok2("mcp 套件已安裝")
+    except ImportError:
+        _warn2("mcp 套件未安裝，MCP Server 不可用",
+               "pip install mcp")
+
+    claude_cfg = Path.home() / ".claude" / "settings.json"
+    if claude_cfg.exists():
+        try:
+            data = json.loads(claude_cfg.read_text())
+            servers = data.get("mcpServers", {})
+            if "project-brain" in servers:
+                cfg_wd = servers["project-brain"].get("env", {}).get("BRAIN_WORKDIR", "")
+                if cfg_wd == wd:
+                    _ok2(f"Claude Code MCP 設定正常  {D}(BRAIN_WORKDIR={cfg_wd}){R}")
+                else:
+                    _warn2(
+                        f"Claude Code MCP 的 BRAIN_WORKDIR 指向不同目錄",
+                        f"目前：{cfg_wd}\n     預期：{wd}\n"
+                        "     執行：brain setup 更新設定"
+                    )
+            else:
+                _err2("Claude Code settings.json 未設定 project-brain",
+                      "", "加入 MCP 設定")
+                if fix:
+                    mcp_entry = {
+                        "command": "python",
+                        "args": ["-m", "project_brain.mcp_server"],
+                        "env": {"BRAIN_WORKDIR": wd}
+                    }
+                    data.setdefault("mcpServers", {})
+                    data["mcpServers"]["project-brain"] = mcp_entry
+                    claude_cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+                    fixes_applied.append("已寫入 Claude Code MCP 設定")
+        except Exception as e:
+            _warn2(f"Claude Code settings.json 讀取失敗：{e}")
+    else:
+        _warn2("未找到 Claude Code settings.json",
+               "確認 Claude Code 已安裝，或手動設定 MCP")
+
+    # ── 5. 相依套件 ─────────────────────────────────────────────
+    _section("相依套件")
+
+    def _check_pkg(pkg, import_name=None, extra="", optional=False):
+        name = import_name or pkg
+        try:
+            mod = __import__(name)
+            ver = getattr(mod, "__version__", "")
+            ver_str = f"  {D}({ver}){R}" if ver else ""
+            _ok2(f"{pkg}{ver_str}")
+        except ImportError:
+            if optional:
+                _warn2(f"{pkg} 未安裝（選填）", f"pip install {pkg}{extra}")
+            else:
+                _err2(f"{pkg} 未安裝", f"pip install {pkg}{extra}")
+
+    _check_pkg("flask")
+    _check_pkg("flask-cors", "flask_cors")
+    _check_pkg("anthropic", optional=True)
+    _check_pkg("mcp",       optional=True)
+    _check_pkg("openai",    optional=True,  extra="  （Ollama / LM Studio）")
+    _check_pkg("sqlite-vec", "sqlite_vec",  optional=True, extra="  （向量語意搜尋）")
+
+    # ── 6. 知識庫健康 ───────────────────────────────────────────
+    _section("知識庫健康")
+
+    db_path = bd / "brain.db"
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+
+            nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            if nodes == 0:
+                _warn2("知識庫是空的",
+                       "執行：brain add \"第一條規則\"  或  brain scan")
+            elif nodes < 5:
+                _warn2(f"只有 {nodes} 個知識節點，效果有限",
+                       "執行：brain scan --all 掃描歷史 commit")
+            else:
+                _ok2(f"{nodes} 個知識節點")
+
+            # 向量索引覆蓋率
+            try:
+                vec_count = conn.execute(
+                    "SELECT COUNT(*) FROM node_vectors"
+                ).fetchone()[0]
+                if nodes > 0:
+                    pct = vec_count / nodes * 100
+                    if pct >= 80:
+                        _ok2(f"向量索引覆蓋率 {pct:.0f}%  {D}({vec_count}/{nodes}){R}")
+                    elif pct > 0:
+                        _warn2(f"向量索引覆蓋率 {pct:.0f}%  {D}({vec_count}/{nodes}){R}",
+                               "執行：brain index 補齊索引")
+                    else:
+                        _warn2("尚未建立向量索引（僅使用 FTS5 關鍵字搜尋）",
+                               "執行：brain index 啟用混合語意搜尋")
+            except Exception:
+                _warn2("向量索引表不存在（僅使用 FTS5 搜尋）",
+                       "執行：brain index")
+
+            # scope 分布
+            scopes = conn.execute(
+                "SELECT scope, COUNT(*) c FROM nodes GROUP BY scope ORDER BY c DESC LIMIT 5"
+            ).fetchall()
+            if scopes:
+                scope_str = "  ".join(
+                    f"{r['scope'] or 'global'}({r['c']})" for r in scopes
+                )
+                _ok2(f"Scope 分布  {D}{scope_str}{R}")
+
+            conn.close()
+        except Exception as e:
+            _warn2(f"知識庫健康檢查失敗：{e}")
+    else:
+        _warn2("brain.db 不存在，跳過知識庫健康檢查")
+
+    # ── 總結 ────────────────────────────────────────────────────
+    print(f"\n  {D}{'─' * 44}{R}")
+    parts = []
+    if ok_n:   parts.append(f"{G}{ok_n} 通過{R}")
+    if warn_n: parts.append(f"{Y}{warn_n} 警告{R}")
+    if err_n:  parts.append(f"{RE}{err_n} 錯誤{R}")
+    print(f"  {'  '.join(parts)}")
+
+    if fixes_applied:
+        print(f"\n  {G}已自動修復：{R}")
+        for f_ in fixes_applied:
+            print(f"    {G}✓{R}  {f_}")
+
+    if err_n and not fix:
+        print(f"\n  {D}執行 brain doctor --fix 嘗試自動修復{R}")
+
+    print()
+
+
 def main():
     import argparse
 
@@ -955,19 +1294,19 @@ def main():
   brain add "JWT 筆記"                 加入知識（快速模式）
   brain ask "JWT 怎麼設定"              查詢知識
   brain status                         查看記憶狀態
-  brain serve --port 7891              啟動 API
+  brain doctor                         系統健康檢查
+  brain doctor --fix                   自動修復問題
+  brain serve --port 7891              啟動 REST API
   brain webui --port 7890              D3.js 視覺化驗證
   brain sync --quiet                   從 git commit 學習（hook 呼叫）
-  brain serve     --workdir . --port 7891   OpenAI 相容 API
-  brain webui     --workdir . --port 7890   D3.js 視覺化
 
 環境變數：
   BRAIN_WORKDIR         預設工作目錄（省略 --workdir）
-  GRAPHITI_URL          Graphiti L2 連線（預設 redis://localhost:6379）
-  ANTHROPIC_API_KEY     AI 分析功能所需（scan/learn/validate）
+  ANTHROPIC_API_KEY     AI 分析功能所需（scan/sync）
   BRAIN_LLM_PROVIDER    anthropic（預設）或 openai（本地 Ollama/LM Studio）
   BRAIN_LLM_BASE_URL    本地 LLM 端點（預設 http://localhost:11434/v1）
   BRAIN_LLM_MODEL       本地模型名稱（預設 llama3.1:8b）
+  BRAIN_SYNTHESIZE      1 = 啟用記憶融合模式（opt-in）
 """,
     )
     parser.add_argument('--guide', action='store_true',
@@ -1035,6 +1374,9 @@ def main():
     p.add_argument('--note',     default='',      help='核准備注')
     p.add_argument('--reason',   default='',      help='拒絕原因')
     p.add_argument('--limit',    type=int, default=20, help='列出筆數上限')
+
+    p = mkp('doctor', '系統健康檢查與自動修復')
+    p.add_argument('--fix', action='store_true', help='嘗試自動修復發現的問題')
 
     p = mkp('scan', '舊專案考古掃描，重建 L3 知識')
     p.add_argument('--heuristic', action='store_true',
@@ -1121,6 +1463,7 @@ def main():
         'add':          cmd_add,
         'context':      cmd_context,
         'meta':         cmd_meta_knowledge,
+        'doctor':       cmd_doctor,
         'review':       cmd_review,
         'scan':         cmd_scan,
         'serve':        cmd_serve,
