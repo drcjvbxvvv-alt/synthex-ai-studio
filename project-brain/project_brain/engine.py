@@ -14,9 +14,12 @@ import os
 import json
 import time
 import hashlib
+import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from .graph     import KnowledgeGraph
 from .brain_db      import BrainDB          # A-10: unified DB
 from .context_result import ContextResult    # P3-A: structured return
@@ -455,8 +458,9 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
         try:
             from project_brain.knowledge_validator import KnowledgeValidator
             validator = KnowledgeValidator(
-                brain_dir = self.brain_dir,
+                self.graph,
                 workdir   = str(self.workdir),
+                brain_dir = self.brain_dir,
             )
             report = validator.run(
                 max_api_calls = 0,   # 完全免費：不呼叫 AI
