@@ -599,21 +599,20 @@ project-brain/
 ## 安裝選項
 
 ```bash
-# 最小安裝（核心功能）
+# 標準安裝（含向量語意搜尋）
 pip install project-brain
 
 # 含 MCP Server（Claude Code / Cursor）
 pip install "project-brain[mcp]"
 
-# 含 Anthropic SDK（AI 提取）
+# 含 Anthropic SDK（AI 知識提取）
 pip install "project-brain[anthropic]"
-
-# 含語意去重
-pip install "project-brain[dedup]"
 
 # 完整安裝
 pip install "project-brain[all]"
 ```
+
+**核心相依**：`flask`、`flask-cors`、`sqlite-vec`（向量搜尋 C 擴充，PyPI 有預編譯 wheels）
 
 **系統需求：** Python 3.10+，無需外部服務
 

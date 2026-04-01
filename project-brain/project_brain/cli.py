@@ -1201,11 +1201,11 @@ def cmd_doctor(args):
                 _err2(f"{pkg} 未安裝", f"pip install {pkg}{extra}")
 
     _check_pkg("flask")
-    _check_pkg("flask-cors", "flask_cors")
-    _check_pkg("anthropic", optional=True)
-    _check_pkg("mcp",       optional=True)
-    _check_pkg("openai",    optional=True,  extra="  （Ollama / LM Studio）")
-    _check_pkg("sqlite-vec", "sqlite_vec",  optional=True, extra="  （向量語意搜尋）")
+    _check_pkg("flask-cors",  "flask_cors")
+    _check_pkg("sqlite-vec",  "sqlite_vec",  extra="  （向量語意搜尋核心）")
+    _check_pkg("anthropic",   optional=True)
+    _check_pkg("mcp",         optional=True)
+    _check_pkg("openai",      optional=True, extra="  （Ollama / LM Studio）")
 
     # ── 6. 知識庫健康 ───────────────────────────────────────────
     _section("知識庫健康")
