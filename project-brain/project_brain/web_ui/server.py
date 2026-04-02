@@ -1,15 +1,23 @@
 """
-core/brain/web_ui/server.py — 知識圖譜視覺化 Web UI（v4.0）
+core/brain/web_ui/server.py — 知識圖譜視覺化 Web UI（v1.0）
 """
 from __future__ import annotations
-import os, re, sys, json, time, logging, argparse, sqlite3, threading
+import os
+import re
+import sys
+import json
+import time
+import logging
+import argparse
+import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-MAX_QUERY_LEN    = 200
+MAX_QUERY_LEN = 200
 MAX_NODES_RETURN = 500
-HOST             = "127.0.0.1"
+HOST = "127.0.0.1"
 
 KIND_COLOR = {
     "Pitfall":   "#f87171",   # red-400
@@ -17,16 +25,23 @@ KIND_COLOR = {
     "Rule":      "#60a5fa",   # blue-400
     "ADR":       "#c084fc",   # purple-400
     "Component": "#94a3b8",   # slate-400
-    "Architecture": "#fb923c", # orange-400
+    "Architecture": "#fb923c",  # orange-400
 }
+
 
 def _confidence_to_color(conf: float) -> str:
     c = max(0.0, min(1.0, conf))
-    if c >= 0.75: return "#34d399"
-    elif c >= 0.50: return "#86efac"
-    elif c >= 0.30: return "#fbbf24"
-    elif c >= 0.15: return "#f97316"
-    else: return "#f87171"
+    if c >= 0.75:
+        return "#34d399"
+    elif c >= 0.50:
+        return "#86efac"
+    elif c >= 0.30:
+        return "#fbbf24"
+    elif c >= 0.15:
+        return "#f97316"
+    else:
+        return "#f87171"
+
 
 NODE_BASE_SIZE: dict[str, int] = {
     "Component": 14, "Decision": 13, "Pitfall": 12,
@@ -69,8 +84,8 @@ def create_app(workdir) -> Any:
 
     @app.route("/api/graph")
     def api_graph():
-        limit    = min(MAX_NODES_RETURN, int(request.args.get("limit", 300)))
-        kind     = request.args.get("kind", None)
+        limit = min(MAX_NODES_RETURN, int(request.args.get("limit", 300)))
+        kind = request.args.get("kind", None)
         conn = _db()
         try:
             if kind:
@@ -88,7 +103,7 @@ def create_app(workdir) -> Any:
             node_ids = {r["id"] for r in rows}
             nodes = []
             for r in rows:
-                conf  = 0.7
+                conf = 0.7
                 color = KIND_COLOR.get(r["kind"], "#94a3b8")
                 nodes.append({
                     "id": r["id"], "kind": r["kind"], "title": r["title"],
@@ -120,9 +135,9 @@ def create_app(workdir) -> Any:
     def api_stats():
         conn = _db()
         try:
-            total    = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
-            edges    = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-            by_kind  = conn.execute(
+            total = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            by_kind = conn.execute(
                 "SELECT type as kind, COUNT(*) as cnt FROM nodes GROUP BY type"
             ).fetchall()
         finally:
@@ -156,7 +171,7 @@ def create_app(workdir) -> Any:
     @app.route("/api/node/<node_id>")
     def api_node(node_id: str):
         safe_id = re.sub(r'[^a-zA-Z0-9_-]', '', node_id)[:64]
-        conn    = _db()
+        conn = _db()
         try:
             row = conn.execute(
                 "SELECT id, type as kind, title, content, tags, created_at "
@@ -197,10 +212,10 @@ def create_app(workdir) -> Any:
     @app.route("/api/node/<node_id>/pin", methods=["POST"])
     def api_pin(node_id: str):
         """釘選 / 取消釘選節點（v6.0）"""
-        safe_id  = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
-        data     = request.json or {}
-        pinned   = bool(data.get("pinned", True))
-        imp      = data.get("importance", None)
+        safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        data = request.json or {}
+        pinned = bool(data.get("pinned", True))
+        imp = data.get("importance", None)
         conn = _db()
         try:
             cur = conn.execute(
@@ -224,8 +239,8 @@ def create_app(workdir) -> Any:
     def api_importance(node_id: str):
         """設定節點重要性分數（v6.0）"""
         safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
-        data    = request.json or {}
-        imp     = max(0.0, min(1.0, float(data.get("importance", 0.5))))
+        data = request.json or {}
+        imp = max(0.0, min(1.0, float(data.get("importance", 0.5))))
         conn = _db()
         try:
             cur = conn.execute(
@@ -507,7 +522,7 @@ body {{
   <div id="header-logo">
     <div class="brain-icon">🧠</div>
     <span class="brand">Project Brain</span>
-    <span class="version">v4.0</span>
+    <span class="version">v1.0</span>
   </div>
   <div id="header-project">📁 {project_name}</div>
   <div id="search-wrap">

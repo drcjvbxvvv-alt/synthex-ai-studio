@@ -95,6 +95,21 @@ def _validate_workdir(workdir: str) -> Path:
     return path
 
 
+def _find_brain_root(start: str) -> Path | None:
+    """從 start 往上找第一個含有 .brain/ 的目錄，找不到回傳 None"""
+    p = Path(start).resolve()
+    if p.is_file():
+        p = p.parent
+    for candidate in [p, *p.parents]:
+        if (candidate / ".brain").is_dir():
+            return candidate
+    return None
+
+
+# 多工作目錄 Brain 實例快取（key = resolved path str）
+_brain_cache: dict[str, Any] = {}
+
+
 # ── MCP Server 主體 ─────────────────────────────────────────────
 
 def create_server(workdir: str) -> Any:
@@ -110,6 +125,25 @@ def create_server(workdir: str) -> Any:
     sys.path.insert(0, str(work_path.parent))
     from project_brain.engine import ProjectBrain
     brain = ProjectBrain(str(work_path))
+    _brain_cache[str(work_path)] = brain
+
+    def _resolve_brain(caller_workdir: str) -> "ProjectBrain":
+        """
+        根據呼叫端提供的 workdir 回傳對應的 Brain 實例。
+        優先往上找 .brain/；找不到時回退到預設 brain。
+        """
+        if not caller_workdir:
+            return brain
+        root = _find_brain_root(caller_workdir)
+        if root is None or root == work_path:
+            return brain
+        key = str(root)
+        if key not in _brain_cache:
+            try:
+                _brain_cache[key] = ProjectBrain(key)
+            except Exception:
+                return brain
+        return _brain_cache[key]
 
     # Minimal FastMCP init — different versions have different kwargs
     try:
@@ -129,6 +163,7 @@ def create_server(workdir: str) -> Any:
         task: str,
         current_file: str = "",
         scope: str = "global",
+        workdir: str = "",
     ) -> str:
         """
         根據當前任務動態組裝最相關的專案知識，注入 AI 的 Context。
@@ -136,6 +171,7 @@ def create_server(workdir: str) -> Any:
         Args:
             task:         當前任務描述（自然語言）
             current_file: 當前操作的檔案路徑（選填，提升相關性）
+            workdir:      Claude Code 當前工作目錄（選填，讓 Brain 自動找對應 .brain/）
 
         Returns:
             格式化的知識注入字串，可直接加在 prompt 前面。
@@ -149,8 +185,9 @@ def create_server(workdir: str) -> Any:
         if ".." in file_clean:
             file_clean = ""
 
+        b = _resolve_brain(workdir or file_clean)
         try:
-            ctx = brain.get_context(task_clean, file_clean) or ""
+            ctx = b.get_context(task_clean, file_clean) or ""
             # A-19: apply Memory Synthesizer if BRAIN_SYNTHESIZE=1
             try:
                 from project_brain.memory_synthesizer import MemorySynthesizer, is_enabled
@@ -158,17 +195,17 @@ def create_server(workdir: str) -> Any:
                     l1_data = []
                     try:
                         from project_brain.session_store import SessionStore
-                        ss = SessionStore(brain_dir=brain.brain_dir)
+                        ss = SessionStore(brain_dir=b.brain_dir)
                         l1_data = [{"content": e.value, "category": e.category}
                                    for e in ss.list(limit=5)]
                     except Exception:
                         pass
                     l2_data = []
                     try:
-                        l2_data = brain.db.recent_episodes(limit=5)
+                        l2_data = b.db.recent_episodes(limit=5)
                     except Exception:
                         pass
-                    synth = MemorySynthesizer(str(brain.workdir))
+                    synth = MemorySynthesizer(str(b.workdir))
                     ctx   = synth.fuse(l1_data, l2_data, ctx, task=task_clean) or ctx
             except Exception:
                 pass  # synthesis failure must never break context delivery
@@ -176,7 +213,7 @@ def create_server(workdir: str) -> Any:
             # Agent cannot opt out — if it queries anything, nudges come with it
             try:
                 from project_brain.nudge_engine import NudgeEngine
-                nudge_eng = NudgeEngine(brain.graph)
+                nudge_eng = NudgeEngine(b.graph)
                 nudges    = nudge_eng.check(task_clean, top_k=3)
                 if nudges:
                     nudge_block = "\n## 🧠 Brain Nudges（主動警告）\n"
@@ -288,6 +325,7 @@ def create_server(workdir: str) -> Any:
         scope:   str = "global",
         tags:    list[str] | None = None,
         confidence: float = 0.8,
+        workdir: str = "",
     ) -> dict:
         """
         手動加入一筆知識片段到知識庫。
@@ -299,6 +337,7 @@ def create_server(workdir: str) -> Any:
             scope:   模組作用域（"global" / "auth" / "payment_service" 等）
             confidence: 確信度 0.0~1.0（agent 發現 = 0.6, human verified = 0.9）
             tags:    標籤列表（最多 10 個）
+            workdir: Claude Code 當前工作目錄（選填，讓 Brain 自動找對應 .brain/）
 
         Returns:
             {"node_id": "...", "success": true}
@@ -317,8 +356,9 @@ def create_server(workdir: str) -> Any:
             if t:
                 safe_tags.append(t)
 
+        b = _resolve_brain(workdir)
         try:
-            node_id = brain.add_knowledge(
+            node_id = b.add_knowledge(
                 title      = title_c,
                 content    = content_c,
                 kind       = kind,
@@ -329,7 +369,7 @@ def create_server(workdir: str) -> Any:
             if scope and scope != "global" and node_id:
                 try:
                     from project_brain.brain_db import BrainDB
-                    _bdir = brain.brain_dir
+                    _bdir = b.brain_dir
                     _db   = BrainDB(_bdir)
                     _db.conn.execute(
                         "UPDATE nodes SET scope=? WHERE title=?",
@@ -345,7 +385,7 @@ def create_server(workdir: str) -> Any:
 
     # ── Tool 5：知識庫狀態 ──────────────────────────────────────
     @mcp.tool()
-    def brain_status() -> str:
+    def brain_status(workdir: str = "") -> str:
         """
         查看 Project Brain 知識庫的目前狀態。
 
@@ -353,8 +393,9 @@ def create_server(workdir: str) -> Any:
             統計摘要字串（節點數、邊數、最近新增的知識）。
         """
         _rate_check()
+        b = _resolve_brain(workdir)
         try:
-            return brain.status()
+            return b.status()
         except Exception as e:
             logger.error("brain_status 內部錯誤：%s", e)
             return "狀態查詢失敗"
