@@ -1,0 +1,1586 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Brain · 為 AI Agent 設計的工程記憶基礎設施</title>
+  <meta name="description" content="Project Brain — 為 AI Agent 設計的工程記憶基礎設施。讓每次對話都能承接上一次的決策、規則與踩坑。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+TC:wght@300;400;500;700;900&family=Roboto+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* ── TOKENS ── */
+    :root {
+      --bg:      #f5f2ec;
+      --surf:    #ffffff;
+      --surf2:   #ede9e1;
+      --bord:    #ddd7cc;
+      --cyan:    #4368e4;
+      --blue:    #3558cc;
+      --amber:   #d4763a;
+      --red:     #d64e48;
+      --purple:  #8668ce;
+      --teal:    #2daa86;
+      --text:    #1a1612;
+      --muted:   #9a8f84;
+      --nav-h:   60px;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Noto Sans TC', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* grid bg */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(67,104,228,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(67,104,228,.04) 1px, transparent 1px);
+      background-size: 52px 52px;
+    }
+    body > * { position: relative; z-index: 1; }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: var(--nav-h);
+      background: rgba(245,242,236,.88);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--bord);
+      display: flex; align-items: center;
+      padding: 0 40px;
+      gap: 32px;
+    }
+    .nav-logo {
+      font-family: 'Space Mono', monospace;
+      font-size: 15px; font-weight: 700;
+      color: var(--text); text-decoration: none;
+      letter-spacing: -0.02em;
+      flex-shrink: 0;
+    }
+    .nav-logo span { color: var(--cyan); }
+    .nav-links {
+      display: flex; gap: 24px; align-items: center;
+      list-style: none; margin-left: auto;
+    }
+    .nav-links a {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 12px; color: var(--muted);
+      text-decoration: none; letter-spacing: .04em;
+      transition: color .2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 12px; font-weight: 600;
+      background: var(--cyan); color: #fff;
+      border: none; border-radius: 5px;
+      padding: 8px 18px; cursor: pointer;
+      text-decoration: none;
+      transition: opacity .2s;
+    }
+    .nav-cta:hover { opacity: .88; }
+
+    /* ── SECTION BASE ── */
+    section { padding: 96px 40px; max-width: 1140px; margin: 0 auto; }
+    section:first-of-type { padding-top: calc(var(--nav-h) + 80px); }
+    .section-badge {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
+      color: var(--cyan);
+      background: #ebf0fc; border: 1px solid #c0cefa;
+      border-radius: 3px; padding: 3px 11px;
+      display: inline-block; margin-bottom: 16px;
+    }
+    .section-title {
+      font-family: 'Space Mono', monospace;
+      font-size: clamp(26px, 4vw, 38px); font-weight: 700;
+      color: var(--text); letter-spacing: -.02em;
+      line-height: 1.2; margin-bottom: 12px;
+    }
+    .section-title span { color: var(--cyan); }
+    .section-sub {
+      font-size: 15px; color: var(--muted); line-height: 1.7;
+      max-width: 580px;
+    }
+    hr.divider {
+      border: none; border-top: 1px solid var(--bord);
+      max-width: 1140px; margin: 0 auto;
+    }
+
+    /* ── CARD ── */
+    .card {
+      background: var(--surf);
+      border: 1px solid var(--bord);
+      border-radius: 12px; padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.05), 0 2px 12px rgba(0,0,0,.04);
+      position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at 0% 0%, rgba(67,104,228,.03) 0%, transparent 60%);
+    }
+    .card-title {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 11px; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--cyan);
+      margin-bottom: 18px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card-title::before {
+      content: '';
+      display: inline-block; width: 3px; height: 14px;
+      background: var(--cyan); border-radius: 2px;
+    }
+
+    /* ── HERO ── */
+    #hero {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px; align-items: center;
+      min-height: calc(100vh - var(--nav-h));
+      padding-top: calc(var(--nav-h) + 40px);
+      padding-bottom: 60px;
+    }
+    .hero-badge {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 11px; letter-spacing: .2em; text-transform: uppercase;
+      color: var(--cyan); background: #ebf0fc; border: 1px solid #c0cefa;
+      border-radius: 3px; padding: 4px 12px;
+      display: inline-block; margin-bottom: 20px;
+    }
+    .hero-title {
+      font-family: 'Space Mono', monospace;
+      font-size: clamp(36px, 5.5vw, 64px);
+      font-weight: 700; line-height: 1.05;
+      letter-spacing: -.03em; margin-bottom: 20px;
+      color: var(--text);
+    }
+    .hero-title span { color: var(--cyan); }
+    .hero-tagline {
+      font-size: 16px; color: var(--muted);
+      line-height: 1.8; margin-bottom: 36px; max-width: 460px;
+    }
+    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn-primary {
+      font-family: 'Roboto Mono', monospace; font-size: 13px; font-weight: 600;
+      background: var(--cyan); color: #fff;
+      border: none; border-radius: 6px; padding: 12px 24px;
+      cursor: pointer; text-decoration: none;
+      transition: opacity .2s, transform .2s;
+      display: inline-block;
+    }
+    .btn-primary:hover { opacity: .88; transform: translateY(-1px); }
+    .btn-ghost {
+      font-family: 'Roboto Mono', monospace; font-size: 13px; font-weight: 600;
+      background: transparent; color: var(--text);
+      border: 1.5px solid var(--bord); border-radius: 6px; padding: 11px 24px;
+      cursor: pointer; text-decoration: none;
+      transition: border-color .2s, color .2s;
+      display: inline-block;
+    }
+    .btn-ghost:hover { border-color: var(--text); }
+
+    .hero-pills {
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .pill-row { display: flex; gap: 10px; }
+    .hpill {
+      font-family: 'Roboto Mono', monospace; font-size: 12px;
+      padding: 6px 14px; border-radius: 5px; white-space: nowrap;
+    }
+    .hp-v    { background:#ebf0fc; border:1px solid #c0cefa; color:var(--blue); }
+    .hp-py   { background:#e6f6f1; border:1px solid #a8dfcf; color:var(--teal); }
+    .hp-mc   { background:#f0ecfb; border:1px solid #c8b8f0; color:var(--purple); }
+    .hp-zt   { background:#e6f6f1; border:1px solid #a8dfcf; color:var(--teal); }
+    .hp-mit  { background:#fdf0e6; border:1px solid #edcaaa; color:var(--amber); }
+
+    /* hero terminal */
+    .hero-terminal {
+      background: #1a1612; border-radius: 12px;
+      border: 1px solid #3a3530;
+      overflow: hidden;
+      box-shadow: 0 8px 40px rgba(0,0,0,.2);
+    }
+    .term-bar {
+      background: #252118; padding: 12px 16px;
+      display: flex; align-items: center; gap: 8px;
+      border-bottom: 1px solid #3a3530;
+    }
+    .term-dot {
+      width: 11px; height: 11px; border-radius: 50%;
+    }
+    .term-dot:nth-child(1) { background: #d64e48; }
+    .term-dot:nth-child(2) { background: #d4763a; }
+    .term-dot:nth-child(3) { background: #2daa86; }
+    .term-title {
+      font-family: 'Roboto Mono', monospace; font-size: 11px;
+      color: #6a6055; margin-left: auto;
+    }
+    .term-body {
+      padding: 20px 22px;
+      font-family: 'Roboto Mono', monospace; font-size: 13px;
+      line-height: 2;
+    }
+    .tc-prompt { color: #4368e4; }
+    .tc-cmd    { color: #e8dfd5; }
+    .tc-cmt    { color: #5a5248; }
+    .tc-out    { color: #9a8f84; }
+    .tc-key    { color: #d4763a; }
+    .tc-val    { color: #2daa86; }
+    .tc-warn   { color: #d64e48; }
+    .tc-ok     { color: #2daa86; }
+
+    /* ── PROBLEM SECTION ── */
+    #problem { padding-top: 60px; }
+    .problem-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px; margin-top: 48px;
+    }
+    .problem-flow {
+      display: flex; align-items: stretch; gap: 0;
+      grid-column: span 2;
+    }
+    .pf-step {
+      flex: 1;
+      background: var(--surf2); border: 1px solid var(--bord);
+      border-radius: 8px; padding: 18px 20px;
+      font-size: 14px; line-height: 1.6;
+    }
+    .pf-step .step-label {
+      font-family: 'Roboto Mono', monospace; font-size: 10px;
+      color: var(--muted); margin-bottom: 8px;
+      letter-spacing: .12em; text-transform: uppercase;
+    }
+    .pf-step .step-val { font-size: 14px; color: var(--text); font-weight: 500; }
+    .pf-step.pf-hi { background: #ebf0fc; border-color: #c0cefa; }
+    .pf-step.pf-hi .step-val { color: var(--cyan); }
+    .pf-arrow {
+      display: flex; align-items: center; padding: 0 12px;
+      color: var(--bord); font-size: 22px; flex-shrink: 0;
+    }
+
+    .loop-card {
+      background: var(--surf); border: 1px solid var(--bord);
+      border-radius: 12px; padding: 24px;
+    }
+    .loop-items { display: flex; flex-direction: column; gap: 5px; }
+    .loop-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 9px 14px; border-radius: 7px;
+      font-family: 'Roboto Mono', monospace; font-size: 13px;
+    }
+    .loop-item.active {
+      background: #ebf0fc; border: 1px solid #c0cefa; color: var(--text);
+    }
+    .loop-down { text-align: center; color: var(--bord); font-size: 18px; line-height: 1; margin: 2px 0; }
+    .loop-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .d-cyan   { background: var(--cyan); }
+    .d-blue   { background: var(--blue); }
+    .d-teal   { background: var(--teal); }
+    .d-purple { background: var(--purple); }
+
+    /* commit comparison */
+    .cmp-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 13px; margin-top: 4px;
+    }
+    .cmp-table th {
+      font-family: 'Roboto Mono', monospace; font-size: 11px;
+      letter-spacing: .08em; text-transform: uppercase;
+      color: var(--muted); padding: 8px 14px;
+      border-bottom: 1px solid var(--bord);
+      text-align: left; background: var(--surf2);
+    }
+    .cmp-table td {
+      padding: 10px 14px; border-bottom: 1px solid var(--bord);
+      vertical-align: top; line-height: 1.5;
+    }
+    .cmp-table tr:last-child td { border-bottom: none; }
+    .cmp-table .col-head { font-weight: 700; color: var(--text); }
+    .cmp-table .col-human { color: var(--muted); }
+    .cmp-table .col-ai { color: var(--cyan); font-weight: 500; }
+
+    /* ── FLOW SECTION ── */
+    #flow { padding-top: 60px; }
+    .flow-diagram {
+      margin-top: 48px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 0;
+      position: relative;
+    }
+    .flow-col { display: flex; flex-direction: column; gap: 16px; }
+    .flow-col-label {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 10px; font-weight: 600; letter-spacing: .16em;
+      text-transform: uppercase; padding: 5px 14px;
+      border-radius: 3px; border: 1px solid;
+      display: inline-block; align-self: flex-start;
+      margin-bottom: 4px;
+    }
+    .cl-write { color: var(--amber); border-color: #edcaaa; background: #fdf0e6; }
+    .cl-mem   { color: var(--cyan);  border-color: #c0cefa; background: #ebf0fc; }
+    .cl-read  { color: var(--blue);  border-color: #c0cefa; background: #ebf0fc; }
+
+    .fnode {
+      background: var(--surf); border: 1.5px solid var(--bord);
+      border-radius: 10px; padding: 14px 16px;
+      cursor: default; transition: transform .2s, box-shadow .2s;
+    }
+    .fnode:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,.1);
+    }
+    .fnode-icon { font-size: 18px; display: block; margin-bottom: 6px; }
+    .fnode-name {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 12px; font-weight: 700; display: block;
+      letter-spacing: .04em; line-height: 1.3;
+    }
+    .fnode-sub {
+      font-size: 11px; color: var(--muted);
+      margin-top: 4px; display: block; line-height: 1.5;
+    }
+    .fn-amber .fnode-name { color: var(--amber); }
+    .fn-amber:hover { border-color: var(--amber); box-shadow: 0 4px 16px rgba(212,118,58,.18); }
+    .fn-teal  .fnode-name { color: var(--teal);  }
+    .fn-teal:hover  { border-color: var(--teal);  box-shadow: 0 4px 16px rgba(45,170,134,.18); }
+    .fn-blue  .fnode-name { color: var(--blue);  }
+    .fn-blue:hover  { border-color: var(--blue);  box-shadow: 0 4px 16px rgba(53,88,204,.18); }
+    .fn-cyan  .fnode-name { color: var(--cyan);  }
+    .fn-cyan:hover  { border-color: var(--cyan);  box-shadow: 0 4px 20px rgba(67,104,228,.2); }
+    .fn-purple .fnode-name { color: var(--purple); }
+    .fn-purple:hover { border-color: var(--purple); box-shadow: 0 4px 16px rgba(134,104,206,.18); }
+    .fn-red   .fnode-name { color: var(--red);   }
+    .fn-red:hover   { border-color: var(--red);   box-shadow: 0 4px 16px rgba(214,78,72,.18); }
+
+    .fn-l1a { background: #fdf8f3; border-color: #edcaaa; }
+    .fn-l2  { background: #f4f7fe; border-color: #c0cefa; }
+    .fn-l3  { background: #f4f7fe; border-color: #c0cefa; }
+
+    .lbadge {
+      font-family: 'Space Mono', monospace; font-size: 10px; font-weight: 700;
+      padding: 2px 8px; border-radius: 3px; border: 1px solid;
+      display: inline-block; margin-bottom: 6px;
+    }
+    .lb-amber { color: var(--amber); border-color: #edcaaa; background: #fdf0e6; }
+    .lb-blue  { color: var(--blue);  border-color: #c0cefa; background: #ebf0fc; }
+    .lb-cyan  { color: var(--cyan);  border-color: #c0cefa; background: #ebf0fc; }
+
+    .flow-arrow {
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 16px; padding-top: 48px;
+      color: var(--bord); font-size: 22px; flex-shrink: 0;
+    }
+    .agent-bar {
+      background: #f4f7fe; border: 1.5px solid #c0cefa;
+      border-radius: 10px; padding: 16px 22px;
+      display: flex; align-items: center; gap: 16px;
+      grid-column: span 5; margin-bottom: 8px;
+    }
+    .agent-icon { font-size: 22px; }
+    .agent-name {
+      font-family: 'Roboto Mono', monospace; font-size: 15px;
+      font-weight: 700; color: var(--text); letter-spacing: .06em;
+    }
+    .agent-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .agent-tags { margin-left: auto; display: flex; gap: 8px; }
+    .atag {
+      font-family: 'Roboto Mono', monospace; font-size: 10px;
+      padding: 3px 10px; border-radius: 3px; border: 1px solid;
+      white-space: nowrap;
+    }
+    .at-cyan   { color: var(--cyan);   border-color: #c0cefa; background: #ebf0fc; }
+    .at-purple { color: var(--purple); border-color: #c8b8f0; background: #f0ecfb; }
+    .at-blue   { color: var(--blue);   border-color: #c0cefa; background: #ebf0fc; }
+
+    /* ── MEMORY LAYERS ── */
+    #memory { padding-top: 60px; }
+    .memory-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px; margin-top: 48px;
+    }
+    .layer-card {
+      background: var(--surf); border: 1px solid var(--bord);
+      border-radius: 12px; padding: 24px; position: relative; overflow: hidden;
+    }
+    .layer-tag {
+      font-family: 'Roboto Mono', monospace; font-size: 11px; font-weight: 700;
+      padding: 3px 10px; border-radius: 4px; display: inline-block;
+      margin-bottom: 14px; border: 1px solid;
+    }
+    .lt-l1 { color: var(--amber); border-color: #edcaaa; background: #fdf0e6; }
+    .lt-l2 { color: var(--blue);  border-color: #c0cefa; background: #ebf0fc; }
+    .lt-l3 { color: var(--cyan);  border-color: #c0cefa; background: #ebf0fc; }
+    .layer-name-big {
+      font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px;
+    }
+    .layer-en { font-family: 'Roboto Mono', monospace; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+    .layer-desc { font-size: 13px; color: var(--muted); line-height: 1.65; }
+    .layer-code {
+      margin-top: 14px; background: var(--surf2);
+      border: 1px solid var(--bord); border-radius: 6px;
+      padding: 10px 12px;
+      font-family: 'Roboto Mono', monospace; font-size: 11.5px;
+      color: var(--cyan); line-height: 1.7;
+    }
+
+    /* knowledge types */
+    .kinds-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 16px; margin-top: 48px;
+    }
+    .kind-card {
+      background: var(--surf); border: 1px solid var(--bord);
+      border-radius: 10px; padding: 18px 20px;
+    }
+    .kind-tag2 {
+      font-family: 'Roboto Mono', monospace; font-size: 11px; font-weight: 700;
+      margin-bottom: 8px; display: block;
+    }
+    .kt-pitfall  .kind-tag2 { color: var(--red); }
+    .kt-decision .kind-tag2 { color: var(--blue); }
+    .kt-rule     .kind-tag2 { color: var(--amber); }
+    .kt-adr      .kind-tag2 { color: var(--purple); }
+    .kt-note     .kind-tag2 { color: var(--teal); }
+    .kind-name { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+    .kind-desc2 { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+    .kind-example {
+      margin-top: 10px; font-family: 'Roboto Mono', monospace; font-size: 11px;
+      color: var(--muted); background: var(--surf2);
+      border: 1px solid var(--bord); border-radius: 5px;
+      padding: 7px 10px; line-height: 1.6;
+    }
+    .kind-example .ex-cyan { color: var(--cyan); }
+
+    /* ── CONFIDENCE ── */
+    #confidence { padding-top: 60px; }
+    .conf-decay-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 48px;
+    }
+    .conf-items { display: flex; flex-direction: column; gap: 10px; }
+    .conf-item {
+      display: flex; align-items: center; gap: 12px; font-size: 13px;
+    }
+    .conf-label { min-width: 150px; flex-shrink: 0; font-size: 13px; color: var(--text); }
+    .conf-bar-wrap {
+      flex: 1; height: 6px; background: var(--surf2);
+      border-radius: 3px; overflow: hidden; border: 1px solid var(--bord);
+    }
+    .conf-bar { height: 100%; border-radius: 3px; }
+    .conf-score {
+      font-family: 'Roboto Mono', monospace; font-size: 12px; font-weight: 700;
+      width: 34px; text-align: right; flex-shrink: 0;
+    }
+
+    /* decay */
+    .decay-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-top: 4px;
+    }
+    .factor {
+      background: var(--surf2); border: 1px solid var(--bord);
+      border-radius: 8px; padding: 11px 13px;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .factor-id {
+      font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700;
+      color: var(--cyan); background: #ebf0fc;
+      border: 1px solid #c0cefa; border-radius: 4px;
+      padding: 2px 7px; flex-shrink: 0; white-space: nowrap; margin-top: 1px;
+    }
+    .factor-name { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .factor-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+    /* ── CLI ── */
+    #cli { padding-top: 60px; }
+    .cli-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 48px; }
+    .cli-list { font-family: 'Roboto Mono', monospace; }
+    .cli-row {
+      display: flex; align-items: baseline; gap: 14px;
+      padding: 9px 0; border-bottom: 1px solid var(--bord); font-size: 13px;
+    }
+    .cli-row:last-child { border-bottom: none; }
+    .cli-cmd { color: var(--cyan); font-weight: 700; min-width: 130px; flex-shrink: 0; }
+    .cli-desc { color: var(--muted); font-size: 12.5px; font-family: 'Noto Sans TC', sans-serif; }
+
+    .install-box {
+      background: #1a1612; border-radius: 10px;
+      border: 1px solid #3a3530; padding: 22px 24px;
+      font-family: 'Roboto Mono', monospace; font-size: 13px;
+      line-height: 2;
+    }
+    .ib-cmt  { color: #5a5248; }
+    .ib-cmd  { color: #e8dfd5; }
+    .ib-$ { color: #4368e4; }
+    .ib-str  { color: #2daa86; }
+
+    /* mcp config */
+    .mcp-block {
+      background: #1a1612; border-radius: 10px; border: 1px solid #3a3530;
+      padding: 22px 24px; font-family: 'Roboto Mono', monospace;
+      font-size: 12.5px; line-height: 1.9; overflow-x: auto;
+    }
+    .jk { color: #8668ce; }
+    .js { color: #2daa86; }
+    .jn { color: #d4763a; }
+    .jc { color: #5a5248; }
+
+    /* ── PHILOSOPHY ── */
+    #philosophy { padding-top: 60px; }
+    .phil-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 48px; }
+    .phil-item {
+      background: var(--surf); border: 1px solid var(--bord);
+      border-radius: 12px; padding: 22px 24px;
+      display: flex; gap: 16px; align-items: flex-start;
+    }
+    .phil-num {
+      font-family: 'Space Mono', monospace; font-size: 12px; font-weight: 700;
+      color: #fff; background: var(--cyan); border-radius: 5px;
+      padding: 4px 10px; flex-shrink: 0; margin-top: 1px;
+    }
+    .phil-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+    .phil-desc { font-size: 12.5px; color: var(--muted); line-height: 1.65; }
+    .degrade-item {
+      display: flex; gap: 12px; align-items: baseline;
+      padding: 8px 0; border-bottom: 1px solid var(--bord);
+      font-size: 12.5px;
+    }
+    .degrade-item:last-child { border-bottom: none; }
+    .degrade-cond { color: var(--amber); font-weight: 600; min-width: 130px; flex-shrink: 0; }
+    .degrade-act { color: var(--muted); }
+
+    /* ── ACADEMIC ── */
+    #academic { padding-top: 60px; }
+    .matrix-wrap { overflow-x: auto; margin-top: 48px; }
+    .matrix-table {
+      width: 100%; border-collapse: collapse; font-size: 12.5px;
+      min-width: 780px;
+    }
+    .matrix-table th {
+      font-family: 'Roboto Mono', monospace; font-size: 11px;
+      letter-spacing: .08em; text-transform: uppercase;
+      color: var(--muted); padding: 10px 14px;
+      border-bottom: 1.5px solid var(--bord);
+      text-align: center; background: var(--surf2);
+    }
+    .matrix-table th:first-child { text-align: left; }
+    .matrix-table td {
+      padding: 9px 14px; border-bottom: 1px solid var(--bord);
+      text-align: center; line-height: 1.4;
+    }
+    .matrix-table td:first-child { text-align: left; font-weight: 600; color: var(--text); }
+    .matrix-table tr:last-child td { border-bottom: none; }
+    .matrix-table tr:hover td { background: #f9f6f0; }
+    .mx-y { color: var(--teal); font-weight: 700; }
+    .mx-n { color: var(--muted); }
+    .mx-p { color: var(--blue); font-weight: 600; font-size: 11px; }
+    .brain-row td { background: #f4f7fe; }
+    .brain-row td:first-child { color: var(--cyan); }
+
+    /* paper cards */
+    .papers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+    .paper-card {
+      background: var(--surf); border: 1px solid var(--bord);
+      border-radius: 10px; padding: 18px 20px;
+    }
+    .paper-id {
+      font-family: 'Roboto Mono', monospace; font-size: 10px;
+      color: var(--muted); margin-bottom: 8px;
+    }
+    .paper-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+    .paper-diff { font-size: 12px; color: var(--muted); line-height: 1.55; }
+    .paper-diff strong { color: var(--cyan); }
+
+    /* ── INSTALL ── */
+    #install { padding-top: 60px; }
+    .install-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 48px; }
+
+    /* limits */
+    .limit-item {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 10px 0; border-bottom: 1px solid var(--bord); font-size: 12.5px;
+    }
+    .limit-item:last-child { border-bottom: none; }
+    .limit-tag {
+      font-family: 'Roboto Mono', monospace; font-size: 10px; font-weight: 700;
+      background: #fdeceb; border: 1px solid #f0c4c2; color: var(--red);
+      padding: 2px 8px; border-radius: 3px; white-space: nowrap;
+      flex-shrink: 0; margin-top: 2px;
+    }
+    .limit-text { color: var(--muted); line-height: 1.6; }
+    .limit-text strong { color: var(--text); font-weight: 600; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--bord);
+      padding: 40px 40px 48px;
+      max-width: 1140px; margin: 0 auto;
+      display: flex; justify-content: space-between;
+      align-items: flex-start; gap: 32px; flex-wrap: wrap;
+    }
+    .footer-logo {
+      font-family: 'Space Mono', monospace; font-size: 16px;
+      font-weight: 700; color: var(--text); margin-bottom: 8px;
+    }
+    .footer-logo span { color: var(--cyan); }
+    .footer-tagline { font-size: 12.5px; color: var(--muted); line-height: 1.7; max-width: 320px; }
+    .footer-right { text-align: right; }
+    .footer-refs {
+      font-family: 'Roboto Mono', monospace; font-size: 11px;
+      color: var(--muted); line-height: 2;
+    }
+    .footer-copy {
+      font-family: 'Roboto Mono', monospace; font-size: 11px;
+      color: #c0bab2; margin-top: 12px;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      nav { padding: 0 20px; gap: 16px; }
+      .nav-links { display: none; }
+      section { padding: 72px 20px; }
+      #hero { grid-template-columns: 1fr; gap: 40px; min-height: auto; }
+      .problem-grid { grid-template-columns: 1fr; }
+      .problem-flow { flex-direction: column; }
+      .pf-arrow { transform: rotate(90deg); align-self: center; }
+      .memory-grid { grid-template-columns: 1fr; }
+      .kinds-grid { grid-template-columns: 1fr 1fr; }
+      .conf-decay-grid { grid-template-columns: 1fr; }
+      .phil-grid { grid-template-columns: 1fr; }
+      .install-grid { grid-template-columns: 1fr; }
+      .papers-grid { grid-template-columns: 1fr; }
+      .cli-grid { grid-template-columns: 1fr; }
+      .flow-diagram { grid-template-columns: 1fr; }
+      .flow-arrow { display: none; }
+      .agent-bar { grid-column: span 1; flex-wrap: wrap; }
+      footer { flex-direction: column; }
+      .footer-right { text-align: left; }
+    }
+    @media (max-width: 600px) {
+      .kinds-grid { grid-template-columns: 1fr; }
+      .hero-title { font-size: 32px; }
+      .decay-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══ NAV ══ -->
+<nav>
+  <a class="nav-logo" href="#hero">Project <span>Brain</span></a>
+  <ul class="nav-links">
+    <li><a href="#problem">問題</a></li>
+    <li><a href="#flow">架構</a></li>
+    <li><a href="#memory">記憶層</a></li>
+    <li><a href="#confidence">信心衰減</a></li>
+    <li><a href="#cli">CLI</a></li>
+    <li><a href="#philosophy">設計理念</a></li>
+    <li><a href="#academic">學術對比</a></li>
+    <li><a href="#install">安裝</a></li>
+  </ul>
+  <a class="nav-cta" href="#install">開始使用</a>
+</nav>
+
+<!-- ══ HERO ══ -->
+<section id="hero">
+  <div>
+    <div class="hero-badge">Engineering Memory Infrastructure</div>
+    <h1 class="hero-title">Project <span>Brain</span></h1>
+    <p class="hero-tagline">
+      為 AI Agent 設計的工程記憶基礎設施。<br>
+      讓每次對話都能承接上一次的決策、規則與踩坑。
+    </p>
+    <div class="hero-actions">
+      <a class="btn-primary" href="#install">立即安裝</a>
+      <a class="btn-ghost" href="https://github.com/your-org/project-brain" target="_blank">GitHub →</a>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:24px;">
+      <span class="hpill hp-v">v0.1.0</span>
+      <span class="hpill hp-py">Python 3.10+</span>
+      <span class="hpill hp-mc">MCP Compatible</span>
+      <span class="hpill hp-zt">Zero External Deps</span>
+      <span class="hpill hp-mit">MIT License</span>
+    </div>
+  </div>
+
+  <div class="hero-terminal">
+    <div class="term-bar">
+      <div class="term-dot"></div>
+      <div class="term-dot"></div>
+      <div class="term-dot"></div>
+      <div class="term-title">terminal</div>
+    </div>
+    <div class="term-body">
+      <div><span class="tc-cmt"># 初始化 Brain</span></div>
+      <div><span class="tc-prompt">$</span> <span class="tc-cmd">brain setup</span></div>
+      <div><span class="tc-ok">✓</span> <span class="tc-out">.brain/brain.db 建立完成</span></div>
+      <div><span class="tc-ok">✓</span> <span class="tc-out">git post-commit hook 已安裝</span></div>
+      <div>&nbsp;</div>
+      <div><span class="tc-cmt"># 加入踩坑記錄</span></div>
+      <div><span class="tc-prompt">$</span> <span class="tc-cmd">brain add \</span></div>
+      <div>&nbsp; <span class="tc-key">--title</span> <span class="tc-val">"Stripe Webhook 冪等性"</span> \</div>
+      <div>&nbsp; <span class="tc-key">--kind</span> <span class="tc-val">Pitfall</span> <span class="tc-key">--confidence</span> <span class="tc-val">0.9</span></div>
+      <div><span class="tc-ok">✓</span> <span class="tc-out">知識已寫入 L3 (confidence=0.9)</span></div>
+      <div>&nbsp;</div>
+      <div><span class="tc-cmt"># Agent 查詢時自動取得</span></div>
+      <div><span class="tc-prompt">$</span> <span class="tc-cmd">brain ask "支付退款"</span></div>
+      <div><span class="tc-warn">⚠</span> <span class="tc-out">Pitfall: 必須用 idempotency_key</span></div>
+      <div>&nbsp;&nbsp;<span class="tc-out">confidence=0.90 · scope=payment</span></div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ PROBLEM ══ -->
+<section id="problem">
+  <div class="section-badge">核心問題</div>
+  <h2 class="section-title">每次對話，<span>歸零</span>的代價</h2>
+  <p class="section-sub">你六個月前踩過 Stripe Webhook 冪等性的坑，修好了，寫了 commit。但下次 Agent 幫你實作退款時，它不知道——以完全一樣的方式再踩一次。這不是 Agent 不夠聰明，而是它沒有記憶。</p>
+
+  <div style="margin-top:48px;">
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">核心問題與解法</div>
+      <div class="problem-flow">
+        <div class="pf-step">
+          <div class="step-label">問題</div>
+          <div class="step-val">AI 每次對話對專案一無所知，重複踩過同樣的坑</div>
+        </div>
+        <div class="pf-arrow">→</div>
+        <div class="pf-step pf-hi">
+          <div class="step-label">解法</div>
+          <div class="step-val">在專案中建立可被 Agent 查詢的長期記憶庫</div>
+        </div>
+        <div class="pf-arrow">→</div>
+        <div class="pf-step">
+          <div class="step-label">結果</div>
+          <div class="step-val">Agent 帶著歷史知識寫程式，不再重複錯誤</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+      <div class="card">
+        <div class="card-title">自動正向閉環</div>
+        <div class="loop-items">
+          <div class="loop-item active">
+            <div class="loop-dot d-cyan"></div>
+            Agent 完成任務，結構化 commit
+          </div>
+          <div class="loop-down">↓</div>
+          <div class="loop-item active">
+            <div class="loop-dot d-blue"></div>
+            Brain 提取決策與踩坑
+          </div>
+          <div class="loop-down">↓</div>
+          <div class="loop-item active">
+            <div class="loop-dot d-teal"></div>
+            下次 Agent 啟動時即知道
+          </div>
+          <div class="loop-down">↓</div>
+          <div class="loop-item active">
+            <div class="loop-dot d-purple"></div>
+            Agent 不重複踩坑，寫更好的 commit
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">AI Agent Commit vs 人類 Commit</div>
+        <table class="cmp-table">
+          <thead>
+            <tr>
+              <th>維度</th>
+              <th>人類</th>
+              <th>AI Agent</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="col-head">格式</td>
+              <td class="col-human">"fix bug"、"wip"</td>
+              <td class="col-ai">Conventional Commits</td>
+            </tr>
+            <tr>
+              <td class="col-head">意圖</td>
+              <td class="col-human">往往隱含、省略</td>
+              <td class="col-ai">明確、完整</td>
+            </tr>
+            <tr>
+              <td class="col-head">一致性</td>
+              <td class="col-human">因人而異</td>
+              <td class="col-ai">穩定，由 Prompt 決定</td>
+            </tr>
+            <tr>
+              <td class="col-head">頻率</td>
+              <td class="col-human">人工驅動，不定期</td>
+              <td class="col-ai">任務完成即 commit</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ FLOW ══ -->
+<section id="flow">
+  <div class="section-badge">系統架構</div>
+  <h2 class="section-title">Brain <span>資料流</span></h2>
+  <p class="section-sub">從 git commit 到 Agent 取得知識的完整閉環管線：寫入、記憶、讀取三條路徑各司其職。</p>
+
+  <div style="margin-top:48px;">
+    <!-- agent bar -->
+    <div class="agent-bar">
+      <div class="agent-icon">🤖</div>
+      <div>
+        <div class="agent-name">AI AGENT</div>
+        <div class="agent-sub">Claude / Cursor / 任何 MCP 工具</div>
+      </div>
+      <div class="agent-tags">
+        <span class="atag at-cyan">MCP</span>
+        <span class="atag at-blue">REST API</span>
+        <span class="atag at-purple">Python SDK</span>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:0;align-items:start;">
+      <!-- WRITE COLUMN -->
+      <div class="flow-col">
+        <span class="flow-col-label cl-write">Write Path</span>
+        <div class="fnode fn-amber">
+          <span class="fnode-icon">📝</span>
+          <span class="fnode-name">git commit</span>
+          <span class="fnode-sub">post-commit hook 自動觸發<br>AI commit → confidence 0.5</span>
+        </div>
+        <div class="fnode fn-teal">
+          <span class="fnode-icon">🔬</span>
+          <span class="fnode-name">KnowledgeExtractor</span>
+          <span class="fnode-sub">LLM 分類：Pitfall / Decision / Rule<br>可選 Anthropic / Ollama</span>
+        </div>
+        <div class="fnode fn-teal">
+          <span class="fnode-icon">🗳️</span>
+          <span class="fnode-name">KnowledgeReviewBoard</span>
+          <span class="fnode-sub">KRB 人工審查暫存區<br><code style="font-size:10px;color:var(--teal);">brain review approve</code> → 升級</span>
+        </div>
+        <div class="fnode fn-blue">
+          <span class="fnode-icon">✏️</span>
+          <span class="fnode-name">brain add</span>
+          <span class="fnode-sub">手動直接寫入<br>confidence 0.8 預設</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">→</div>
+
+      <!-- MEMORY COLUMN -->
+      <div class="flow-col">
+        <span class="flow-col-label cl-mem">Memory Store</span>
+        <div class="fnode fn-l1a">
+          <span class="lbadge lb-amber">L1a</span>
+          <span class="fnode-name">Working Memory</span>
+          <span class="fnode-sub">工作記憶<br>對話結束後自動清除</span>
+        </div>
+        <div class="fnode fn-l2" style="margin-top:24px;">
+          <span class="lbadge lb-blue">L2</span>
+          <span class="fnode-name">Episodic Memory</span>
+          <span class="fnode-sub">情節記憶<br>git commit 歷史</span>
+        </div>
+        <div class="fnode fn-l3" style="margin-top:24px;">
+          <span class="lbadge lb-cyan">L3</span>
+          <span class="fnode-name">Semantic Memory</span>
+          <span class="fnode-sub">語意記憶<br>知識圖譜 · PREVENTS / CAUSES</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">→</div>
+
+      <!-- READ COLUMN -->
+      <div class="flow-col">
+        <span class="flow-col-label cl-read">Read Path</span>
+        <div class="fnode fn-cyan" style="margin-top:24px;">
+          <span class="fnode-icon">🔍</span>
+          <span class="fnode-name">get_context()</span>
+          <span class="fnode-sub">統一讀取三層記憶<br>FTS5 + 向量語意搜尋</span>
+        </div>
+        <div class="fnode fn-purple" style="margin-top:16px;">
+          <span class="fnode-icon">🧠</span>
+          <span class="fnode-name">Memory Synthesizer</span>
+          <span class="fnode-sub">LLM 融合三層輸出（opt-in）<br><code style="font-size:10px;color:var(--purple);">BRAIN_SYNTHESIZE=1</code></span>
+        </div>
+        <div class="fnode fn-red" style="margin-top:16px;">
+          <span class="fnode-icon">⚖️</span>
+          <span class="fnode-name">DecayEngine</span>
+          <span class="fnode-sub">六因子信心衰減<br>每 7 天重算 · 自動標記過時</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ MEMORY LAYERS ══ -->
+<section id="memory">
+  <div class="section-badge">記憶架構</div>
+  <h2 class="section-title">Atkinson-Shiffrin <span>三層記憶</span></h2>
+  <p class="section-sub">架構直接對應認知科學的多儲存記憶模型，三層各司其職，<code style="color:var(--cyan);font-size:14px;">get_context()</code> 統一讀取並融合輸出。</p>
+
+  <div class="memory-grid">
+    <div class="layer-card" style="border-top:3px solid var(--amber);">
+      <span class="layer-tag lt-l1">L1a</span>
+      <div class="layer-name-big">工作記憶</div>
+      <div class="layer-en">Working Memory</div>
+      <div class="layer-desc">當前任務的即時注意力，對話結束後自動清除。存儲今日筆記與當前任務脈絡。</div>
+      <div class="layer-code">sessions table<br>自動 TTL 清除</div>
+    </div>
+    <div class="layer-card" style="border-top:3px solid var(--blue);">
+      <span class="layer-tag lt-l2">L2</span>
+      <div class="layer-name-big">情節記憶</div>
+      <div class="layer-en">Episodic Memory</div>
+      <div class="layer-desc">「那次 JWT 事件是什麼時候？」對應 git commit 歷史、事件序列，支援時光機查詢 temporal_query。</div>
+      <div class="layer-code">episodes table<br>temporal_edges 時序關係</div>
+    </div>
+    <div class="layer-card" style="border-top:3px solid var(--cyan);">
+      <span class="layer-tag lt-l3">L3</span>
+      <div class="layer-name-big">語意記憶</div>
+      <div class="layer-en">Semantic Memory</div>
+      <div class="layer-desc">「JWT 必須用 RS256」— 不是事件，是規律。精煉自 L2 的長期知識，支援知識圖譜因果關係。</div>
+      <div class="layer-code">nodes · edges<br>PREVENTS / CAUSES / REQUIRES</div>
+    </div>
+  </div>
+
+  <!-- Knowledge Types -->
+  <div style="margin-top:48px;">
+    <h3 style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;margin-bottom:8px;">知識類型 <span style="color:var(--cyan);">--kind</span></h3>
+    <p class="section-sub" style="margin-bottom:0;">L3 語意記憶的五種節點類型，從踩坑到架構決策全面覆蓋。</p>
+  </div>
+
+  <div class="kinds-grid" style="margin-top:24px;">
+    <div class="kind-card kt-pitfall">
+      <span class="kind-tag2">Pitfall</span>
+      <div class="kind-name">踩坑記錄</div>
+      <div class="kind-desc2">曾經犯過的錯誤、隱藏的陷阱。信心分數讓 Agent 評估可信度。</div>
+      <div class="kind-example"><span class="ex-cyan">brain add</span> "Stripe Webhook 重複觸發" --kind Pitfall</div>
+    </div>
+    <div class="kind-card kt-decision">
+      <span class="kind-tag2">Decision</span>
+      <div class="kind-name">架構決策</div>
+      <div class="kind-desc2">為什麼選 A 而不選 B。保留決策背後的脈絡，防止未來重複討論。</div>
+      <div class="kind-example"><span class="ex-cyan">brain add</span> "選 PostgreSQL 而非 MongoDB" --kind Decision</div>
+    </div>
+    <div class="kind-card kt-rule">
+      <span class="kind-tag2">Rule</span>
+      <div class="kind-name">工程規則</div>
+      <div class="kind-desc2">必須遵守的技術約定。Brain 回傳後 Agent 將其視為硬性約束。</div>
+      <div class="kind-example"><span class="ex-cyan">brain add</span> "JWT 必須使用 RS256" --kind Rule</div>
+    </div>
+    <div class="kind-card kt-adr">
+      <span class="kind-tag2">ADR</span>
+      <div class="kind-name">架構決策記錄</div>
+      <div class="kind-desc2">正式的架構決策文件，對應 Architecture Decision Record 標準。</div>
+      <div class="kind-example"><span class="ex-cyan">brain add</span> "ADR-001 採用事件驅動架構" --kind ADR</div>
+    </div>
+    <div class="kind-card kt-note">
+      <span class="kind-tag2">Note</span>
+      <div class="kind-name">一般筆記</div>
+      <div class="kind-desc2">其他值得記住但不屬於上述類型的資訊。</div>
+      <div class="kind-example"><span class="ex-cyan">brain add</span> "新人 onboarding 注意事項" --kind Note</div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ CONFIDENCE & DECAY ══ -->
+<section id="confidence">
+  <div class="section-badge">知識可信度</div>
+  <h2 class="section-title">信心分級 × <span>多因子衰減</span></h2>
+  <p class="section-sub">知識不是「對」或「錯」，而是有不同程度的可信度，並隨時間與環境動態衰減。信心低於 0.20 自動標記為過時。</p>
+
+  <div class="conf-decay-grid">
+    <!-- Confidence Levels -->
+    <div class="card">
+      <div class="card-title">信心分數來源</div>
+      <div class="conf-items">
+        <div class="conf-item">
+          <div class="conf-label">人工驗證後加入</div>
+          <div class="conf-bar-wrap"><div class="conf-bar" style="width:90%;background:var(--teal);"></div></div>
+          <div class="conf-score" style="color:var(--teal);">0.9</div>
+        </div>
+        <div class="conf-item">
+          <div class="conf-label">人工直接加入</div>
+          <div class="conf-bar-wrap"><div class="conf-bar" style="width:80%;background:var(--cyan);"></div></div>
+          <div class="conf-score" style="color:var(--cyan);">0.8</div>
+        </div>
+        <div class="conf-item">
+          <div class="conf-label">Agent 自動發現</div>
+          <div class="conf-bar-wrap"><div class="conf-bar" style="width:60%;background:var(--blue);"></div></div>
+          <div class="conf-score" style="color:var(--blue);">0.6</div>
+        </div>
+        <div class="conf-item">
+          <div class="conf-label">git commit 提取</div>
+          <div class="conf-bar-wrap"><div class="conf-bar" style="width:50%;background:var(--amber);"></div></div>
+          <div class="conf-score" style="color:var(--amber);">0.5</div>
+        </div>
+        <div class="conf-item">
+          <div class="conf-label">fix/wip commit</div>
+          <div class="conf-bar-wrap"><div class="conf-bar" style="width:20%;background:var(--red);"></div></div>
+          <div class="conf-score" style="color:var(--red);">0.2</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;padding:10px 12px;background:var(--surf2);border:1px solid var(--bord);border-radius:6px;font-size:12px;color:var(--muted);font-family:'Roboto Mono',monospace;line-height:1.7;">
+        被 Agent 查詢越多次 → 衰減越慢<br>
+        <span style="color:var(--cyan);">使用頻率代表仍然有效</span>
+      </div>
+    </div>
+
+    <!-- Decay Factors -->
+    <div class="card">
+      <div class="card-title">六因子衰減公式</div>
+      <div style="font-family:'Roboto Mono',monospace;font-size:11.5px;color:var(--muted);background:var(--surf2);border:1px solid var(--bord);border-radius:6px;padding:12px 14px;margin-bottom:16px;line-height:1.8;">
+        <span style="color:var(--cyan);">信心</span> = F1 × F2 × F3 × F4 × F5 + F7
+      </div>
+      <div class="decay-grid">
+        <div class="factor">
+          <div class="factor-id">F1</div>
+          <div>
+            <div class="factor-name">時間衰減</div>
+            <div class="factor-desc">基礎日衰減率 0.003，越舊越低</div>
+          </div>
+        </div>
+        <div class="factor">
+          <div class="factor-id">F2</div>
+          <div>
+            <div class="factor-name">技術版本落差</div>
+            <div class="factor-desc">React 16 → 現在 React 18 → 懲罰</div>
+          </div>
+        </div>
+        <div class="factor">
+          <div class="factor-id">F3</div>
+          <div>
+            <div class="factor-name">程式碼活動信號</div>
+            <div class="factor-desc">相關檔案近 30 天有修改 → 加分</div>
+          </div>
+        </div>
+        <div class="factor">
+          <div class="factor-id">F4</div>
+          <div>
+            <div class="factor-name">矛盾偵測</div>
+            <div class="factor-desc">兩條知識互相矛盾 → 雙方懲罰</div>
+          </div>
+        </div>
+        <div class="factor">
+          <div class="factor-id">F5</div>
+          <div>
+            <div class="factor-name">程式碼引用確認</div>
+            <div class="factor-desc">知識中提到的類別仍存在 → 加分</div>
+          </div>
+        </div>
+        <div class="factor">
+          <div class="factor-id">F7</div>
+          <div>
+            <div class="factor-name">使用頻率</div>
+            <div class="factor-desc">被查詢越多次 → 衰減越慢</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px;font-size:11.5px;color:var(--muted);background:#fdeceb;border:1px solid #f0c4c2;border-radius:5px;padding:8px 12px;font-family:'Roboto Mono',monospace;">
+        信心 &lt; 0.20 → 自動標記為過時，衰減不刪除知識
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ CLI ══ -->
+<section id="cli">
+  <div class="section-badge">使用介面</div>
+  <h2 class="section-title">CLI 命令 × <span>Agent 整合</span></h2>
+  <p class="section-sub">完整的命令列介面，支援 MCP、REST API 與 Python SDK 三種 Agent 整合方式。</p>
+
+  <div class="cli-grid">
+    <!-- CLI Reference -->
+    <div class="card">
+      <div class="card-title">CLI 命令參考</div>
+      <div class="cli-list">
+        <div class="cli-row">
+          <span class="cli-cmd">brain setup</span>
+          <span class="cli-desc">一鍵初始化，建立 DB + 安裝 git hook</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain add</span>
+          <span class="cli-desc">手動加入知識節點</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain ask</span>
+          <span class="cli-desc">查詢知識庫</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain status</span>
+          <span class="cli-desc">記憶庫統計與健康狀態</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain sync</span>
+          <span class="cli-desc">從最新 commit 手動學習</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain serve</span>
+          <span class="cli-desc">啟動 REST API (port 7891)</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain serve --mcp</span>
+          <span class="cli-desc">啟動 MCP Server</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain webui</span>
+          <span class="cli-desc">D3.js 知識圖譜視覺化</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain doctor</span>
+          <span class="cli-desc">驗證 sqlite-vec 三層診斷</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain review</span>
+          <span class="cli-desc">KRB 人工審查待確認知識</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MCP Config -->
+    <div>
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-title">Claude Code MCP 設定</div>
+        <div class="mcp-block">
+<span class="jc">// .claude/settings.json</span><br>
+{<br>
+&nbsp;&nbsp;<span class="jk">"mcpServers"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"project-brain"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"command"</span>: <span class="js">"python"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"args"</span>: [<span class="js">"-m"</span>, <span class="js">"project_brain.mcp_server"</span>],<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"env"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"BRAIN_WORKDIR"</span>: <span class="js">"/your/project"</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;}<br>
+}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">MCP 可用工具</div>
+        <div class="cli-list">
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">get_context</span>
+            <span class="cli-desc">取得任務相關知識（含因果鏈 + 主動警告）</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">add_knowledge</span>
+            <span class="cli-desc">Agent 寫入新知識到 Brain</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">search_knowledge</span>
+            <span class="cli-desc">直接語意搜尋知識庫</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">temporal_query</span>
+            <span class="cli-desc">時光機——讀取指定時間點的知識狀態</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">brain_status</span>
+            <span class="cli-desc">記憶庫統計</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ PHILOSOPHY ══ -->
+<section id="philosophy">
+  <div class="section-badge">工程哲學</div>
+  <h2 class="section-title">五個<span>設計原則</span></h2>
+  <p class="section-sub">對抗遺忘，而非追求全知。記憶是工程團隊的基礎設施。</p>
+
+  <div class="phil-grid">
+    <div class="phil-item">
+      <div class="phil-num">01</div>
+      <div>
+        <div class="phil-title">零依賴優先</div>
+        <div class="phil-desc">核心功能只依賴 Python 標準函式庫與 SQLite。不需要 Docker、Redis、向量資料庫，<code style="color:var(--cyan);font-size:11px;">brain setup</code> 一行指令，無需配置任何外部服務。</div>
+      </div>
+    </div>
+    <div class="phil-item">
+      <div class="phil-num">02</div>
+      <div>
+        <div class="phil-title">單一文件，備份即複製</div>
+        <div class="phil-desc">所有記憶存在 <code style="color:var(--cyan);font-size:11px;">.brain/brain.db</code>，一個標準 SQLite 文件。備份只需 <code style="color:var(--cyan);font-size:11px;">cp brain.db brain.db.bak</code>，不需要備份腳本或管理員介入。</div>
+      </div>
+    </div>
+    <div class="phil-item">
+      <div class="phil-num">03</div>
+      <div>
+        <div class="phil-title">降級永遠可用</div>
+        <div class="phil-desc">Brain 的故障模式是「靜默降級」，而不是「阻斷流程」。無 API Key 時跳過 LLM 提取，無向量索引時降級為 FTS5 搜尋，知識庫為空時回傳空字串。</div>
+      </div>
+    </div>
+    <div class="phil-item">
+      <div class="phil-num">04</div>
+      <div>
+        <div class="phil-title">信心分級，而非二元判斷</div>
+        <div class="phil-desc">知識不是「對」或「錯」，而是有不同程度的可信度。六因子動態衰減公式讓信心隨時間、版本差距、程式碼活動即時更新。</div>
+      </div>
+    </div>
+    <div class="phil-item" style="grid-column:span 2;">
+      <div class="phil-num">05</div>
+      <div>
+        <div class="phil-title">人機協作，而非全自動</div>
+        <div class="phil-desc">自動化降低摩擦，但不替代判斷。<code style="color:var(--cyan);font-size:11px;">brain sync</code>（git hook）自動記錄每次 commit，提供原始素材。真正有價值的知識，仍然需要工程師主動用 <code style="color:var(--cyan);font-size:11px;">brain add</code> 確認和補充。這不是設計缺陷，是刻意的選擇——全自動提取的知識品質不足以直接信任。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Graceful Degradation -->
+  <div class="card" style="margin-top:24px;">
+    <div class="card-title">降級對照表</div>
+    <div>
+      <div class="degrade-item">
+        <div class="degrade-cond">無 API Key</div>
+        <div class="degrade-act">跳過 LLM 提取，仍記錄 commit 基本資訊，confidence 0.2</div>
+      </div>
+      <div class="degrade-item">
+        <div class="degrade-cond">無向量索引</div>
+        <div class="degrade-act">降級為 FTS5 關鍵字搜尋，語意匹配能力降低但仍可用</div>
+      </div>
+      <div class="degrade-item">
+        <div class="degrade-cond">MCP 連線失敗</div>
+        <div class="degrade-act">CLAUDE.md 提示 Agent 主動查詢，降級為手動模式</div>
+      </div>
+      <div class="degrade-item">
+        <div class="degrade-cond">知識庫為空</div>
+        <div class="degrade-act">回傳空字串，不阻擋 Agent 正常運作</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ ACADEMIC ══ -->
+<section id="academic">
+  <div class="section-badge">學術定位</div>
+  <h2 class="section-title">研究對比 × <span>功能矩陣</span></h2>
+  <p class="section-sub">Project Brain 三層架構直接對應 Atkinson-Shiffrin 多儲存記憶模型（1968），並參考 CoALA（arXiv:2309.02427）對 AI Agent 記憶的系統化分類框架。</p>
+
+  <!-- Papers -->
+  <div class="papers-grid">
+    <div class="paper-card">
+      <div class="paper-id">Lore · arXiv:2603.15566 · 2026/03</div>
+      <div class="paper-title">將 git commit message 重新設計為結構化知識協議</div>
+      <div class="paper-diff"><strong>差異</strong>：Lore 改變寫法；Brain 從現有 commit 中提取，<strong>無需改變工作流</strong></div>
+    </div>
+    <div class="paper-card">
+      <div class="paper-id">MemCoder · arXiv:2603.13258 · 2026/03</div>
+      <div class="paper-title">從 commit history 提取 intent-to-code mapping</div>
+      <div class="paper-diff"><strong>差異</strong>：MemCoder 不分類；Brain 分類為 <strong>Pitfall/Decision/Rule</strong>，並接衰減管理</div>
+    </div>
+    <div class="paper-card">
+      <div class="paper-id">MemGovern · arXiv:2601.06789 · 2026/01</div>
+      <div class="paper-title">從 GitHub Issues 提取 governed experience cards</div>
+      <div class="paper-diff"><strong>差異</strong>：MemGovern 的 quality gate 最接近 KRB；Brain 增加了 <strong>KG 持久化與衰減</strong></div>
+    </div>
+    <div class="paper-card">
+      <div class="paper-id">Codified Context · arXiv:2602.20478 · 2026/02</div>
+      <div class="paper-title">為複雜 codebase 設計階層化 Agent context 架構</div>
+      <div class="paper-diff"><strong>差異</strong>：Codified Context 是靜態文件；Brain 是<strong>動態知識圖譜</strong>，有衰減與更新</div>
+    </div>
+  </div>
+
+  <!-- Feature Matrix -->
+  <div class="matrix-wrap">
+    <table class="matrix-table" style="margin-top:32px;">
+      <thead>
+        <tr>
+          <th>功能</th>
+          <th>Project Brain</th>
+          <th>Mem0</th>
+          <th>Zep/Graphiti</th>
+          <th>MemGPT/Letta</th>
+          <th>MemCoder</th>
+          <th>MemGovern</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="brain-row">
+          <td>工程特化 KG Schema</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr>
+          <td>多因子知識衰減（6+）</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-p">單維</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr class="brain-row">
+          <td>版本差距衰減 (F2)</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr>
+          <td>git 活動反衰減 (F3)</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr class="brain-row">
+          <td>程式碼引用確認 (F5)</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr>
+          <td>git commit 知識提取</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr class="brain-row">
+          <td>人工審核閘道 (KRB)</td>
+          <td class="mx-y">✓ KRB</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-y">✓</td>
+        </tr>
+        <tr>
+          <td>主動風險提醒 (NudgeEngine)</td>
+          <td class="mx-y">✓ 零成本</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr class="brain-row">
+          <td>零外部依賴</td>
+          <td class="mx-y">✓ SQLite</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-p">需 Redis</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+        <tr>
+          <td>Temporal Query</td>
+          <td class="mx-y">✓</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-p">✓（更完整）</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+          <td class="mx-n">✗</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<hr class="divider" />
+
+<!-- ══ INSTALL ══ -->
+<section id="install">
+  <div class="section-badge">快速開始</div>
+  <h2 class="section-title">安裝 × <span>初始化</span></h2>
+  <p class="section-sub">三步驟完成：安裝套件、初始化專案、連接 Agent。系統需求：Python 3.10+，無需外部服務。</p>
+
+  <div class="install-grid">
+    <!-- Installation options -->
+    <div class="card">
+      <div class="card-title">安裝選項</div>
+      <div class="install-box">
+        <div><span class="ib-cmt"># 標準安裝（含向量語意搜尋）</span></div>
+        <div><span class="ib-$">$</span> <span class="ib-cmd">pip install project-brain</span></div>
+        <div>&nbsp;</div>
+        <div><span class="ib-cmt"># 含 MCP Server（Claude Code / Cursor）</span></div>
+        <div><span class="ib-$">$</span> <span class="ib-cmd">pip install <span class="ib-str">"project-brain[mcp]"</span></span></div>
+        <div>&nbsp;</div>
+        <div><span class="ib-cmt"># 含 Anthropic SDK（AI 知識提取）</span></div>
+        <div><span class="ib-$">$</span> <span class="ib-cmd">pip install <span class="ib-str">"project-brain[anthropic]"</span></span></div>
+        <div>&nbsp;</div>
+        <div><span class="ib-cmt"># 完整安裝</span></div>
+        <div><span class="ib-$">$</span> <span class="ib-cmd">pip install <span class="ib-str">"project-brain[all]"</span></span></div>
+        <div>&nbsp;</div>
+        <div><span class="ib-cmt"># 初始化專案</span></div>
+        <div><span class="ib-$">$</span> <span class="ib-cmd">cd /your/project &amp;&amp; brain setup</span></div>
+        <div>&nbsp;</div>
+        <div><span class="ib-cmt"># 驗證 sqlite-vec</span></div>
+        <div><span class="ib-$">$</span> <span class="ib-cmd">brain doctor</span></div>
+      </div>
+    </div>
+
+    <!-- Quick Start steps -->
+    <div>
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-title">三步驟快速開始</div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;gap:14px;align-items:flex-start;">
+            <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#fff;background:var(--cyan);border-radius:4px;padding:3px 8px;flex-shrink:0;">01</span>
+            <div>
+              <div style="font-size:13px;font-weight:700;margin-bottom:4px;">加入第一條知識</div>
+              <div style="font-family:'Roboto Mono',monospace;font-size:11.5px;color:var(--cyan);background:var(--surf2);border:1px solid var(--bord);border-radius:5px;padding:7px 10px;line-height:1.8;">brain add "JWT 必須使用 RS256" \<br>&nbsp;&nbsp;--kind Rule --confidence 0.9</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:14px;align-items:flex-start;">
+            <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#fff;background:var(--cyan);border-radius:4px;padding:3px 8px;flex-shrink:0;">02</span>
+            <div>
+              <div style="font-size:13px;font-weight:700;margin-bottom:4px;">驗證可以查到</div>
+              <div style="font-family:'Roboto Mono',monospace;font-size:11.5px;color:var(--cyan);background:var(--surf2);border:1px solid var(--bord);border-radius:5px;padding:7px 10px;line-height:1.8;">brain ask "JWT 設定"<br>brain ask "支付退款"</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:14px;align-items:flex-start;">
+            <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#fff;background:var(--cyan);border-radius:4px;padding:3px 8px;flex-shrink:0;">03</span>
+            <div>
+              <div style="font-size:13px;font-weight:700;margin-bottom:4px;">連接 Claude Code</div>
+              <div style="font-size:12px;color:var(--muted);">加入 MCP 設定後，Agent 在每次任務開始時自動呼叫 <code style="color:var(--cyan);">get_context()</code> 取得相關知識。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Limits -->
+      <div class="card">
+        <div class="card-title">已知限制與設計邊界</div>
+        <div>
+          <div class="limit-item">
+            <div class="limit-tag">~75%</div>
+            <div class="limit-text"><strong>語意召回率</strong>：FTS5 對語意相近但用詞不同的查詢效果有限。Phase 1 將加入向量語意搜尋。</div>
+          </div>
+          <div class="limit-item">
+            <div class="limit-tag">重複</div>
+            <div class="limit-text"><strong>三層輸出可能重複</strong>：L2 episode 與 L3 node 可能說同一件事。Phase 4 計劃自動建立 DERIVES_FROM 邊。</div>
+          </div>
+          <div class="limit-item">
+            <div class="limit-tag">手動</div>
+            <div class="limit-text"><strong>scope 需手動指定</strong>：忘記加 <code style="color:var(--amber);font-size:11px;">--scope</code> 知識會變成全域污染。Phase 5 計劃從目錄自動推導。</div>
+          </div>
+          <div class="limit-item">
+            <div class="limit-tag">邊界</div>
+            <div class="limit-text"><strong>無法捕捉隱性知識</strong>：只能記錄已被意識到的決策。這是設計邊界，不修。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Environment Variables -->
+  <div class="card" style="margin-top:24px;">
+    <div class="card-title">環境變數</div>
+    <div style="overflow-x:auto;">
+      <table class="cmp-table">
+        <thead>
+          <tr>
+            <th>變數</th>
+            <th>預設值</th>
+            <th>說明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_WORKDIR</code></td>
+            <td class="col-human">當前目錄</td>
+            <td>專案目錄（省略 --workdir）</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">ANTHROPIC_API_KEY</code></td>
+            <td class="col-human">—</td>
+            <td>Anthropic API（AI 提取功能）</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_LLM_PROVIDER</code></td>
+            <td class="col-human">anthropic</td>
+            <td><code style="color:var(--amber);font-size:11px;">openai</code> 使用 Ollama / LM Studio</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_LLM_MODEL</code></td>
+            <td class="col-human">claude-haiku-4-5</td>
+            <td>模型名稱</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_SYNTHESIZE</code></td>
+            <td class="col-human">0</td>
+            <td><code style="color:var(--teal);font-size:11px;">1</code> 啟用 Memory Synthesizer LLM 融合</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_API_KEY</code></td>
+            <td class="col-human">—</td>
+            <td>brain serve 的 API 認證金鑰</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══ FOOTER ══ -->
+<footer>
+  <div>
+    <div class="footer-logo">Project <span>Brain</span></div>
+    <div class="footer-tagline">
+      為 AI Agent 設計的工程記憶基礎設施。<br>
+      讓每次對話都能承接上一次的決策、規則與踩坑。<br>
+      <span style="color:var(--cyan);">v0.1.0</span> · MIT License · Python 3.10+
+    </div>
+  </div>
+  <div class="footer-right">
+    <div class="footer-refs">
+      CoALA · arXiv:2309.02427<br>
+      MemCoder · arXiv:2603.13258<br>
+      MemGovern · arXiv:2601.06789<br>
+      Lore · arXiv:2603.15566<br>
+      Codified Context · arXiv:2602.20478
+    </div>
+    <div class="footer-copy">© 2026 Project Brain · MIT License</div>
+  </div>
+</footer>
+
+</body>
+</html>
