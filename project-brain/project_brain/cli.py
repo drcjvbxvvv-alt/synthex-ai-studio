@@ -1209,15 +1209,13 @@ def cmd_webui(args):
     if not bd.exists():
         _err("Brain 尚未初始化，執行：brain setup"); return
 
-    from project_brain.web_ui.server import create_app as create_webui_app
+    from project_brain.web_ui.server import run_server as _webui_run
     try:
-        web_app = create_webui_app(workdir=wd)
-        print(f"\n  {G}🌐 Brain WebUI{R}  http://127.0.0.1:{port}")
-        print(f"  {D}Ctrl+C 結束{R}\n")
-        web_app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
+        _webui_run(workdir=wd, port=port)
+    except FileNotFoundError as e:
+        _err(str(e))
     except Exception as e:
         _err(f"WebUI 啟動失敗：{e}")
-        print(f"  {D}使用 brain serve 並訪問 http://localhost:7891/v1/knowledge{R}")
 
 
 
