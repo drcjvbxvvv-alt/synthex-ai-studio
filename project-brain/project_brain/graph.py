@@ -999,6 +999,13 @@ class KnowledgeGraph:
                         })
         except Exception:
             pass
+        # DEEP-03 補完: compute impact_score based on confidence and edge distance
+        for idx, item in enumerate(affected):
+            distance = 0 if item["reason"] == "直接匹配假設條件" else 1
+            item["impact_score"] = round(
+                item["confidence"] * (1.0 - 0.3 * distance), 3
+            )
+        affected.sort(key=lambda x: x.get("impact_score", 0), reverse=True)
         return affected
 
     def close(self):

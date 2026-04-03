@@ -644,6 +644,51 @@ def cmd_timeline(args):
     print()
 
 
+def cmd_deprecate(args):
+    """FEAT-13: brain deprecate <node_id>"""
+    wd = _workdir(args)
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化"); return
+    from project_brain.brain_db import BrainDB
+    db = BrainDB(bd)
+    nid = getattr(args, 'node_id', '')
+    ok  = db.deprecate_node(
+        nid,
+        replaced_by=getattr(args, 'replaced_by', ''),
+        reason=getattr(args, 'reason', ''),
+    )
+    if ok:
+        _ok(f"節點 {nid} 已標記為棄用")
+    else:
+        _err(f"找不到節點：{nid}")
+
+
+def cmd_lifecycle(args):
+    """FEAT-13: brain lifecycle <node_id>"""
+    import json as _j
+    wd = _workdir(args)
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化"); return
+    from project_brain.brain_db import BrainDB
+    db  = BrainDB(bd)
+    lc  = db.get_lifecycle(getattr(args, 'node_id', ''))
+    if not lc:
+        _err(f"找不到節點"); return
+    status_icon = "🔴 deprecated" if lc["status"] == "deprecated" else "🟢 active"
+    print(f"\n  節點: {B}{lc['title']}{R}")
+    print(f"  狀態: {status_icon}")
+    print(f"  信心: {lc['confidence']:.2f}  建立: {(lc['created_at'] or '')[:10]}  更新: {(lc['updated_at'] or '')[:10]}")
+    if lc["replaced_by"]:
+        print(f"  取代節點: {', '.join(lc['replaced_by'])}")
+    if lc["history"]:
+        print(f"\n  歷史版本 ({len(lc['history'])} 筆):")
+        for h in lc["history"][:5]:
+            print(f"    v{h.get('version','?')}  {(h.get('changed_at','') or '')[:16]}  {h.get('change_note','')[:40]}")
+    print()
+
+
 def cmd_rollback(args):
     """FEAT-06: 恢復節點到指定版本（brain rollback <node_id> --to <version>）"""
     wd      = _workdir(args)
@@ -1742,6 +1787,34 @@ def cmd_analytics(args):
         print(_j.dumps(r, ensure_ascii=False, indent=2))
         return
 
+    export_fmt = getattr(args, 'export', None)
+    if export_fmt == 'csv':
+        # FEAT-14: CSV export
+        import csv, io
+        out = getattr(args, 'output', None) or str(Path(wd) / "brain_analytics.csv")
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=[
+            'node_id','title','type','scope','access_count',
+            'last_accessed','confidence','importance'
+        ])
+        writer.writeheader()
+        from project_brain.brain_db import BrainDB
+        _db = BrainDB(bd)
+        rows = _db.conn.execute(
+            "SELECT id, title, type, scope, access_count, last_accessed,"
+            " confidence, importance FROM nodes ORDER BY access_count DESC"
+        ).fetchall()
+        for row in rows:
+            writer.writerow({
+                'node_id': row[0], 'title': row[1], 'type': row[2],
+                'scope': row[3], 'access_count': row[4] or 0,
+                'last_accessed': (row[5] or '')[:10],
+                'confidence': row[6], 'importance': row[7],
+            })
+        Path(out).write_text(buf.getvalue(), encoding='utf-8')
+        _ok(f"CSV 匯出完成：{out}")
+        return
+
     print(f"\n  {B}{C}📊  Usage Analytics{R}")
     print(f"  {GR}{'═' * 46}{R}")
     _info(f"Total nodes: {r['total_nodes']}  Episodes: {r['total_episodes']}")
@@ -1784,6 +1857,10 @@ def cmd_export(args):
     if fmt == 'markdown':
         content = db.export_markdown(node_type=kind, scope=sc)
         ext = ".md"
+    elif fmt == 'neo4j':
+        # FEAT-11: Cypher export for Neo4j / Obsidian Canvas
+        content = db.export_neo4j(node_type=kind, scope=sc)
+        ext = ".cypher"
     else:
         import json as _j
         content = _j.dumps(db.export_json(node_type=kind, scope=sc),
@@ -1800,7 +1877,7 @@ def cmd_export(args):
 
 
 def cmd_import(args):
-    """FEAT-05: 匯入知識庫（brain import <file>）"""
+    """FEAT-05/12: 匯入知識庫（brain import <file>）"""
     wd  = _workdir(args)
     bd  = Path(wd) / ".brain"
     if not bd.exists():
@@ -1812,16 +1889,41 @@ def cmd_import(args):
 
     from project_brain.brain_db import BrainDB
     import json as _j
-    db        = BrainDB(bd)
-    overwrite = getattr(args, 'overwrite', False)
+    db             = BrainDB(bd)
+    overwrite      = getattr(args, 'overwrite', False)
+    merge_strategy = getattr(args, 'merge_strategy', 'skip')
+    if overwrite:
+        merge_strategy = 'overwrite'
 
     try:
         data = _j.loads(Path(src).read_text(encoding="utf-8"))
     except Exception as e:
         _err(f"讀取匯入檔案失敗：{e}"); return
 
-    r = db.import_json(data, overwrite=overwrite)
-    _ok(f"匯入完成：節點 {r['nodes']}  邊 {r['edges']}  跳過 {r['skipped']}  錯誤 {r['errors']}")
+    r = db.import_json(data, merge_strategy=merge_strategy)
+
+    if merge_strategy == 'interactive' and r.get('conflicts'):
+        print(f"\n  發現 {len(r['conflicts'])} 個衝突節點，請逐一選擇：\n")
+        resolved = 0
+        for c in r['conflicts']:
+            ex  = c['existing']
+            inc = c['incoming']
+            print(f"  衝突: \"{ex.get('title','?')}\" (id={ex.get('id','?')})")
+            print(f"    現有: confidence={ex.get('confidence',0.8):.2f}  updated={ex.get('updated_at','?')[:10]}")
+            print(f"    匯入: confidence={inc.get('confidence',0.8):.2f}  updated={inc.get('updated_at','?')[:10]}")
+            print("  選項: [k]eep existing  [i]mport new  [m]erge (取較高 confidence)  [s]kip")
+            choice = input("  > ").strip().lower()
+            if choice == 'i':
+                db.import_json({"nodes": [inc], "edges": []}, merge_strategy='overwrite')
+                resolved += 1
+            elif choice == 'm':
+                db.import_json({"nodes": [inc], "edges": []}, merge_strategy='confidence_wins')
+                resolved += 1
+            # 'k' or 's' → keep existing, do nothing
+        print()
+        _ok(f"互動式解決完成：解決 {resolved}/{len(r['conflicts'])} 個衝突")
+    else:
+        _ok(f"匯入完成：節點 {r['nodes']}  邊 {r['edges']}  跳過 {r['skipped']}  錯誤 {r['errors']}")
 
 
 def main():
@@ -1942,9 +2044,12 @@ def main():
 
     p = mkp('analytics', 'FEAT-03：使用率分析報告')
     p.add_argument('--format', choices=['text','json'], default='text')
+    p.add_argument('--export', choices=['csv'], default=None,
+                   help='匯出格式（csv）')
+    p.add_argument('--output', '-o', default=None, help='輸出路徑')
 
     p = mkp('export', 'FEAT-05：匯出知識庫（JSON / Markdown）')
-    p.add_argument('--format', choices=['json','markdown'], default='json')
+    p.add_argument('--format', choices=['json','markdown','neo4j'], default='json')
     p.add_argument('--kind',   default=None, help='只匯出某類型節點')
     p.add_argument('--scope',  default=None, help='只匯出某 scope 節點')
     p.add_argument('--output', '-o', default=None, help='輸出路徑（預設：brain_export.json）')
@@ -1952,6 +2057,9 @@ def main():
     p = mkp('import', 'FEAT-05：匯入知識庫（JSON）')
     p.add_argument('file', help='匯入檔案路徑（brain export 產生的 JSON）')
     p.add_argument('--overwrite', action='store_true', help='覆蓋已存在的節點')
+    p.add_argument('--merge-strategy', choices=['skip','overwrite','confidence_wins','interactive'],
+                   default='skip', dest='merge_strategy',
+                   help='衝突解決策略（預設: skip）')
 
     p = mkp('index', '向量索引（語意搜尋 Phase 1）')
     p.add_argument('--quiet', action='store_true')
@@ -1963,6 +2071,15 @@ def main():
     p = mkp('rollback', 'FEAT-06：恢復節點到指定版本')
     p.add_argument('node_id', help='節點 ID')
     p.add_argument('--to', type=int, required=True, help='目標版本號')
+
+    # FEAT-13
+    p = mkp('deprecate', 'FEAT-13：標記節點為棄用')
+    p.add_argument('node_id', help='節點 ID')
+    p.add_argument('--replaced-by', default='', dest='replaced_by', help='取代節點 ID')
+    p.add_argument('--reason', default='', help='棄用原因')
+
+    p = mkp('lifecycle', 'FEAT-13：查看節點生命週期')
+    p.add_argument('node_id', help='節點 ID')
 
     # FEAT-07: Cross-project migration
     p = mkp('migrate', 'FEAT-07：跨專案知識遷移')
@@ -2070,6 +2187,8 @@ def main():
         'rollback':      cmd_rollback,
         'migrate':       cmd_migrate,
         'counterfactual': cmd_counterfactual,
+        'deprecate':     cmd_deprecate,
+        'lifecycle':     cmd_lifecycle,
     }
 
     fn = dispatch.get(args.cmd)

@@ -603,6 +603,57 @@ def db(self) -> 'BrainDB':
 
 ---
 
+## v1.2.0 Ecosystem (P3)
+
+> **完成日期**: 2026-04-03 | **包含**: FEAT-11~14、DEEP-03 補完
+
+---
+
+#### FEAT-11：知識圖譜 Neo4j/Cypher 匯出 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` `export_neo4j()` + `cli.py` `cmd_export()` |
+| **實作** | `export_neo4j()` 生成 Cypher `CREATE (:Label {...})` 節點語句和 `MATCH … CREATE (a)-[:REL]->(b)` 關係語句；CLI 加入 `brain export --format neo4j` 選項，輸出 `.cypher` 檔 |
+
+---
+
+#### FEAT-12：匯入衝突互動式解決 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` `import_json()` + `cli.py` `cmd_import()` |
+| **實作** | `import_json()` 新增 `merge_strategy` 參數（skip / overwrite / confidence_wins / interactive）；CLI 加入 `--merge-strategy interactive`，提供逐一衝突解決介面（keep / import / merge / skip） |
+
+---
+
+#### FEAT-13：知識節點生命週期管理 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` `deprecate_node()` + `get_lifecycle()` + `cli.py` |
+| **實作** | `deprecate_node()` 設 `is_deprecated=1` + 建立 REPLACED_BY 邊；`get_lifecycle()` 返回狀態、版本歷史、取代鏈；CLI 新增 `brain deprecate <id>` 和 `brain lifecycle <id>` 指令 |
+
+---
+
+#### FEAT-14：使用率指標 CSV 匯出 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `cli.py` `cmd_analytics()` |
+| **實作** | `brain analytics --export csv --output <path>` 輸出 node_id / title / type / scope / access_count / last_accessed / confidence / importance 欄位的 CSV 檔 |
+
+---
+
+#### DEEP-03 補完：反事實推理強化 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `graph.py` `counterfactual_impact()` |
+| **實作** | 為每個受影響節點計算 `impact_score = confidence × (1 − 0.3 × distance)`（直接匹配 distance=0，依賴鏈 distance=1），按 impact_score 排序後回傳，使最高風險節點排最前 |
+
+---
+
 ## 統計摘要
 
 | 類別 | 數量 | 說明 |
@@ -610,10 +661,10 @@ def db(self) -> 'BrainDB':
 | 系統缺陷修復 | 11 | DEF-01~10 |
 | BUG 修復 | 12 | BUG-01~12 |
 | 性能優化 | 10 | OPT-01~10 |
-| 新增功能 | 10 | FEAT-01~10 |
-| 深度 AI 功能 | 7 | DEEP-01~05 + DEEP-02/04 補完 |
-| **合計** | **50** | |
+| 新增功能 | 14 | FEAT-01~14 |
+| 深度 AI 功能 | 8 | DEEP-01~05 + DEEP-02/03/04 補完 |
+| **合計** | **55** | |
 
 ---
 
-*本文件由 `IMPROVEMENT_PLAN.md` 分拆，完成時間 2026-04-03。*
+*本文件由 `IMPROVEMENT_PLAN.md` 分拆，完成時間 2026-04-03。全部 55 項改善均已落地。*

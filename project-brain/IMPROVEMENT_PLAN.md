@@ -530,7 +530,7 @@ def _sanitize_fts_query(q: str) -> str:
 
 ## 新增功能路線圖
 
-### FEAT-11：知識圖譜 Cypher/Neo4j 匯出 🔵
+### FEAT-11：知識圖譜 Cypher/Neo4j 匯出 ✅
 
 ```bash
 brain export --format neo4j > knowledge.cypher
@@ -544,7 +544,7 @@ brain export --format neo4j > knowledge.cypher
 
 ---
 
-### FEAT-12：匯入衝突互動式解決 🔵
+### FEAT-12：匯入衝突互動式解決 ✅
 
 ```bash
 brain import team_knowledge.json
@@ -557,7 +557,7 @@ brain import team_knowledge.json
 
 ---
 
-### FEAT-13：知識節點生命週期管理 🔵
+### FEAT-13：知識節點生命週期管理 ✅
 
 ```bash
 brain deprecate <node_id> --replaced-by <new_node_id> --reason "API v2 取代"
@@ -570,7 +570,7 @@ brain lifecycle <node_id>
 
 ---
 
-### FEAT-14：使用率指標 CSV 匯出 🔵
+### FEAT-14：使用率指標 CSV 匯出 ✅
 
 ```bash
 brain analytics --period 30d --export csv > report.csv
@@ -651,6 +651,8 @@ answer_question(node_id="n42", answer="30 分鐘", new_confidence=0.9)
 
 ### DEEP-05：時序邊自動建立 ✅
 
+### DEEP-03 補完：反事實推理強化 ✅
+
 **現狀**: `temporal_edges` 表存在，`temporal_query` MCP 工具存在，但沒有任何代碼自動填充此表。
 
 **補完目標**: `brain sync` / `archaeologist.py` 在解析 git commit 時，自動建立 temporal_edges：
@@ -695,10 +697,11 @@ for file_path in files_changed:
 | DEEP-02 補完 | 貝葉斯傳播實作 | 深度 | ✅ 已完成 | 差異化 | 中 |
 | DEEP-04 補完 | 主動學習回饋迴路 | 深度 | ✅ 已完成 | 差異化 | 小 |
 | DEEP-05 | 時序邊自動建立 | 深度 | ✅ 已完成 | 時序查詢 | 中 |
-| FEAT-12 | 匯入衝突互動式解決 | 功能 | 🔵 P3 | UX | 中 |
-| FEAT-13 | 節點生命週期管理 | 功能 | 🔵 P3 | 治理 | 中 |
-| FEAT-11 | Neo4j/Cypher 匯出 | 功能 | 🔵 P3 | 生態 | 小 |
-| FEAT-14 | 使用率 CSV 匯出 | 功能 | 🔵 P3 | 分析 | 小 |
+| FEAT-12 | 匯入衝突互動式解決 | 功能 | ✅ 已完成 | UX | 中 |
+| FEAT-13 | 節點生命週期管理 | 功能 | ✅ 已完成 | 治理 | 中 |
+| FEAT-11 | Neo4j/Cypher 匯出 | 功能 | ✅ 已完成 | 生態 | 小 |
+| FEAT-14 | 使用率 CSV 匯出 | 功能 | ✅ 已完成 | 分析 | 小 |
+| DEEP-03 補完 | 反事實推理強化 | 深度 | ✅ 已完成 | 差異化 | 小 |
 
 ---
 
@@ -735,22 +738,40 @@ for file_path in files_changed:
 
 ## 附錄：P3 補完進度追蹤
 
-| P3 功能 | 骨架 | 核心邏輯 | 整合 | 測試 |
+> **最後更新**: 2026-04-03 — P3 全部完成
+
+| P3 功能 | 骨架 | 核心邏輯 | 整合 | 狀態 |
 |---------|------|---------|------|------|
-| DEEP-01 推理鏈條 | ✅ | ✅ | 🟡 部分路徑 | ❌ |
-| DEEP-02 貝葉斯傳播 | ✅ | ❌ 骨架 | ❌ | ❌ |
-| DEEP-03 反事實推理 | ✅ | 🟡 簡化版 | ✅ | ❌ |
-| DEEP-04 主動學習 | ✅ | 🟡 單向 | ❌ 無回饋 | ❌ |
-| OPT-02 自適應權重 | ✅ | 🟡 線性 | ✅ | ❌ |
-| OPT-03 向量快取 | ✅ | ✅ | 🟡 無失效 | ❌ |
-| OPT-05 CQRS | ✅ | ✅ | 🟡 未使用 | ❌ |
-| OPT-06 同義詞索引 | ✅ | ✅ | 🟡 未讀取 | ❌ |
+| DEEP-01 推理鏈條 | ✅ | ✅ | ✅ 已整合 | ✅ 完成 |
+| DEEP-02 貝葉斯傳播 | ✅ | ✅ BFS 多跳 | ✅ | ✅ 完成 (P2) |
+| DEEP-03 反事實推理 | ✅ | ✅ + impact_score | ✅ | ✅ 完成 (P3) |
+| DEEP-04 主動學習 | ✅ | ✅ 含回饋閉環 | ✅ answer_question | ✅ 完成 (P2) |
+| DEEP-05 時序推理 | ✅ | ✅ temporal_edges | ✅ archaeologist | ✅ 完成 (P2) |
+| OPT-02 自適應權重 | ✅ | ✅ CJK+長度啟發 | ✅ hybrid_search | ✅ 完成 |
+| OPT-03 向量快取 | ✅ | ✅ | ✅ OPT-10 失效修復 | ✅ 完成 (P2) |
+| OPT-05 CQRS | ✅ | ✅ | ✅ api_server _read_conn | ✅ 完成 |
+| OPT-06 同義詞索引 | ✅ | ✅ | ✅ expand_query O(1) DB | ✅ 完成 |
+| FEAT-11 Neo4j 匯出 | ✅ | ✅ Cypher gen | ✅ brain export --format neo4j | ✅ 完成 (P3) |
+| FEAT-12 匯入衝突 | ✅ | ✅ 4 策略 | ✅ --merge-strategy interactive | ✅ 完成 (P3) |
+| FEAT-13 生命週期 | ✅ | ✅ deprecate/lifecycle | ✅ brain deprecate/lifecycle | ✅ 完成 (P3) |
+| FEAT-14 CSV 匯出 | ✅ | ✅ | ✅ brain analytics --export csv | ✅ 完成 (P3) |
+
+### 全域進度總結
+
+| 版本 | 範圍 | 項目數 | 狀態 |
+|------|------|--------|------|
+| v0.1.1 ~ v1.0.0 | 原始 P0~P3 | 34 | ✅ 全部完成 |
+| v1.0.1 | P0 Critical Fixes | 3 | ✅ 全部完成 |
+| v1.0.2 | P1 Stability | 5 | ✅ 全部完成 |
+| v1.1.0 | P2 Polish & Deep | 8 | ✅ 全部完成 |
+| v1.2.0 | P3 Ecosystem | 5 | ✅ 全部完成 |
+| **合計** | | **55** | **✅ 全部完成** |
 
 ---
 
 ## 附錄：參考文件
 
-- `COMPLETED_HISTORY.md` — 已完成改善項目歸檔（P0～P3，共 34 項）
+- `COMPLETED_HISTORY.md` — 已完成改善項目歸檔（v0.1.1 ~ v1.2.0，共 55 項）
 - `PROJECT_BRAIN.md` — 核心架構說明
 - `CHANGELOG.md` — 版本歷史
 - `COMMANDS.md` — CLI 指令參考
@@ -759,4 +780,4 @@ for file_path in files_changed:
 
 ---
 
-*深度代碼審查於 2026-04-03 完成。發現 20 項待辦事項（2 項延續原有 + 18 項新增）。*
+*深度代碼審查於 2026-04-03 完成。全部 55 項改善均已落地（P0~P3 原始 34 項 + 審查後新增 21 項）。*

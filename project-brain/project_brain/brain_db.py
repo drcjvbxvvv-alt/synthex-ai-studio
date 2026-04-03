@@ -650,6 +650,57 @@ class BrainDB:
             change_note = f"Rolled back to v{to_version}",
         )
 
+    def deprecate_node(self, node_id: str, replaced_by: str = "",
+                       reason: str = "") -> bool:
+        """FEAT-13: Mark a node as deprecated.
+
+        Sets is_deprecated=1, optionally links to replacement via REPLACED_BY edge.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return False
+        with self._write_guard():
+            self.conn.execute(
+                "UPDATE nodes SET is_deprecated=1, updated_at=datetime('now')"
+                " WHERE id=?", (node_id,)
+            )
+            if reason:
+                self.conn.execute(
+                    "UPDATE nodes SET content=content||? WHERE id=?",
+                    (f"\n[棄用] {reason}", node_id)
+                )
+            self.conn.commit()
+        if replaced_by:
+            self.add_edge(node_id, "REPLACED_BY", replaced_by, note=reason)
+        return True
+
+    def get_lifecycle(self, node_id: str) -> dict:
+        """FEAT-13: Return lifecycle status and history for a node."""
+        node = self.get_node(node_id)
+        if not node:
+            return {}
+        history = self.get_node_history(node_id)
+        replaced_by = []
+        try:
+            rows = self.conn.execute(
+                "SELECT target_id FROM edges WHERE source_id=? AND relation='REPLACED_BY'",
+                (node_id,)
+            ).fetchall()
+            replaced_by = [r[0] for r in rows]
+        except Exception:
+            pass
+        status = "deprecated" if node.get("is_deprecated") else "active"
+        return {
+            "node_id":      node_id,
+            "title":        node.get("title", ""),
+            "status":       status,
+            "confidence":   node.get("confidence", 0.8),
+            "created_at":   node.get("created_at", ""),
+            "updated_at":   node.get("updated_at", ""),
+            "replaced_by":  replaced_by,
+            "history":      history,
+        }
+
     # ── FEAT-07: Cross-project Migration ─────────────────────────
 
     def migrate_from(self, source_db_path: "Path", scope: str = "global",
@@ -1414,16 +1465,56 @@ class BrainDB:
 
         return "\n".join(lines)
 
-    def import_json(self, data: dict, overwrite: bool = False) -> dict:
-        """FEAT-05: Import nodes and edges from an export_json() dict.
+    def export_neo4j(self, node_type: str = None, scope: str = None) -> str:
+        """FEAT-11: Export knowledge graph as Cypher statements for Neo4j/Obsidian.
 
-        Args:
-            data:      dict as returned by export_json()
-            overwrite: if True, replace existing nodes by ID
-
-        Returns: {"nodes": imported, "edges": imported, "skipped": n, "errors": n}
+        Generates CREATE statements for nodes and relationships.
         """
-        result = {"nodes": 0, "edges": 0, "skipped": 0, "errors": 0}
+        data  = self.export_json(node_type=node_type, scope=scope)
+        lines = [
+            "// Project Brain → Neo4j Cypher Export",
+            f"// Generated: {data['exported_at']}",
+            f"// Nodes: {data['total_nodes']}",
+            "",
+            "// ── Nodes ──────────────────────────────────────────",
+        ]
+        for n in data["nodes"]:
+            nid   = n["id"].replace("-", "_")
+            label = n.get("type", "Node")
+            title = (n.get("title") or "").replace('"', '\\"')
+            conf  = n.get("confidence", 0.8)
+            scope_val = n.get("scope", "global")
+            lines.append(
+                f'CREATE (n_{nid}:{label} {{id:"{n["id"]}", title:"{title}",'
+                f' confidence:{conf}, scope:"{scope_val}"}})'
+            )
+        lines += ["", "// ── Relationships ───────────────────────────────────"]
+        for e in data.get("edges", []):
+            src = e.get("source_id", "").replace("-", "_")
+            tgt = e.get("target_id", "").replace("-", "_")
+            rel = e.get("relation", "RELATED").upper().replace(" ", "_")
+            if src and tgt:
+                lines.append(
+                    f'MATCH (a {{id:"{e["source_id"]}"}}),(b {{id:"{e["target_id"]}"}}) '
+                    f'CREATE (a)-[:{rel}]->(b)'
+                )
+        return "\n".join(lines)
+
+    def import_json(self, data: dict, overwrite: bool = False,
+                    merge_strategy: str = "skip") -> dict:
+        """FEAT-05/12: Import nodes and edges from an export_json() dict.
+
+        FEAT-12: merge_strategy controls conflict resolution:
+          - "skip"             : keep existing node (default, non-destructive)
+          - "overwrite"        : replace with incoming node
+          - "confidence_wins"  : keep whichever has higher confidence
+          - "interactive"      : return conflicts list for caller to handle
+
+        Returns:
+            dict with keys: nodes, edges, skipped, errors, conflicts
+            When merge_strategy="interactive", conflicts=[{existing, incoming}]
+        """
+        result: dict = {"nodes": 0, "edges": 0, "skipped": 0, "errors": 0, "conflicts": []}
 
         for node in data.get("nodes", []):
             try:
@@ -1431,9 +1522,23 @@ class BrainDB:
                 if not nid:
                     result["errors"] += 1
                     continue
-                if not overwrite and self.get_node(nid):
-                    result["skipped"] += 1
-                    continue
+                existing = self.get_node(nid)
+                if existing:
+                    if merge_strategy == "skip" and not overwrite:
+                        result["skipped"] += 1
+                        continue
+                    if merge_strategy == "interactive":
+                        result["conflicts"].append({
+                            "existing": existing,
+                            "incoming": node,
+                        })
+                        result["skipped"] += 1
+                        continue
+                    if merge_strategy == "confidence_wins":
+                        if float(existing.get("confidence", 0.8)) >= float(node.get("confidence", 0.8)):
+                            result["skipped"] += 1
+                            continue
+                    # overwrite or confidence_wins where incoming is higher
                 meta = node.get("meta", {})
                 if isinstance(meta, str):
                     try:
