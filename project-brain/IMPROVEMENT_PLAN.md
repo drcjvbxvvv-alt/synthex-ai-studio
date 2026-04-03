@@ -1,8 +1,9 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.2.0（2026-04-03）
+> **當前版本**：v0.3.0（2026-04-03）
 > **文件用途**：記錄未來改善方向、技術債、功能規劃。每個版本迭代前更新。
 > **參考文件**：`ProjectBrain_Enterprise_Analysis.docx.md`（2026.04 企業級產品價值分析）
+> **已完成項目**：見 `CHANGELOG.md`
 
 ---
 
@@ -19,110 +20,23 @@
 
 ## 已知問題（Bugs）
 
-| ID     | 等級 | 描述                                                                                                                          | 狀態                    |
-| ------ | ---- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| BUG-01 | P0   | `engine.py` `context_engineer`/`review_board` 屬性在 `_init_lock` 內部再次嘗試獲取同一鎖，造成死鎖，`brain status` 完全無回應 | ✅ 已修復（2026-04-03） |
-| BUG-02 | P1   | `status_renderer.py` v10 區塊引用未定義的 `db` 變數（被 try/except 靜默吞掉），節點/邊數量不顯示                              | ✅ 已修復（2026-04-03） |
-
----
-
-## 致命缺陷（Fatal Flaws）
-
-> 以下三個問題不是「待改善的功能」，是「讓整個系統失去意義的根本矛盾」。
-
-### F1：知識生產迴路斷裂（P0）
-
-知識庫的價值完全取決於豐富程度，但目前 100% 依賴人工 `brain add`。
-CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
-
-- Agent 不會在任務開始前主動呼叫 `get_context()`
-- Agent 不會在任務結束後呼叫 `add_knowledge()` 寫入學習
-- 沒有知識有效性回饋迴路（knowledge 好不好用沒有閉合）
-- `extractor.py` 只從 commit message 提取，不捕捉過程中的決策與踩坑
-
-**解法方向**：重寫 CLAUDE.md 生成邏輯 + 新增 MCP 工具 `complete_task` / `report_knowledge_outcome` + session-aware extractor。
-
-### F2：沒有可度量的 ROI（P1）
-
-企業採購需要能回答「這個工具幫我省了幾小時、避免了幾個 bug」。
-目前 Brain 無法提供任何 ROI 數據。Nudge 有沒有阻止 bug 發生、get_context 返回的知識有沒有被用到——完全不知道。
-
-**解法方向**：新建 `analytics_engine.py` + `brain report` 指令 + Web UI dashboard 強化。
-
-### F3：`core/` 雙重程式碼庫是維護炸彈（P1）
-
-`core/brain/` 和 `project_brain/` 幾乎是同一套模組的兩個副本。
-任何功能改動都必須在兩個地方做，任何 bug 修復都必須記得應用兩次。
-外部貢獻者看到這個結構會立刻失去信心。
-
-**解法方向**：保留 `project_brain/` 為唯一來源，`core/brain/` 改為從它導入（thin adapter）。
+> 目前無待修復 Bug。
 
 ---
 
 ## 技術債
 
-| ID    | 等級 | 模組                 | 描述                                                                        | 狀態      |
-| ----- | ---- | -------------------- | --------------------------------------------------------------------------- | --------- |
-| TD-01 | P2   | `context.py`         | `_SYNONYM_MAP` 硬編碼中文同義詞，應改為可從 `.brain/synonyms.json` 載入     | ✅ 已完成（PH2-05） |
-| TD-02 | P2   | `embedder.py`        | LocalTFIDF 的 hash 投影維度（256）固定，應可透過環境變數調整                | ✅ 已完成（`BRAIN_TFIDF_DIM` env var；預設 256；cache key 含 DIM 防跨維度污染） |
-| TD-03 | P2   | `graph.py`           | `add_edge()` 尚未支援批次操作，大量 edges 逐筆 INSERT 效能差                | ✅ 已完成（`add_edges_bulk(edges)` 單次驗證 + `executemany` + single commit） |
-| TD-04 | P3   | `decay_engine.py`    | F2 技術版本落差偵測規則硬編碼（React 16/18 等），無法自訂                   | ✅ 已完成（2026-04-03：`.brain/decay_config.json` 自動生成；`current_versions` / `version_patterns` / `decay_params` 全部可覆蓋）|
-| TD-05 | P1   | `core/brain/`        | 與 `project_brain/` 幾乎完全重複，應降格為薄整合層（對應 F3）               | ✅ 已完成（PH0-02） |
-| TD-06 | P1   | `pyproject.toml`     | version 欄位為 0.1.0，與實際 `__version__` 0.2.0 不一致；URLs 仍為模板佔位 | ✅ 已完成（PH0-01） |
-| TD-07 | P1   | `status_renderer.py` | L246 引用未定義的 `db` 變數（被 try/except 靜默吞掉），v10 區塊功能失效     | ✅ 已完成（PH0-05） |
+> 目前無待清理技術債。
 
 ---
 
 ## 功能規劃
 
-### Phase 0（立即，1-2 週）：堵漏洞
+### Phase 3（未完成）
 
-> 在做任何新功能之前，先把現有漏洞堵上。
-
-| ID     | 等級 | 功能                      | 說明                                                         | 狀態                                                                                    |
-| ------ | ---- | ------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| PH0-01 | P1   | `pyproject.toml` 修正     | version → 0.2.0，URLs 改為真實 GitHub 連結（對應 TD-06）     | ✅ 2026-04-03                                                                           |
-| PH0-02 | P1   | `core/` 目錄重組          | 移除業務邏輯，改為從 `project_brain/` 導入（對應 F3/TD-05）  | ✅ 2026-04-03（已是 shim，更新 docstring 與邊界規則）                                   |
-| PH0-03 | P1   | `CONTRIBUTING.md` 更新    | 說明 `core/` vs `project_brain/` 的邊界，防止貢獻者寫錯地方  | ✅ 2026-04-03                                                                           |
-| PH0-04 | P1   | 測試覆蓋補全              | 至少為 CLI 核心命令（init、add、ask）補充整合測試            | ✅ 2026-04-03（`tests/integration/test_cli.py`，13 個無 Mock 端對端測試，全數通過）     |
-| PH0-05 | P1   | `status_renderer.py` 修正 | 修復 `db` 未定義問題（TD-07），讓 v10 區塊正確顯示           | ✅ 2026-04-03                                                                           |
-
-### Phase 1（4-6 週）：修復知識生產迴路（對應 F1）
-
-> 這是整個路線圖最高優先級的工作。一個正確的 CLAUDE.md，讓知識生產從「需要人工記得去做」變成「每次任務完成後自動發生」。
-
-| ID     | 等級 | 功能                                 | 說明                                                                                                                | 狀態                                                                                                                    |
-| ------ | ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| PH1-01 | P0   | 重寫 CLAUDE.md 生成模板              | `setup_wizard.generate_claude_md()` 含完整 Brain 行為協議：Task Start / Task Complete / Knowledge Feedback，全英文  | ✅ 2026-04-03                                                                                                           |
-| PH1-02 | P0   | MCP 工具：`complete_task`            | 參數：`task_description, decisions[], lessons[], pitfalls[]`；任務結束後批次寫入本次學習                            | ✅ 2026-04-03                                                                                                           |
-| PH1-03 | P0   | MCP 工具：`report_knowledge_outcome` | 參數：`node_id, was_useful, notes`；閉合知識有效性的回饋迴路，驅動 confidence 動態更新                              | ✅ 2026-04-03                                                                                                           |
-| PH1-04 | P1   | 強化 `extractor.py`                  | Session-aware 提取：從 git diff + session log 中提取「過程知識」，不只依賴 commit message                           | ✅ 2026-04-03（新增 `from_session_log()` 無 LLM 直接轉換 + `from_git_diff_staged()`）                                  |
-| PH1-05 | P1   | `analytics_engine.py` 基礎版        | 記錄所有查詢事件、命中率、使用者回饋（explicit + implicit）                                                         | ✅ 2026-04-03（新建 `analytics_engine.py`：ROI score、query hit rate、useful knowledge rate、pitfall avoidance score）  |
-| PH1-06 | P1   | `brain report` 指令                  | 生成週期性使用統計，顯示知識庫健康度基本指標                                                                        | ✅ 2026-04-03（`brain report [--days N] [--format json] [--output file]`，ROI + 使用率 + Top Pitfalls 一頁報告）        |
-
-### Phase 2（6-12 週）：ROI 可見化（對應 F2）
-
-| ID     | 等級 | 功能                             | 說明                                                                          | 狀態                                                                                                              |
-| ------ | ---- | -------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| PH2-01 | P1   | Web UI dashboard 強化            | 顯示 ROI 指標、知識庫健康度、最高效益 Pitfall 節點、Nudge Effectiveness Rate  | ✅ 2026-04-03（`/api/analytics` 端點，回傳 ROI + usage + top_pitfalls JSON）                                      |
-| PH2-02 | P1   | `brain search` 指令              | 純語意搜尋（不組裝 Context），快速查特定知識                                  | ✅ 2026-04-03（`brain search <keywords> [--limit N] [--kind TYPE] [--scope S] [--format json]`）                  |
-| PH2-03 | P2   | `brain add` 互動模式             | 無參數執行時進入互動式輸入（title / kind / scope 分步問）                     | ✅ 2026-04-03（無參數觸發分步互動：內容 → 類型選單 → scope → 信心值）                                             |
-| PH2-04 | P2   | `brain export --format markdown` | 匯出為人類可讀 Markdown，方便放進 wiki / Confluence                           | ✅ 已存在（`cmd_export --format markdown` 早已實作，確認可用）                                                    |
-| PH2-05 | P2   | 同義詞設定檔                     | `.brain/synonyms.json`，讓台灣業務術語可自定義（對應 TD-01）                  | ✅ 2026-04-03（init 自動生成範例檔；ContextEngineer 載入後與內建同義詞合併，損壞靜默降級）                         |
-| PH2-06 | P2   | GitHub Issues / Linear 整合      | 追蹤 Nudge 警告 → bug 開單的相關性，建立可歸因的 ROI 數據                     | ✅ 2026-04-03（`brain link-issue --node-id <id> --url <url>`；`--list`；事件存入 events 表供 ROI 歸因）            |
-| PH2-07 | P2   | `brain ask --json`               | 輸出結構化 JSON，方便腳本串接                                                 | ✅ 2026-04-03（`brain ask --json`，輸出 `[{id, title, content, confidence, ...}]`）                               |
-
-### Phase 3（12-20 週）：建立護城河
-
-| ID     | 等級 | 功能                                  | 說明                                                                                             |
-| ------ | ---- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| PH3-01 | P2   | `federation.py`                       | 跨專案知識分享協議；public scope 知識池；訂閱特定技術領域更新（✅ 2026-04-03：`FederationExporter` / `FederationImporter` / `SubscriptionManager`；PII 自動清理；`.brain/federation.json` 訂閱管理）|
-| PH3-02 | P2   | `knowledge_distiller.py` Layer 3 完工 | LoRA fine-tuning pipeline；Axolotl / Unsloth 整合；讓組織知識蒸餾進私有模型，不佔 context window（✅ 2026-04-03：語意去重；自動生成 `axolotl_config.yml` / `unsloth_train.py` / `llamafactory_config.json`）|
-| PH3-03 | P2   | AI 輔助 KRB 審核                      | 由 Claude Haiku 輔助審核自動提取的知識，降低人工負擔（✅ 2026-04-03：`krb_ai_assist.py` + `brain review pre-screen` + `krb_pre_screen` MCP 工具）|
-| PH3-07 | P2   | KRB 審核 Ollama 本地後端              | `OllamaClient` adapter + `KRBAIAssistant.from_ollama()` + `make_client()` 工廠函數，零外部依賴、離線審核（✅ 2026-04-03）|
-| PH3-04 | P3   | Cloud 版本                            | 託管服務、Team 計畫（$20/月/開發者）、計費系統                                                   |
-| PH3-05 | P3   | ANN 向量索引                          | sqlite-vec HNSW 索引，大型知識庫（5000+ 節點）搜尋 O(log N)（✅ 2026-04-03：`ann_index.py`；`HNSWIndex` + `LinearScanIndex` fallback；`get_ann_index()` 工廠；`build_index_from_graph()`；零額外依賴降級）|
-| PH3-06 | P3   | 多語言 embedding                      | 支援 multilingual-e5 等多語言模型，中英混搜（✅ 2026-04-03：新增 `MultilingualEmbedder`；`sentence-transformers` 選配依賴；`BRAIN_EMBED_PROVIDER=multilingual`；`BRAIN_MULTILINGUAL_MODEL` 可指定模型；e5 query/passage prefix 自動處理；`get_embedder()` 優先級最高）|
+| ID     | 等級 | 功能       | 說明                                           |
+| ------ | ---- | ---------- | ---------------------------------------------- |
+| PH3-04 | P3   | Cloud 版本 | 託管服務、Team 計畫（$20/月/開發者）、計費系統 |
 
 ### 長期願景（v1.0+）
 
@@ -144,7 +58,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | **SQLite 單寫者**                       | 不使用多進程並行寫入，用 WAL + `busy_timeout=5000` 處理競爭                                                         |
 | **per-thread connections**              | `graph.py` 和 `session_store.py` 均使用 `threading.local()`，不跨 thread 共享連線                                   |
-| **鎖重入禁止**                          | `engine.py` 的 `_init_lock` 是非可重入鎖（`threading.Lock`）；在持鎖狀態下不得呼叫其他需要同一鎖的屬性（見 BUG-01） |
+| **鎖重入禁止**                          | `engine.py` 的 `_init_lock` 是非可重入鎖（`threading.Lock`）；在持鎖狀態下不得呼叫其他需要同一鎖的屬性             |
 | **KRB 人工把關**                        | AI 自動提取的知識必須先進 Staging，不直接入 L3                                                                      |
 | **零外部依賴（核心）**                  | 核心功能只依賴 Python 標準函式庫 + SQLite，進階功能以 optional dep 形式提供                                         |
 | **降級優先**                            | 任何功能失敗應靜默降級，不阻斷 Agent 運作                                                                           |
@@ -154,13 +68,17 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 ## 版本決策記錄
 
-| 版本   | 決策                                       | 理由                                           |
-| ------ | ------------------------------------------ | ---------------------------------------------- |
-| v0.2.0 | `BRAIN_WORKDIR` 改為非必要（自動偵測為主） | 多專案工作流不應被環境變數綁死                 |
-| v0.2.0 | 查詢展開限每詞 3 個同義詞，總上限 15       | 原本 30 個同義詞造成大量無關結果               |
-| v0.2.0 | `brain index` 改用 `_Spinner` 進度條       | 大型知識庫建立索引可能需數分鐘，靜默等待體驗差 |
-| v0.1.0 | 使用 SQLite WAL 而非 PostgreSQL            | 零依賴部署，備份 = 複製一個文件                |
-| v0.1.0 | 知識衰減不刪除節點，只降低可見度           | 歷史記錄有考古價值，刪除不可逆                 |
+| 版本   | 決策                                                     | 理由                                                   |
+| ------ | -------------------------------------------------------- | ------------------------------------------------------ |
+| v0.3.0 | OllamaClient duck-typed，不強制 anthropic SDK            | 讓 KRB 審核可離線運行，降低企業採購門檻                |
+| v0.3.0 | MultilingualEmbedder 優先級高於 Ollama embedder          | sentence-transformers 對中英混搜效果顯著優於 nomic     |
+| v0.3.0 | federation export 時清理 PII，而非 import 時             | bundle 本身即安全，接收方無需信任發送方的清理          |
+| v0.3.0 | LoRA 訓練設定生成三套（Axolotl / Unsloth / LLaMA-Factory）| 不綁定單一框架，使用者選擇熟悉工具                     |
+| v0.3.0 | ANN index fallback 為 LinearScan（純 Python）            | sqlite-vec 是 C 擴充，確保零依賴環境仍可運作           |
+| v0.2.0 | `BRAIN_WORKDIR` 改為非必要（自動偵測為主）               | 多專案工作流不應被環境變數綁死                         |
+| v0.2.0 | 查詢展開限每詞 3 個同義詞，總上限 15                     | 原本 30 個同義詞造成大量無關結果                       |
+| v0.1.0 | 使用 SQLite WAL 而非 PostgreSQL                          | 零依賴部署，備份 = 複製一個文件                        |
+| v0.1.0 | 知識衰減不刪除節點，只降低可見度                         | 歷史記錄有考古價值，刪除不可逆                         |
 
 ---
 
@@ -168,73 +86,26 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 > 最後更新：2026-04-03
 
-### 象限說明
+### Q4 — 待執行（長期願景）
 
-| 象限               | 定義                                            |
-| ------------------ | ----------------------------------------------- |
-| **Q1：立即執行**   | 高影響 × 高緊迫（P0/P1，阻礙核心或影響使用者）  |
-| **Q2：計劃執行**   | 高影響 × 可排期（P1/P2，重要但不緊急）          |
-| **Q3：批次處理**   | 低影響 × 技術債清理（P2，快速可解決的瑣碎問題） |
-| **Q4：暫緩或捨棄** | 低影響 × 低緊迫（P3，長期願景）                 |
-
-### Q1 — 立即執行（高影響 × 高緊迫）
-
-| ID             | 等級 | 項目                                      | 狀態      |
-| -------------- | ---- | ----------------------------------------- | --------- |
-| BUG-01         | P0   | `engine.py` 死鎖修復                      | ✅ 已完成 |
-| F1 / PH1-01    | P0   | 重寫 CLAUDE.md 生成模板（Brain 行為協議） | ✅ 已完成 |
-| PH1-02         | P0   | MCP 工具：`complete_task`                 | ✅ 已完成 |
-| PH1-03         | P0   | MCP 工具：`report_knowledge_outcome`      | ✅ 已完成 |
-| TD-05 / PH0-02 | P1   | `core/` 目錄重組為薄整合層                | ✅ 已完成 |
-| TD-06 / PH0-01 | P1   | `pyproject.toml` 修正（version / URLs）   | ✅ 已完成 |
-| TD-07 / PH0-05 | P1   | `status_renderer.py` 修復 `db` 未定義     | ✅ 已完成 |
-| BUG-02         | P1   | v10 區塊節點/邊數量不顯示                 | ✅ 已完成 |
-| PH0-03         | P1   | `CONTRIBUTING.md` 更新邊界說明            | ✅ 已完成 |
-| PH0-04         | P1   | 整合測試補全（init / add / ask）          | ✅ 已完成 |
-
-### Q2 — 計劃執行（高影響 × 可排期）
-
-| ID          | 等級 | 項目                                 | 狀態      |
-| ----------- | ---- | ------------------------------------ | --------- |
-| PH1-04      | P1   | 強化 `extractor.py`（session-aware） | ✅ 已完成 |
-| PH1-05      | P1   | `analytics_engine.py` 基礎版        | ✅ 已完成 |
-| PH1-06      | P1   | `brain report` 指令                  | ✅ 已完成 |
-| F2 / PH2-01 | P1   | Web UI dashboard ROI 指標強化        | ✅ 已完成 |
-| PH2-02      | P1   | `brain search` 指令                  | ✅ 已完成 |
-
-### Q3 — 批次處理（低影響 × 技術債清理）
-
-| ID    | 等級 | 項目                          | 狀態      |
-| ----- | ---- | ----------------------------- | --------- |
-| TD-02 | P2   | `embedder.py` 維度環境變數化  | ✅ 已完成 |
-| TD-03 | P2   | `graph.py` 批次 edge INSERT   | ✅ 已完成 |
-
-### Q4 — 暫緩（長期願景）
-
-| ID           | 等級 | 項目                                       |
-| ------------ | ---- | ------------------------------------------ |
-| ~~TD-04~~    | P3   | ~~`decay_engine.py` 版本落差規則可自訂~~（✅ 已完成）|
-| ~~PH3-01~~   | P2   | ~~`federation.py` 跨專案知識分享~~（✅ 已完成）|
-| ~~PH3-02~~   | P2   | ~~`knowledge_distiller.py` LoRA fine-tuning~~（✅ 已完成）|
-| ~~PH3-03~~   | P2   | ~~AI 輔助 KRB 審核~~（✅ 已完成）          |
-| ~~PH3-07~~   | P2   | ~~KRB 審核 Ollama 本地後端~~（✅ 已完成）  |
-| PH3-04       | P3   | Cloud 版本 / 計費系統                      |
-| ~~PH3-05~~   | P3   | ~~ANN 向量索引~~（✅ 已完成）               |
-| ~~PH3-06~~   | P3   | ~~多語言 embedding~~（✅ 已完成）          |
-| VISION-01~05 | P3   | 動態 confidence、知識衝突解決、跨專案遷移… |
+| ID           | 等級 | 項目                                          |
+| ------------ | ---- | --------------------------------------------- |
+| PH3-04       | P3   | Cloud 版本 / 計費系統                         |
+| VISION-01    | P3   | 動態 confidence 更新                          |
+| VISION-02    | P3   | 知識衝突自動解決（LLM 仲裁）                  |
+| VISION-03    | P3   | 跨專案知識遷移（scope=global 聯邦網路）       |
+| VISION-04    | P3   | `brain serve --readonly` 唯讀共享模式         |
+| VISION-05    | P3   | 多知識庫合併查詢（monorepo 場景）             |
 
 ### 現況摘要
 
 ```
-Q1 完成率：10/10（100%）✅
-Q2 完成率：5/5（100%）✅
-Phase 0 完成率：5/5（100%）✅
-Phase 1 完成率：6/6（100%）✅
-Phase 2 完成率：7/7（100%）✅
-Q3 完成率：2/2（100%）✅
-Phase 3 完成率：7/7（全部完成）✅
-TD 完成率：7/7（全部完成）✅
-Q4 暫緩：5 項（VISION-01~05 長期願景）
+Phase 0 完成率：5/5（100%）✅  → 見 CHANGELOG.md v0.3.0
+Phase 1 完成率：6/6（100%）✅  → 見 CHANGELOG.md v0.3.0
+Phase 2 完成率：7/7（100%）✅  → 見 CHANGELOG.md v0.3.0
+Phase 3 完成率：6/7（PH3-04 Cloud 版本暫緩）
+TD 完成率：7/7（100%）✅
+Q4 待執行：6 項（全為 P3 長期願景）
 下一步行動：VISION 長期願景 或 新需求
 ```
 
@@ -245,4 +116,4 @@ Q4 暫緩：5 項（VISION-01~05 長期願景）
 1. **發現問題** → 加入「已知問題」表格，標記等級
 2. **想到新功能** → 加入對應 Phase 的功能規劃，標記等級
 3. **開始實作某項** → 在描述後加 `🚧 進行中`
-4. **完成** → 移至 `docs/COMPLETED_HISTORY.md`，更新 CHANGELOG.md
+4. **完成** → 移至 `CHANGELOG.md`，從本文件移除

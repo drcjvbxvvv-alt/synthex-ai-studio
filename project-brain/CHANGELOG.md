@@ -4,6 +4,85 @@
 
 ---
 
+## v0.3.0（2026-04-03）— 知識工廠版
+
+### Bug 修復
+- **BUG-01**：修復 `engine.py` `_init_lock` 死鎖，`brain status` 完全無回應問題解決
+- **BUG-02**：修復 `status_renderer.py` v10 區塊 `db` 未定義，節點/邊數量正確顯示
+
+### 致命缺陷修復
+- **F1（知識生產迴路斷裂）**：重寫 CLAUDE.md 生成模板（Task Start / Task Complete / Knowledge Feedback 三段協議）+ 新增 `complete_task` / `report_knowledge_outcome` MCP 工具 + session-aware extractor
+- **F2（無可度量 ROI）**：新建 `analytics_engine.py`（ROI score、query hit rate、pitfall avoidance score）+ `brain report` 指令 + Web UI `/api/analytics` 端點
+- **F3（`core/` 雙重程式碼庫）**：`core/brain/` 降格為薄整合層，`project_brain/` 成為唯一業務邏輯來源，更新 `CONTRIBUTING.md` 邊界說明
+
+### 技術債清理
+- **TD-01**：`context.py` 同義詞改由 `.brain/synonyms.json` 載入，可自定義業務術語
+- **TD-02**：`embedder.py` TFIDF 維度改為 `BRAIN_TFIDF_DIM` 環境變數（預設 256），cache key 含 DIM 防污染
+- **TD-03**：`graph.py` 新增 `add_edges_bulk()` 批次 INSERT（`executemany` + single commit）
+- **TD-04**：`decay_engine.py` 版本落差規則改由 `.brain/decay_config.json` 設定，首次執行自動生成範例
+- **TD-05**：`core/brain/` 重組為薄整合層，對應 F3
+- **TD-06**：`pyproject.toml` version 修正為 0.2.0，URLs 更新為真實 GitHub 連結
+- **TD-07**：`status_renderer.py` L246 `db` 未定義修復，v10 區塊功能恢復
+
+### 核心穩定化（Phase 0）
+- `pyproject.toml` 版本與 URLs 修正
+- `CONTRIBUTING.md` 新增 `core/` vs `project_brain/` 邊界說明，防止貢獻者寫錯地方
+- 整合測試補全：`tests/integration/test_cli.py`，13 個無 Mock 端對端測試全數通過
+
+### 知識生產迴路（Phase 1）
+- **CLAUDE.md 生成模板重寫**：`setup_wizard.generate_claude_md()` 含完整三段 Brain 行為協議，全英文
+- **MCP 工具：`complete_task`**：任務結束後批次寫入決策 / 教訓 / 踩坑，閉合知識生產迴路
+- **MCP 工具：`report_knowledge_outcome`**：知識有效性回饋，驅動 confidence 動態更新
+- **`extractor.py` session-aware**：新增 `from_session_log()`（無 LLM 直接轉換）+ `from_git_diff_staged()`
+- **`analytics_engine.py`**：ROI score、query hit rate、useful knowledge rate、pitfall avoidance score
+- **`brain report`**：`[--days N] [--format json] [--output file]`，ROI + 使用率 + Top Pitfalls 一頁報告
+
+### ROI 可見化（Phase 2）
+- **Web UI dashboard**：`/api/analytics` 端點，回傳 ROI + usage + top_pitfalls JSON
+- **`brain search`**：`<keywords> [--limit N] [--kind TYPE] [--scope S] [--format json]` 純語意搜尋
+- **`brain add` 互動模式**：無參數觸發分步互動（內容 → 類型選單 → scope → 信心值）
+- **`brain export --format markdown`**：確認可用，匯出為人類可讀 Markdown
+- **同義詞設定檔**：`.brain/synonyms.json`，`init` 自動生成範例；與內建同義詞合併，損壞靜默降級
+- **`brain link-issue`**：`--node-id <id> --url <url>` 連結 GitHub Issues / Linear，事件存入 events 表供 ROI 歸因
+- **`brain ask --json`**：輸出 `[{id, title, content, confidence, ...}]` 結構化 JSON
+
+### 護城河功能（Phase 3）
+- **`federation.py`**：`FederationExporter`（匯出 global-scope 知識束，自動清理 PII）/ `FederationImporter`（匯入 + 去重 + 訂閱過濾 → KRB staging）/ `SubscriptionManager`（`.brain/federation.json`）
+- **`knowledge_distiller.py` Layer 3 完工**：語意去重（exact + Jaccard > 0.85）；自動生成 `axolotl_config.yml` / `unsloth_train.py` / `llamafactory_config.json` 三套訓練設定
+- **AI 輔助 KRB 審核**：`krb_ai_assist.py`（三速道分流、24 小時快取、Prompt Injection 防護）+ `brain review pre-screen` CLI + `krb_pre_screen` MCP 工具
+- **KRB Ollama 本地後端**：`OllamaClient` duck-typed adapter + `KRBAIAssistant.from_ollama()` + `make_client()` 工廠函數，零成本離線審核
+- **`ann_index.py`**：`HNSWIndex`（sqlite-vec HNSW，O(log N)，持久化至 `.brain/ann_index.db`）+ `LinearScanIndex` fallback（零依賴）+ `get_ann_index()` 工廠 + `build_index_from_graph()`
+- **`MultilingualEmbedder`**：sentence-transformers 選配依賴；`BRAIN_EMBED_PROVIDER=multilingual`；multilingual-e5 query/passage prefix 自動處理；`get_embedder()` 優先級最高
+
+### 新增 CLI 命令（v0.3.0）
+
+| 命令 | 說明 |
+|------|------|
+| `brain report` | ROI 週期報告（`--days N`、`--format json`、`--output file`）|
+| `brain search` | 純語意搜尋知識庫（`--kind`、`--scope`、`--format json`）|
+| `brain link-issue` | 連結知識節點與 Issue tracker（`--list` 查看已連結）|
+| `brain review pre-screen` | AI 預篩 KRB 待審知識（`--limit N`、`--max-api-calls N`）|
+
+### 新增 MCP 工具（v0.3.0）
+
+| 工具 | 說明 |
+|------|------|
+| `complete_task` | 任務結束後批次寫入決策 / 教訓 / 踩坑 |
+| `report_knowledge_outcome` | 知識有效性回饋，更新 confidence 分數 |
+| `krb_pre_screen` | AI 輔助 KRB 預篩，回傳三速道分流結果 |
+
+### 新增環境變數（v0.3.0）
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `BRAIN_EMBED_PROVIDER` | `""` | `multilingual` / `ollama` / `openai` / `local` / `none` |
+| `BRAIN_MULTILINGUAL_MODEL` | `intfloat/multilingual-e5-small` | sentence-transformers 模型（384 dim）|
+| `BRAIN_EMBED_E5_PREFIX` | `1` | multilingual-e5 query/passage prefix 開關 |
+| `BRAIN_OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding 模型（可換 `mxbai-embed-large`）|
+| `BRAIN_TFIDF_DIM` | `256` | LocalTFIDF 投影維度 |
+
+---
+
 ## v0.2.0（2026-04-03）— 品質強化版
 
 ### 可靠度
