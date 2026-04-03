@@ -1,7 +1,7 @@
 """
 project_brain/krb_ai_assist.py — PH3-03 AI-Assisted KRB Review
 
-由 Claude Haiku 預篩 KRB staging 中的待審知識，降低人工審查負擔。
+由 AI（Claude Haiku 或本地 Ollama 模型）預篩 KRB staging 中的待審知識，降低人工審查負擔。
 
 三速道分流：
   快速道  (approve)  — AI 信心 ≥ auto_approve_threshold（預設：關閉）
@@ -15,9 +15,15 @@ project_brain/krb_ai_assist.py — PH3-03 AI-Assisted KRB Review
   - Prompt Injection 防護（同 knowledge_validator.py）
   - 每個 AI 決策記錄到 knowledge_history（可審計）
   - 24 小時快取：已預篩的節點不重複呼叫
+  - client 參數 duck-typed：支援 anthropic.Anthropic 或 OllamaClient
 
 成本估算：
   50 條待審 / 5 條每呼叫 = 10 次 Haiku → ~$0.002
+  Ollama 本地運行 → $0（需本地 GPU/CPU）
+
+後端選擇：
+  雲端（預設）：KRBAIAssistant(krb, anthropic.Anthropic())
+  本地 Ollama ：KRBAIAssistant.from_ollama(krb)  # 使用 llama3.2，零成本
 """
 from __future__ import annotations
 
@@ -25,6 +31,8 @@ import json
 import logging
 import re
 import sqlite3
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -32,10 +40,12 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # ── 常數 ──────────────────────────────────────────────────────────
-MAX_ITEMS_PER_CALL  = 5       # 每次 API 呼叫處理的節點數
-MAX_CONTENT_PROMPT  = 400     # 單條知識送入 Prompt 的最大字元
-CACHE_HOURS         = 24      # 相同節點不在 24 小時內重複預篩
-DEFAULT_MODEL       = "claude-haiku-4-5-20251001"
+MAX_ITEMS_PER_CALL   = 5       # 每次 API 呼叫處理的節點數
+MAX_CONTENT_PROMPT   = 400     # 單條知識送入 Prompt 的最大字元
+CACHE_HOURS          = 24      # 相同節點不在 24 小時內重複預篩
+DEFAULT_MODEL        = "claude-haiku-4-5-20251001"
+DEFAULT_OLLAMA_MODEL = "llama3.2"           # 預設本地模型
+DEFAULT_OLLAMA_URL   = "http://localhost:11434"
 
 # Prompt Injection 防護（同 knowledge_validator.py）
 _INJECTION_PATTERNS = re.compile(
@@ -43,6 +53,139 @@ _INJECTION_PATTERNS = re.compile(
     r"act as|new instruction|system:|<\|im_start\|>)\b",
     re.IGNORECASE,
 )
+
+
+# ══════════════════════════════════════════════════════════════════
+#  OllamaClient — anthropic.Anthropic 的本地替代（零外部依賴）
+# ══════════════════════════════════════════════════════════════════
+
+class _OllamaContent:
+    """模擬 anthropic ContentBlock，提供 .text 屬性"""
+    __slots__ = ("text",)
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _OllamaResponse:
+    """模擬 anthropic Message，提供 .content[0].text"""
+    __slots__ = ("content",)
+
+    def __init__(self, text: str) -> None:
+        self.content = [_OllamaContent(text)]
+
+
+class _OllamaMessages:
+    """模擬 anthropic.Anthropic().messages，提供 .create()"""
+
+    def __init__(self, base_url: str, timeout: int) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._timeout  = timeout
+
+    def create(
+        self,
+        model:      str,
+        max_tokens: int,
+        messages:   list[dict],
+        **_kwargs,
+    ) -> _OllamaResponse:
+        """
+        呼叫 Ollama /api/chat，回傳與 anthropic 相容的 _OllamaResponse。
+
+        使用 format="json" 強制模型輸出 JSON，減少解析失敗率。
+        """
+        payload = json.dumps({
+            "model":    model,
+            "messages": messages,
+            "stream":   False,
+            "options":  {"num_predict": max_tokens},
+            "format":   "json",
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self._base_url}/api/chat",
+            data    = payload,
+            headers = {"Content-Type": "application/json"},
+            method  = "POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                body = json.loads(resp.read())
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f"Ollama 連線失敗（{self._base_url}）：{exc.reason}。"
+                "請確認 Ollama 已啟動（ollama serve）。"
+            ) from exc
+
+        text = body["message"]["content"]
+        return _OllamaResponse(text)
+
+
+class OllamaClient:
+    """
+    本地 Ollama 後端，介面與 anthropic.Anthropic() 相容。
+
+    使用方式：
+        client = OllamaClient()                        # 預設 localhost:11434
+        client = OllamaClient(base_url="http://...")   # 自訂位址
+        assist = KRBAIAssistant(krb, client, model="llama3.2")
+
+    或使用工廠方法（更簡潔）：
+        assist = KRBAIAssistant.from_ollama(krb)
+    """
+
+    def __init__(
+        self,
+        base_url: str = DEFAULT_OLLAMA_URL,
+        timeout:  int = 120,
+    ) -> None:
+        self.messages = _OllamaMessages(base_url, timeout)
+
+    @staticmethod
+    def list_models(base_url: str = DEFAULT_OLLAMA_URL) -> list[str]:
+        """回傳 Ollama 已下載的模型名稱列表（便於 CLI 選擇）"""
+        req = urllib.request.Request(f"{base_url.rstrip('/')}/api/tags")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            return [m["name"] for m in data.get("models", [])]
+        except Exception as exc:
+            logger.debug("OllamaClient.list_models failed: %s", exc)
+            return []
+
+
+def make_client(
+    provider: str = "anthropic",
+    **kwargs,
+):
+    """
+    工廠函數：依 provider 建立對應的 LLM client。
+
+    Args:
+        provider: "anthropic"（預設，需安裝 anthropic 套件）
+                  "ollama"   （本地，零外部依賴）
+        **kwargs: 傳入對應 client 的建構子
+                  anthropic → 透傳給 anthropic.Anthropic(**kwargs)
+                  ollama    → base_url, timeout
+
+    Returns:
+        anthropic.Anthropic 實例 或 OllamaClient 實例
+
+    範例：
+        client = make_client()                        # Claude Haiku（雲端）
+        client = make_client("ollama")                # llama3.2（本地）
+        client = make_client("ollama", base_url="http://gpu-box:11434")
+    """
+    if provider == "ollama":
+        return OllamaClient(**kwargs)
+    try:
+        import anthropic  # type: ignore
+        return anthropic.Anthropic(**kwargs)
+    except ImportError as exc:
+        raise ImportError(
+            "anthropic 套件未安裝。請執行 `pip install anthropic` "
+            "或改用 provider='ollama'。"
+        ) from exc
 
 # ── 結果資料結構 ──────────────────────────────────────────────────
 
@@ -81,29 +224,23 @@ class KRBAIAssistant:
     """
     AI 輔助 KRB 預篩系統（PH3-03）。
 
-    使用方式：
-        from project_brain.review_board import KnowledgeReviewBoard
-        from project_brain.graph import KnowledgeGraph
-        from project_brain.krb_ai_assist import KRBAIAssistant
+    雲端後端（需 anthropic 套件）：
         import anthropic
+        assist = KRBAIAssistant(krb, anthropic.Anthropic())
 
-        graph  = KnowledgeGraph(brain_dir)
-        krb    = KnowledgeReviewBoard(brain_dir, graph)
-        client = anthropic.Anthropic()
-        assist = KRBAIAssistant(krb, client)
+    本地 Ollama 後端（零外部依賴）：
+        assist = KRBAIAssistant.from_ollama(krb)
+        assist = KRBAIAssistant.from_ollama(krb, model="mistral", base_url="http://gpu:11434")
 
-        summary = assist.pre_screen(
-            limit              = 50,
-            auto_approve_threshold = None,   # 關閉自動核准
-            auto_reject_threshold  = None,   # 關閉自動拒絕
-        )
-        print(summary)
+    使用工廠函數選擇後端：
+        from project_brain.krb_ai_assist import make_client
+        assist = KRBAIAssistant(krb, make_client("ollama"), model="llama3.2")
     """
 
     def __init__(
         self,
-        krb,                               # KnowledgeReviewBoard 實例
-        client,                            # anthropic.Anthropic 實例
+        krb,
+        client,           # anthropic.Anthropic 實例 或 OllamaClient 實例（duck-typed）
         model: str = DEFAULT_MODEL,
     ):
         self.krb    = krb
@@ -112,6 +249,29 @@ class KRBAIAssistant:
         self._brain_dir: Path = Path(krb.brain_dir)
         self._cache_db  = self._brain_dir / "krb_ai_cache.db"
         self._setup_cache()
+
+    @classmethod
+    def from_ollama(
+        cls,
+        krb,
+        model:    str = DEFAULT_OLLAMA_MODEL,
+        base_url: str = DEFAULT_OLLAMA_URL,
+        timeout:  int = 120,
+    ) -> "KRBAIAssistant":
+        """
+        便捷方法：以本地 Ollama 後端建立 KRBAIAssistant。
+
+        Args:
+            krb:      KnowledgeReviewBoard 實例
+            model:    Ollama 模型名稱（預設 "llama3.2"）
+            base_url: Ollama 服務位址（預設 "http://localhost:11434"）
+            timeout:  單次請求逾時秒數（預設 120）
+
+        範例：
+            assist = KRBAIAssistant.from_ollama(krb)
+            assist = KRBAIAssistant.from_ollama(krb, model="mistral")
+        """
+        return cls(krb, OllamaClient(base_url=base_url, timeout=timeout), model=model)
 
     # ── 主入口 ────────────────────────────────────────────────────
 
