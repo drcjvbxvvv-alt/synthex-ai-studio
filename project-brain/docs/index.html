@@ -11,19 +11,38 @@
   <style>
     /* ── TOKENS ── */
     :root {
-      --bg:      #f5f2ec;
+      --bg:      #ffffff;
       --surf:    #ffffff;
-      --surf2:   #ede9e1;
-      --bord:    #ddd7cc;
+      --surf2:   #f6f8fa;
+      --bord:    #d0d7de;
       --cyan:    #4368e4;
       --blue:    #3558cc;
       --amber:   #d4763a;
       --red:     #d64e48;
       --purple:  #8668ce;
       --teal:    #2daa86;
-      --text:    #1a1612;
-      --muted:   #9a8f84;
+      --text:    #1f2328;
+      --muted:   #656d76;
       --nav-h:   60px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:    #0d1117;
+        --surf:  #161b22;
+        --surf2: #21262d;
+        --bord:  #30363d;
+        --text:  #e6edf3;
+        --muted: #8b949e;
+      }
+      nav {
+        background: rgba(13,17,23,.92) !important;
+      }
+      body::before {
+        background-image:
+          linear-gradient(rgba(67,104,228,.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(67,104,228,.06) 1px, transparent 1px) !important;
+      }
     }
 
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -53,7 +72,7 @@
     nav {
       position: fixed; top: 0; left: 0; right: 0; z-index: 100;
       height: var(--nav-h);
-      background: rgba(245,242,236,.88);
+      background: rgba(255,255,255,.88);
       backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--bord);
       display: flex; align-items: center;
@@ -649,7 +668,7 @@
     }
     .matrix-table td:first-child { text-align: left; font-weight: 600; color: var(--text); }
     .matrix-table tr:last-child td { border-bottom: none; }
-    .matrix-table tr:hover td { background: #f9f6f0; }
+    .matrix-table tr:hover td { background: var(--surf2); }
     .mx-y { color: var(--teal); font-weight: 700; }
     .mx-n { color: var(--muted); }
     .mx-p { color: var(--blue); font-weight: 600; font-size: 11px; }
@@ -740,6 +759,16 @@
       .hero-title { font-size: 32px; }
       .decay-grid { grid-template-columns: 1fr; }
     }
+    .lang-btn {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      background: transparent; color: var(--muted);
+      border: 1.5px solid var(--bord); border-radius: 5px;
+      padding: 6px 12px; cursor: pointer;
+      transition: color .2s, border-color .2s;
+      flex-shrink: 0;
+    }
+    .lang-btn:hover { color: var(--text); border-color: var(--text); }
   </style>
 </head>
 <body>
@@ -748,16 +777,17 @@
 <nav>
   <a class="nav-logo" href="#hero">Project <span>Brain</span></a>
   <ul class="nav-links">
-    <li><a href="#problem">問題</a></li>
-    <li><a href="#flow">架構</a></li>
-    <li><a href="#memory">記憶層</a></li>
-    <li><a href="#confidence">信心衰減</a></li>
+    <li><a href="#problem" data-i18n="nav_problem">問題</a></li>
+    <li><a href="#flow" data-i18n="nav_flow">架構</a></li>
+    <li><a href="#memory" data-i18n="nav_memory">記憶層</a></li>
+    <li><a href="#confidence" data-i18n="nav_confidence">信心衰減</a></li>
     <li><a href="#cli">CLI</a></li>
-    <li><a href="#philosophy">設計理念</a></li>
-    <li><a href="#academic">學術對比</a></li>
-    <li><a href="#install">安裝</a></li>
+    <li><a href="#philosophy" data-i18n="nav_philosophy">設計理念</a></li>
+    <li><a href="#academic" data-i18n="nav_academic">學術對比</a></li>
+    <li><a href="#install" data-i18n="nav_install">安裝</a></li>
   </ul>
-  <a class="nav-cta" href="#install">開始使用</a>
+  <button class="lang-btn" id="lang-btn" onclick="toggleLang()">EN</button>
+  <a class="nav-cta" href="#install" data-i18n="nav_cta">開始使用</a>
 </nav>
 
 <!-- ══ HERO ══ -->
@@ -765,16 +795,16 @@
   <div>
     <div class="hero-badge">Engineering Memory Infrastructure</div>
     <h1 class="hero-title">Project <span>Brain</span></h1>
-    <p class="hero-tagline">
+    <p class="hero-tagline" data-i18n="hero_tagline">
       為 AI Agent 設計的工程記憶基礎設施。<br>
       讓每次對話都能承接上一次的決策、規則與踩坑。
     </p>
     <div class="hero-actions">
-      <a class="btn-primary" href="#install">立即安裝</a>
+      <a class="btn-primary" href="#install" data-i18n="hero_btn_install">立即安裝</a>
       <a class="btn-ghost" href="https://github.com/your-org/project-brain" target="_blank">GitHub →</a>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:24px;">
-      <span class="hpill hp-v">v0.1.0</span>
+      <span class="hpill hp-v">v0.3.0</span>
       <span class="hpill hp-py">Python 3.10+</span>
       <span class="hpill hp-mc">MCP Compatible</span>
       <span class="hpill hp-zt">Zero External Deps</span>
@@ -790,20 +820,20 @@
       <div class="term-title">terminal</div>
     </div>
     <div class="term-body">
-      <div><span class="tc-cmt"># 初始化 Brain</span></div>
+      <div><span class="tc-cmt" data-i18n="term_cmt1"># 初始化 Brain</span></div>
       <div><span class="tc-prompt">$</span> <span class="tc-cmd">brain setup</span></div>
-      <div><span class="tc-ok">✓</span> <span class="tc-out">.brain/brain.db 建立完成</span></div>
-      <div><span class="tc-ok">✓</span> <span class="tc-out">git post-commit hook 已安裝</span></div>
+      <div><span class="tc-ok">✓</span> <span class="tc-out" data-i18n="term_out1">.brain/brain.db 建立完成</span></div>
+      <div><span class="tc-ok">✓</span> <span class="tc-out" data-i18n="term_out2">git post-commit hook 已安裝</span></div>
       <div>&nbsp;</div>
-      <div><span class="tc-cmt"># 加入踩坑記錄</span></div>
+      <div><span class="tc-cmt" data-i18n="term_cmt2"># 加入踩坑記錄</span></div>
       <div><span class="tc-prompt">$</span> <span class="tc-cmd">brain add \</span></div>
       <div>&nbsp; <span class="tc-key">--title</span> <span class="tc-val">"Stripe Webhook 冪等性"</span> \</div>
       <div>&nbsp; <span class="tc-key">--kind</span> <span class="tc-val">Pitfall</span> <span class="tc-key">--confidence</span> <span class="tc-val">0.9</span></div>
       <div><span class="tc-ok">✓</span> <span class="tc-out">知識已寫入 L3 (confidence=0.9)</span></div>
       <div>&nbsp;</div>
-      <div><span class="tc-cmt"># Agent 查詢時自動取得</span></div>
+      <div><span class="tc-cmt" data-i18n="term_cmt3"># Agent 查詢時自動取得</span></div>
       <div><span class="tc-prompt">$</span> <span class="tc-cmd">brain ask "支付退款"</span></div>
-      <div><span class="tc-warn">⚠</span> <span class="tc-out">Pitfall: 必須用 idempotency_key</span></div>
+      <div><span class="tc-warn">⚠</span> <span class="tc-out" data-i18n="term_pitfall">Pitfall: 必須用 idempotency_key</span></div>
       <div>&nbsp;&nbsp;<span class="tc-out">confidence=0.90 · scope=payment</span></div>
     </div>
   </div>
@@ -813,27 +843,27 @@
 
 <!-- ══ PROBLEM ══ -->
 <section id="problem">
-  <div class="section-badge">核心問題</div>
-  <h2 class="section-title">每次對話，<span>歸零</span>的代價</h2>
-  <p class="section-sub">你六個月前踩過 Stripe Webhook 冪等性的坑，修好了，寫了 commit。但下次 Agent 幫你實作退款時，它不知道——以完全一樣的方式再踩一次。這不是 Agent 不夠聰明，而是它沒有記憶。</p>
+  <div class="section-badge" data-i18n="problem_badge">核心問題</div>
+  <h2 class="section-title" data-i18n="problem_title">每次對話，<span>歸零</span>的代價</h2>
+  <p class="section-sub" data-i18n="problem_sub">你六個月前踩過 Stripe Webhook 冪等性的坑，修好了，寫了 commit。但下次 Agent 幫你實作退款時，它不知道——以完全一樣的方式再踩一次。這不是 Agent 不夠聰明，而是它沒有記憶。</p>
 
   <div style="margin-top:48px;">
     <div class="card" style="margin-bottom:16px;">
-      <div class="card-title">核心問題與解法</div>
+      <div class="card-title" data-i18n="problem_card_title">核心問題與解法</div>
       <div class="problem-flow">
         <div class="pf-step">
-          <div class="step-label">問題</div>
-          <div class="step-val">AI 每次對話對專案一無所知，重複踩過同樣的坑</div>
+          <div class="step-label" data-i18n="pf_step1_label">問題</div>
+          <div class="step-val" data-i18n="pf_step1_val">AI 每次對話對專案一無所知，重複踩過同樣的坑</div>
         </div>
         <div class="pf-arrow">→</div>
         <div class="pf-step pf-hi">
-          <div class="step-label">解法</div>
-          <div class="step-val">在專案中建立可被 Agent 查詢的長期記憶庫</div>
+          <div class="step-label" data-i18n="pf_step2_label">解法</div>
+          <div class="step-val" data-i18n="pf_step2_val">在專案中建立可被 Agent 查詢的長期記憶庫</div>
         </div>
         <div class="pf-arrow">→</div>
         <div class="pf-step">
-          <div class="step-label">結果</div>
-          <div class="step-val">Agent 帶著歷史知識寫程式，不再重複錯誤</div>
+          <div class="step-label" data-i18n="pf_step3_label">結果</div>
+          <div class="step-val" data-i18n="pf_step3_val">Agent 帶著歷史知識寫程式，不再重複錯誤</div>
         </div>
       </div>
     </div>
@@ -841,60 +871,60 @@
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
 
       <div class="card">
-        <div class="card-title">自動正向閉環</div>
+        <div class="card-title" data-i18n="loop_card_title">自動正向閉環</div>
         <div class="loop-items">
           <div class="loop-item active">
             <div class="loop-dot d-cyan"></div>
-            Agent 完成任務，結構化 commit
+            <span data-i18n="loop_item1">Agent 完成任務，結構化 commit</span>
           </div>
           <div class="loop-down">↓</div>
           <div class="loop-item active">
             <div class="loop-dot d-blue"></div>
-            Brain 提取決策與踩坑
+            <span data-i18n="loop_item2">Brain 提取決策與踩坑</span>
           </div>
           <div class="loop-down">↓</div>
           <div class="loop-item active">
             <div class="loop-dot d-teal"></div>
-            下次 Agent 啟動時即知道
+            <span data-i18n="loop_item3">下次 Agent 啟動時即知道</span>
           </div>
           <div class="loop-down">↓</div>
           <div class="loop-item active">
             <div class="loop-dot d-purple"></div>
-            Agent 不重複踩坑，寫更好的 commit
+            <span data-i18n="loop_item4">Agent 不重複踩坑，寫更好的 commit</span>
           </div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">AI Agent Commit vs 人類 Commit</div>
+        <div class="card-title" data-i18n="cmp_card_title">AI Agent Commit vs 人類 Commit</div>
         <table class="cmp-table">
           <thead>
             <tr>
-              <th>維度</th>
-              <th>人類</th>
-              <th>AI Agent</th>
+              <th data-i18n="cmp_th1">維度</th>
+              <th data-i18n="cmp_th2">人類</th>
+              <th data-i18n="cmp_th3">AI Agent</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td class="col-head">格式</td>
-              <td class="col-human">"fix bug"、"wip"</td>
+              <td class="col-head" data-i18n="cmp_row1_dim">格式</td>
+              <td class="col-human" data-i18n="cmp_row1_human">"fix bug"、"wip"</td>
               <td class="col-ai">Conventional Commits</td>
             </tr>
             <tr>
-              <td class="col-head">意圖</td>
-              <td class="col-human">往往隱含、省略</td>
-              <td class="col-ai">明確、完整</td>
+              <td class="col-head" data-i18n="cmp_row2_dim">意圖</td>
+              <td class="col-human" data-i18n="cmp_row2_human">往往隱含、省略</td>
+              <td class="col-ai" data-i18n="cmp_row2_ai">明確、完整</td>
             </tr>
             <tr>
-              <td class="col-head">一致性</td>
-              <td class="col-human">因人而異</td>
-              <td class="col-ai">穩定，由 Prompt 決定</td>
+              <td class="col-head" data-i18n="cmp_row3_dim">一致性</td>
+              <td class="col-human" data-i18n="cmp_row3_human">因人而異</td>
+              <td class="col-ai" data-i18n="cmp_row3_ai">穩定，由 Prompt 決定</td>
             </tr>
             <tr>
-              <td class="col-head">頻率</td>
-              <td class="col-human">人工驅動，不定期</td>
-              <td class="col-ai">任務完成即 commit</td>
+              <td class="col-head" data-i18n="cmp_row4_dim">頻率</td>
+              <td class="col-human" data-i18n="cmp_row4_human">人工驅動，不定期</td>
+              <td class="col-ai" data-i18n="cmp_row4_ai">任務完成即 commit</td>
             </tr>
           </tbody>
         </table>
@@ -908,32 +938,32 @@
 
 <!-- ══ FLOW ══ -->
 <section id="flow">
-  <div class="section-badge">系統架構</div>
-  <h2 class="section-title">Brain <span>互動資料流</span></h2>
-  <p class="section-sub">點擊節點查看詳情，切換模式高亮對應路徑。從 git commit 到 Agent 取得知識的完整閉環管線，寫入、記憶、讀取三條路徑各司其職。</p>
+  <div class="section-badge" data-i18n="flow_badge">系統架構</div>
+  <h2 class="section-title" data-i18n="flow_title">Brain <span>互動資料流</span></h2>
+  <p class="section-sub" data-i18n="flow_sub">點擊節點查看詳情，切換模式高亮對應路徑。從 git commit 到 Agent 取得知識的完整閉環管線，寫入、記憶、讀取三條路徑各司其職。</p>
 
   <div id="ifd">
     <!-- mode buttons -->
     <div class="ifd-mode-btns">
-      <button class="ifd-mbtn m-all"  data-m="all">全路徑</button>
-      <button class="ifd-mbtn" data-m="write">⬡ 寫入路徑</button>
-      <button class="ifd-mbtn" data-m="read">◈ 讀取路徑</button>
-      <button class="ifd-mbtn" data-m="maint">⊙ 維護路徑</button>
+      <button class="ifd-mbtn m-all"  data-m="all" data-i18n="flow_btn_all">全路徑</button>
+      <button class="ifd-mbtn" data-m="write" data-i18n="flow_btn_write">⬡ 寫入路徑</button>
+      <button class="ifd-mbtn" data-m="read" data-i18n="flow_btn_read">◈ 讀取路徑</button>
+      <button class="ifd-mbtn" data-m="maint" data-i18n="flow_btn_maint">⊙ 維護路徑</button>
     </div>
     <!-- legend -->
     <div class="ifd-legend">
-      <div class="ifd-lgi"><div class="ifd-lgl" style="background:var(--amber)"></div><span>寫入路徑</span></div>
-      <div class="ifd-lgi"><div class="ifd-lgl" style="background:var(--blue)"></div><span>讀取路徑</span></div>
-      <div class="ifd-lgi"><div class="ifd-lgl" style="background:var(--purple)"></div><span>維護路徑</span></div>
-      <div class="ifd-lgi"><div class="ifd-lgl ifd-lgl-dash"></div><span>記憶整合（定期）</span></div>
+      <div class="ifd-lgi"><div class="ifd-lgl" style="background:var(--amber)"></div><span data-i18n="flow_legend_write">寫入路徑</span></div>
+      <div class="ifd-lgi"><div class="ifd-lgl" style="background:var(--blue)"></div><span data-i18n="flow_legend_read">讀取路徑</span></div>
+      <div class="ifd-lgi"><div class="ifd-lgl" style="background:var(--purple)"></div><span data-i18n="flow_legend_maint">維護路徑</span></div>
+      <div class="ifd-lgi"><div class="ifd-lgl ifd-lgl-dash"></div><span data-i18n="flow_legend_consol">記憶整合（定期）</span></div>
     </div>
     <!-- scrollable canvas -->
     <div class="ifd-scroll">
       <div class="ifd-wrap dg-all" id="dg">
         <!-- column labels -->
-        <div class="ifd-cl ifd-cl-write">Write Sources</div>
-        <div class="ifd-cl ifd-cl-mem">Memory Layers</div>
-        <div class="ifd-cl ifd-cl-read">Read Path</div>
+        <div class="ifd-cl ifd-cl-write" data-i18n="flow_col_write">Write Sources</div>
+        <div class="ifd-cl ifd-cl-mem" data-i18n="flow_col_mem">Memory Layers</div>
+        <div class="ifd-cl ifd-cl-read" data-i18n="flow_col_read">Read Path</div>
 
         <!-- SVG connections -->
         <svg class="lines" xmlns="http://www.w3.org/2000/svg">
@@ -979,7 +1009,7 @@
           <span style="font-size:24px">🤖</span>
           <div>
             <span class="nn">AI AGENT</span>
-            <span class="ns">Claude Code / Cursor / 任何 MCP 工具</span>
+            <span class="ns" data-i18n="flow_agent_ns">Claude Code / Cursor / 任何 MCP 工具</span>
           </div>
           <div class="ifd-agent-tags">
             <div class="ifd-atag" style="background:#ebf0fc;border-color:#c0cefa;color:var(--cyan)">MCP</div>
@@ -992,56 +1022,56 @@
         <div class="ifd-node n-git" data-id="git">
           <span class="ni">⑂</span>
           <span class="nn">git commit</span>
-          <span class="ns">feat: / fix: / refactor:<br>AI Agent 結構化 commit</span>
+          <span class="ns" data-i18n="flow_git_ns">feat: / fix: / refactor:<br>AI Agent 結構化 commit</span>
         </div>
         <div class="ifd-node n-llm" data-id="llm">
           <span class="ni">⟳</span>
           <span class="nn">LLM Extractor</span>
-          <span class="ns">分類知識類型<br>提取決策與踩坑</span>
+          <span class="ns" data-i18n="flow_llm_ns">分類知識類型<br>提取決策與踩坑</span>
         </div>
         <div class="ifd-node n-krb" data-id="krb">
           <span class="ni">👁</span>
-          <span class="nn">KRB 審核委員會</span>
-          <span class="ns">候選知識暫存<br>等待人工審核確認</span>
+          <span class="nn" data-i18n="flow_krb_nn">KRB 審核委員會</span>
+          <span class="ns" data-i18n="flow_krb_ns">候選知識暫存<br>等待人工審核確認</span>
         </div>
         <div class="ifd-node n-madd" data-id="madd">
           <span class="ni">✚</span>
           <span class="nn">brain add</span>
-          <span class="ns">人工直接加入<br>confidence 0.8</span>
+          <span class="ns" data-i18n="flow_madd_ns">人工直接加入<br>confidence 0.8</span>
         </div>
 
         <!-- memory layers -->
         <div class="ifd-node n-l1a" data-id="l1a">
           <div class="fd-lbadge" style="color:var(--amber);border-color:#edcaaa;background:#fdf0e6">L1a</div>
-          <span class="nn">工作記憶</span>
-          <span class="ns">Working Memory · 當前任務脈絡</span>
+          <span class="nn" data-i18n="flow_l1a_nn">工作記憶</span>
+          <span class="ns" data-i18n="flow_l1a_ns">Working Memory · 當前任務脈絡</span>
         </div>
         <div class="ifd-node n-l2" data-id="l2">
           <div class="fd-lbadge" style="color:var(--blue);border-color:#c0cefa;background:#ebf0fc">L2</div>
-          <span class="nn">情節記憶</span>
-          <span class="ns">Episodic Memory · git 歷史</span>
+          <span class="nn" data-i18n="flow_l2_nn">情節記憶</span>
+          <span class="ns" data-i18n="flow_l2_ns">Episodic Memory · git 歷史</span>
         </div>
         <div class="ifd-node n-l3" data-id="l3">
           <div class="fd-lbadge" style="color:var(--cyan);border-color:#c0cefa;background:#ebf0fc">L3</div>
-          <span class="nn">語意記憶</span>
-          <span class="ns">Semantic Memory · 知識圖譜</span>
+          <span class="nn" data-i18n="flow_l3_nn">語意記憶</span>
+          <span class="ns" data-i18n="flow_l3_ns">Semantic Memory · 知識圖譜</span>
         </div>
 
         <!-- read path -->
         <div class="ifd-node n-gctx" data-id="gctx">
           <span class="ni">⊛</span>
           <span class="nn">get_context()</span>
-          <span class="ns">統一讀取三層<br>組裝 + 因果鏈推理</span>
+          <span class="ns" data-i18n="flow_gctx_ns">統一讀取三層<br>組裝 + 因果鏈推理</span>
         </div>
         <div class="ifd-node n-synth" data-id="synth">
           <span class="ni">◈</span>
           <span class="nn">Memory Synthesizer</span>
-          <span class="ns">LLM 融合三層輸出<br><span style="color:var(--muted);font-size:10px">BRAIN_SYNTHESIZE=1 啟用</span></span>
+          <span class="ns" data-i18n="flow_synth_ns">LLM 融合三層輸出<br><span style="color:var(--muted);font-size:10px">BRAIN_SYNTHESIZE=1 啟用</span></span>
         </div>
         <div class="ifd-node n-decay" data-id="decay">
           <span class="ni">⊖</span>
-          <span class="nn">DecayEngine</span>
-          <span class="ns">六因子信心重算<br>每 7 天執行</span>
+          <span class="nn" data-i18n="flow_decay_nn">DecayEngine</span>
+          <span class="ns" data-i18n="flow_decay_ns">六因子信心重算<br>每 7 天執行</span>
         </div>
 
         <!-- particle container -->
@@ -1065,69 +1095,69 @@
 
 <!-- ══ MEMORY LAYERS ══ -->
 <section id="memory">
-  <div class="section-badge">記憶架構</div>
-  <h2 class="section-title">Atkinson-Shiffrin <span>三層記憶</span></h2>
-  <p class="section-sub">架構直接對應認知科學的多儲存記憶模型，三層各司其職，<code style="color:var(--cyan);font-size:14px;">get_context()</code> 統一讀取並融合輸出。</p>
+  <div class="section-badge" data-i18n="memory_badge">記憶架構</div>
+  <h2 class="section-title" data-i18n="memory_title">Atkinson-Shiffrin <span>三層記憶</span></h2>
+  <p class="section-sub" data-i18n="memory_sub">架構直接對應認知科學的多儲存記憶模型，三層各司其職，<code style="color:var(--cyan);font-size:14px;">get_context()</code> 統一讀取並融合輸出。</p>
 
   <div class="memory-grid">
     <div class="layer-card" style="border-top:3px solid var(--amber);">
       <span class="layer-tag lt-l1">L1a</span>
-      <div class="layer-name-big">工作記憶</div>
-      <div class="layer-en">Working Memory</div>
-      <div class="layer-desc">當前任務的即時注意力，對話結束後自動清除。存儲今日筆記與當前任務脈絡。</div>
+      <div class="layer-name-big" data-i18n="mem_l1a_name">工作記憶</div>
+      <div class="layer-en" data-i18n="mem_l1a_en">Working Memory</div>
+      <div class="layer-desc" data-i18n="mem_l1a_desc">當前任務的即時注意力，對話結束後自動清除。存儲今日筆記與當前任務脈絡。</div>
       <div class="layer-code">sessions table<br>自動 TTL 清除</div>
     </div>
     <div class="layer-card" style="border-top:3px solid var(--blue);">
       <span class="layer-tag lt-l2">L2</span>
-      <div class="layer-name-big">情節記憶</div>
-      <div class="layer-en">Episodic Memory</div>
-      <div class="layer-desc">「那次 JWT 事件是什麼時候？」對應 git commit 歷史、事件序列，支援時光機查詢 temporal_query。</div>
+      <div class="layer-name-big" data-i18n="mem_l2_name">情節記憶</div>
+      <div class="layer-en" data-i18n="mem_l2_en">Episodic Memory</div>
+      <div class="layer-desc" data-i18n="mem_l2_desc">「那次 JWT 事件是什麼時候？」對應 git commit 歷史、事件序列，支援時光機查詢 temporal_query。</div>
       <div class="layer-code">episodes table<br>temporal_edges 時序關係</div>
     </div>
     <div class="layer-card" style="border-top:3px solid var(--cyan);">
       <span class="layer-tag lt-l3">L3</span>
-      <div class="layer-name-big">語意記憶</div>
-      <div class="layer-en">Semantic Memory</div>
-      <div class="layer-desc">「JWT 必須用 RS256」— 不是事件，是規律。精煉自 L2 的長期知識，支援知識圖譜因果關係。</div>
+      <div class="layer-name-big" data-i18n="mem_l3_name">語意記憶</div>
+      <div class="layer-en" data-i18n="mem_l3_en">Semantic Memory</div>
+      <div class="layer-desc" data-i18n="mem_l3_desc">「JWT 必須用 RS256」— 不是事件，是規律。精煉自 L2 的長期知識，支援知識圖譜因果關係。</div>
       <div class="layer-code">nodes · edges<br>PREVENTS / CAUSES / REQUIRES</div>
     </div>
   </div>
 
   <!-- Knowledge Types -->
   <div style="margin-top:48px;">
-    <h3 style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;margin-bottom:8px;">知識類型 <span style="color:var(--cyan);">--kind</span></h3>
-    <p class="section-sub" style="margin-bottom:0;">L3 語意記憶的五種節點類型，從踩坑到架構決策全面覆蓋。</p>
+    <h3 style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;margin-bottom:8px;" data-i18n="kinds_title">知識類型 <span style="color:var(--cyan);">--kind</span></h3>
+    <p class="section-sub" style="margin-bottom:0;" data-i18n="kinds_sub">L3 語意記憶的五種節點類型，從踩坑到架構決策全面覆蓋。</p>
   </div>
 
   <div class="kinds-grid" style="margin-top:24px;">
     <div class="kind-card kt-pitfall">
       <span class="kind-tag2">Pitfall</span>
-      <div class="kind-name">踩坑記錄</div>
-      <div class="kind-desc2">曾經犯過的錯誤、隱藏的陷阱。信心分數讓 Agent 評估可信度。</div>
+      <div class="kind-name" data-i18n="kind_pitfall_name">踩坑記錄</div>
+      <div class="kind-desc2" data-i18n="kind_pitfall_desc">曾經犯過的錯誤、隱藏的陷阱。信心分數讓 Agent 評估可信度。</div>
       <div class="kind-example"><span class="ex-cyan">brain add</span> "Stripe Webhook 重複觸發" --kind Pitfall</div>
     </div>
     <div class="kind-card kt-decision">
       <span class="kind-tag2">Decision</span>
-      <div class="kind-name">架構決策</div>
-      <div class="kind-desc2">為什麼選 A 而不選 B。保留決策背後的脈絡，防止未來重複討論。</div>
+      <div class="kind-name" data-i18n="kind_decision_name">架構決策</div>
+      <div class="kind-desc2" data-i18n="kind_decision_desc">為什麼選 A 而不選 B。保留決策背後的脈絡，防止未來重複討論。</div>
       <div class="kind-example"><span class="ex-cyan">brain add</span> "選 PostgreSQL 而非 MongoDB" --kind Decision</div>
     </div>
     <div class="kind-card kt-rule">
       <span class="kind-tag2">Rule</span>
-      <div class="kind-name">工程規則</div>
-      <div class="kind-desc2">必須遵守的技術約定。Brain 回傳後 Agent 將其視為硬性約束。</div>
+      <div class="kind-name" data-i18n="kind_rule_name">工程規則</div>
+      <div class="kind-desc2" data-i18n="kind_rule_desc">必須遵守的技術約定。Brain 回傳後 Agent 將其視為硬性約束。</div>
       <div class="kind-example"><span class="ex-cyan">brain add</span> "JWT 必須使用 RS256" --kind Rule</div>
     </div>
     <div class="kind-card kt-adr">
       <span class="kind-tag2">ADR</span>
-      <div class="kind-name">架構決策記錄</div>
-      <div class="kind-desc2">正式的架構決策文件，對應 Architecture Decision Record 標準。</div>
+      <div class="kind-name" data-i18n="kind_adr_name">架構決策記錄</div>
+      <div class="kind-desc2" data-i18n="kind_adr_desc">正式的架構決策文件，對應 Architecture Decision Record 標準。</div>
       <div class="kind-example"><span class="ex-cyan">brain add</span> "ADR-001 採用事件驅動架構" --kind ADR</div>
     </div>
     <div class="kind-card kt-note">
       <span class="kind-tag2">Note</span>
-      <div class="kind-name">一般筆記</div>
-      <div class="kind-desc2">其他值得記住但不屬於上述類型的資訊。</div>
+      <div class="kind-name" data-i18n="kind_note_name">一般筆記</div>
+      <div class="kind-desc2" data-i18n="kind_note_desc">其他值得記住但不屬於上述類型的資訊。</div>
       <div class="kind-example"><span class="ex-cyan">brain add</span> "新人 onboarding 注意事項" --kind Note</div>
     </div>
   </div>
@@ -1137,37 +1167,37 @@
 
 <!-- ══ CONFIDENCE & DECAY ══ -->
 <section id="confidence">
-  <div class="section-badge">知識可信度</div>
-  <h2 class="section-title">信心分級 × <span>多因子衰減</span></h2>
-  <p class="section-sub">知識不是「對」或「錯」，而是有不同程度的可信度，並隨時間與環境動態衰減。信心低於 0.20 自動標記為過時。</p>
+  <div class="section-badge" data-i18n="conf_badge">知識可信度</div>
+  <h2 class="section-title" data-i18n="conf_title">信心分級 × <span>多因子衰減</span></h2>
+  <p class="section-sub" data-i18n="conf_sub">知識不是「對」或「錯」，而是有不同程度的可信度，並隨時間與環境動態衰減。信心低於 0.20 自動標記為過時。</p>
 
   <div class="conf-decay-grid">
     <!-- Confidence Levels -->
     <div class="card">
-      <div class="card-title">信心分數來源</div>
+      <div class="card-title" data-i18n="conf_card_title">信心分數來源</div>
       <div class="conf-items">
         <div class="conf-item">
-          <div class="conf-label">人工驗證後加入</div>
+          <div class="conf-label" data-i18n="conf_label1">人工驗證後加入</div>
           <div class="conf-bar-wrap"><div class="conf-bar" style="width:90%;background:var(--teal);"></div></div>
           <div class="conf-score" style="color:var(--teal);">0.9</div>
         </div>
         <div class="conf-item">
-          <div class="conf-label">人工直接加入</div>
+          <div class="conf-label" data-i18n="conf_label2">人工直接加入</div>
           <div class="conf-bar-wrap"><div class="conf-bar" style="width:80%;background:var(--cyan);"></div></div>
           <div class="conf-score" style="color:var(--cyan);">0.8</div>
         </div>
         <div class="conf-item">
-          <div class="conf-label">Agent 自動發現</div>
+          <div class="conf-label" data-i18n="conf_label3">Agent 自動發現</div>
           <div class="conf-bar-wrap"><div class="conf-bar" style="width:60%;background:var(--blue);"></div></div>
           <div class="conf-score" style="color:var(--blue);">0.6</div>
         </div>
         <div class="conf-item">
-          <div class="conf-label">git commit 提取</div>
+          <div class="conf-label" data-i18n="conf_label4">git commit 提取</div>
           <div class="conf-bar-wrap"><div class="conf-bar" style="width:50%;background:var(--amber);"></div></div>
           <div class="conf-score" style="color:var(--amber);">0.5</div>
         </div>
         <div class="conf-item">
-          <div class="conf-label">fix/wip commit</div>
+          <div class="conf-label" data-i18n="conf_label5">fix/wip commit</div>
           <div class="conf-bar-wrap"><div class="conf-bar" style="width:20%;background:var(--red);"></div></div>
           <div class="conf-score" style="color:var(--red);">0.2</div>
         </div>
@@ -1180,55 +1210,55 @@
 
     <!-- Decay Factors -->
     <div class="card">
-      <div class="card-title">六因子衰減公式</div>
+      <div class="card-title" data-i18n="decay_card_title">六因子衰減公式</div>
       <div style="font-family:'Roboto Mono',monospace;font-size:11.5px;color:var(--muted);background:var(--surf2);border:1px solid var(--bord);border-radius:6px;padding:12px 14px;margin-bottom:16px;line-height:1.8;">
-        <span style="color:var(--cyan);">信心</span> = F1 × F2 × F3 × F4 × F5 + F7
+        <span style="color:var(--cyan);" data-i18n="decay_formula_label">信心</span> = F1 × F2 × F3 × F4 × F5 + F7
       </div>
       <div class="decay-grid">
         <div class="factor">
           <div class="factor-id">F1</div>
           <div>
-            <div class="factor-name">時間衰減</div>
-            <div class="factor-desc">基礎日衰減率 0.003，越舊越低</div>
+            <div class="factor-name" data-i18n="f1_name">時間衰減</div>
+            <div class="factor-desc" data-i18n="f1_desc">基礎日衰減率 0.003，越舊越低</div>
           </div>
         </div>
         <div class="factor">
           <div class="factor-id">F2</div>
           <div>
-            <div class="factor-name">技術版本落差</div>
-            <div class="factor-desc">React 16 → 現在 React 18 → 懲罰</div>
+            <div class="factor-name" data-i18n="f2_name">技術版本落差</div>
+            <div class="factor-desc" data-i18n="f2_desc">React 16 → 現在 React 18 → 懲罰</div>
           </div>
         </div>
         <div class="factor">
           <div class="factor-id">F3</div>
           <div>
-            <div class="factor-name">程式碼活動信號</div>
-            <div class="factor-desc">相關檔案近 30 天有修改 → 加分</div>
+            <div class="factor-name" data-i18n="f3_name">程式碼活動信號</div>
+            <div class="factor-desc" data-i18n="f3_desc">相關檔案近 30 天有修改 → 加分</div>
           </div>
         </div>
         <div class="factor">
           <div class="factor-id">F4</div>
           <div>
-            <div class="factor-name">矛盾偵測</div>
-            <div class="factor-desc">兩條知識互相矛盾 → 雙方懲罰</div>
+            <div class="factor-name" data-i18n="f4_name">矛盾偵測</div>
+            <div class="factor-desc" data-i18n="f4_desc">兩條知識互相矛盾 → 雙方懲罰</div>
           </div>
         </div>
         <div class="factor">
           <div class="factor-id">F5</div>
           <div>
-            <div class="factor-name">程式碼引用確認</div>
-            <div class="factor-desc">知識中提到的類別仍存在 → 加分</div>
+            <div class="factor-name" data-i18n="f5_name">程式碼引用確認</div>
+            <div class="factor-desc" data-i18n="f5_desc">知識中提到的類別仍存在 → 加分</div>
           </div>
         </div>
         <div class="factor">
           <div class="factor-id">F7</div>
           <div>
-            <div class="factor-name">使用頻率</div>
-            <div class="factor-desc">被查詢越多次 → 衰減越慢</div>
+            <div class="factor-name" data-i18n="f7_name">使用頻率</div>
+            <div class="factor-desc" data-i18n="f7_desc">被查詢越多次 → 衰減越慢</div>
           </div>
         </div>
       </div>
-      <div style="margin-top:12px;font-size:11.5px;color:var(--muted);background:#fdeceb;border:1px solid #f0c4c2;border-radius:5px;padding:8px 12px;font-family:'Roboto Mono',monospace;">
+      <div style="margin-top:12px;font-size:11.5px;color:var(--muted);background:#fdeceb;border:1px solid #f0c4c2;border-radius:5px;padding:8px 12px;font-family:'Roboto Mono',monospace;" data-i18n="decay_warning">
         信心 &lt; 0.20 → 自動標記為過時，衰減不刪除知識
       </div>
     </div>
@@ -1239,54 +1269,78 @@
 
 <!-- ══ CLI ══ -->
 <section id="cli">
-  <div class="section-badge">使用介面</div>
-  <h2 class="section-title">CLI 命令 × <span>Agent 整合</span></h2>
-  <p class="section-sub">完整的命令列介面，支援 MCP、REST API 與 Python SDK 三種 Agent 整合方式。</p>
+  <div class="section-badge" data-i18n="cli_badge">使用介面</div>
+  <h2 class="section-title" data-i18n="cli_title">CLI 命令 × <span>Agent 整合</span></h2>
+  <p class="section-sub" data-i18n="cli_sub">完整的命令列介面，支援 MCP、REST API 與 Python SDK 三種 Agent 整合方式。</p>
 
   <div class="cli-grid">
     <!-- CLI Reference -->
     <div class="card">
-      <div class="card-title">CLI 命令參考</div>
+      <div class="card-title" data-i18n="cli_card_title">CLI 命令參考</div>
       <div class="cli-list">
         <div class="cli-row">
           <span class="cli-cmd">brain setup</span>
-          <span class="cli-desc">一鍵初始化，建立 DB + 安裝 git hook</span>
+          <span class="cli-desc" data-i18n="cli_desc_setup">一鍵初始化，建立 DB + 安裝 git hook</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain add</span>
-          <span class="cli-desc">手動加入知識節點</span>
+          <span class="cli-desc" data-i18n="cli_desc_add">手動加入知識節點</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain ask</span>
-          <span class="cli-desc">查詢知識庫</span>
+          <span class="cli-desc" data-i18n="cli_desc_ask">查詢知識庫</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain status</span>
-          <span class="cli-desc">記憶庫統計與健康狀態</span>
+          <span class="cli-desc" data-i18n="cli_desc_status">記憶庫統計與健康狀態</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain sync</span>
-          <span class="cli-desc">從最新 commit 手動學習</span>
+          <span class="cli-desc" data-i18n="cli_desc_sync">從最新 commit 手動學習</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain serve</span>
-          <span class="cli-desc">啟動 REST API (port 7891)</span>
+          <span class="cli-desc" data-i18n="cli_desc_serve">啟動 REST API (port 7891)</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain serve --mcp</span>
-          <span class="cli-desc">啟動 MCP Server</span>
+          <span class="cli-desc" data-i18n="cli_desc_serve_mcp">啟動 MCP Server</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain webui</span>
-          <span class="cli-desc">D3.js 知識圖譜視覺化</span>
+          <span class="cli-desc" data-i18n="cli_desc_webui">D3.js 知識圖譜視覺化</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain doctor</span>
-          <span class="cli-desc">驗證 sqlite-vec 三層診斷</span>
+          <span class="cli-desc" data-i18n="cli_desc_doctor">驗證 sqlite-vec 三層診斷</span>
         </div>
         <div class="cli-row">
           <span class="cli-cmd">brain review</span>
-          <span class="cli-desc">KRB 人工審查待確認知識</span>
+          <span class="cli-desc" data-i18n="cli_desc_review">KRB 人工審查待確認知識</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain report</span>
+          <span class="cli-desc" data-i18n="cli_desc_report">匯出 JSON / Markdown 知識報告</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain search</span>
+          <span class="cli-desc" data-i18n="cli_desc_search">語意搜尋知識庫（支援中英混搜）</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain link-issue</span>
+          <span class="cli-desc" data-i18n="cli_desc_link_issue">關聯 GitHub Issue 至知識節點</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain review pre-screen</span>
+          <span class="cli-desc" data-i18n="cli_desc_prescreen">AI 輔助 KRB 批次預審</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain fed export</span>
+          <span class="cli-desc" data-i18n="cli_desc_fed_export">匯出 global 知識聯邦 bundle</span>
+        </div>
+        <div class="cli-row">
+          <span class="cli-cmd">brain fed import</span>
+          <span class="cli-desc" data-i18n="cli_desc_fed_import">匯入外部專案知識 bundle</span>
         </div>
       </div>
     </div>
@@ -1294,7 +1348,7 @@
     <!-- MCP Config -->
     <div>
       <div class="card" style="margin-bottom:16px;">
-        <div class="card-title">Claude Code MCP 設定</div>
+        <div class="card-title" data-i18n="mcp_card_title">Claude Code MCP 設定</div>
         <div class="mcp-block">
 <span class="jc">// .claude/settings.json</span><br>
 {<br>
@@ -1311,27 +1365,59 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-title">MCP 可用工具</div>
+        <div class="card-title" data-i18n="mcp_tools_card_title">MCP 可用工具（v0.3.0 共 13 個）</div>
         <div class="cli-list">
           <div class="cli-row">
             <span class="cli-cmd" style="font-size:11.5px;">get_context</span>
-            <span class="cli-desc">取得任務相關知識（含因果鏈 + 主動警告）</span>
+            <span class="cli-desc" data-i18n="mcp_desc_get_context">取得任務相關知識（含因果鏈 + 主動警告）</span>
           </div>
           <div class="cli-row">
             <span class="cli-cmd" style="font-size:11.5px;">add_knowledge</span>
-            <span class="cli-desc">Agent 寫入新知識到 Brain</span>
+            <span class="cli-desc" data-i18n="mcp_desc_add_knowledge">Agent 寫入新知識到 Brain</span>
           </div>
           <div class="cli-row">
             <span class="cli-cmd" style="font-size:11.5px;">search_knowledge</span>
-            <span class="cli-desc">直接語意搜尋知識庫</span>
+            <span class="cli-desc" data-i18n="mcp_desc_search_knowledge">直接語意搜尋知識庫</span>
           </div>
           <div class="cli-row">
             <span class="cli-cmd" style="font-size:11.5px;">temporal_query</span>
-            <span class="cli-desc">時光機——讀取指定時間點的知識狀態</span>
+            <span class="cli-desc" data-i18n="mcp_desc_temporal_query">時光機——讀取指定時間點的知識狀態</span>
           </div>
           <div class="cli-row">
             <span class="cli-cmd" style="font-size:11.5px;">brain_status</span>
-            <span class="cli-desc">記憶庫統計</span>
+            <span class="cli-desc" data-i18n="mcp_desc_brain_status">記憶庫統計</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">complete_task</span>
+            <span class="cli-desc" data-i18n="mcp_desc_complete_task">記錄任務完成，寫入決策 / 踩坑 / 經驗</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">report_knowledge_outcome</span>
+            <span class="cli-desc" data-i18n="mcp_desc_report_knowledge_outcome">回饋知識節點是否有效，動態調整信心分數</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">krb_pre_screen</span>
+            <span class="cli-desc" data-i18n="mcp_desc_krb_pre_screen">AI 輔助 KRB 預審，批次生成審核建議</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">answer_question</span>
+            <span class="cli-desc" data-i18n="mcp_desc_answer_question">基於知識庫回答自然語言問題</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">impact_analysis</span>
+            <span class="cli-desc" data-i18n="mcp_desc_impact_analysis">分析修改影響範圍，查詢相關知識節點</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">reasoning_chain</span>
+            <span class="cli-desc" data-i18n="mcp_desc_reasoning_chain">追蹤知識因果推理鏈</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">generate_questions</span>
+            <span class="cli-desc" data-i18n="mcp_desc_generate_questions">AI 生成待補充知識的問題清單</span>
+          </div>
+          <div class="cli-row">
+            <span class="cli-cmd" style="font-size:11.5px;">mark_helpful</span>
+            <span class="cli-desc" data-i18n="mcp_desc_mark_helpful">標記知識有幫助，信心 +0.03</span>
           </div>
         </div>
       </div>
@@ -1343,67 +1429,67 @@
 
 <!-- ══ PHILOSOPHY ══ -->
 <section id="philosophy">
-  <div class="section-badge">工程哲學</div>
-  <h2 class="section-title">五個<span>設計原則</span></h2>
-  <p class="section-sub">對抗遺忘，而非追求全知。記憶是工程團隊的基礎設施。</p>
+  <div class="section-badge" data-i18n="phil_badge">工程哲學</div>
+  <h2 class="section-title" data-i18n="phil_title">五個<span>設計原則</span></h2>
+  <p class="section-sub" data-i18n="phil_sub">對抗遺忘，而非追求全知。記憶是工程團隊的基礎設施。</p>
 
   <div class="phil-grid">
     <div class="phil-item">
       <div class="phil-num">01</div>
       <div>
-        <div class="phil-title">零依賴優先</div>
-        <div class="phil-desc">核心功能只依賴 Python 標準函式庫與 SQLite。不需要 Docker、Redis、向量資料庫，<code style="color:var(--cyan);font-size:11px;">brain setup</code> 一行指令，無需配置任何外部服務。</div>
+        <div class="phil-title" data-i18n="phil01_title">零依賴優先</div>
+        <div class="phil-desc" data-i18n="phil01_desc">核心功能只依賴 Python 標準函式庫與 SQLite。不需要 Docker、Redis、向量資料庫，<code style="color:var(--cyan);font-size:11px;">brain setup</code> 一行指令，無需配置任何外部服務。</div>
       </div>
     </div>
     <div class="phil-item">
       <div class="phil-num">02</div>
       <div>
-        <div class="phil-title">單一文件，備份即複製</div>
-        <div class="phil-desc">所有記憶存在 <code style="color:var(--cyan);font-size:11px;">.brain/brain.db</code>，一個標準 SQLite 文件。備份只需 <code style="color:var(--cyan);font-size:11px;">cp brain.db brain.db.bak</code>，不需要備份腳本或管理員介入。</div>
+        <div class="phil-title" data-i18n="phil02_title">單一文件，備份即複製</div>
+        <div class="phil-desc" data-i18n="phil02_desc">所有記憶存在 <code style="color:var(--cyan);font-size:11px;">.brain/brain.db</code>，一個標準 SQLite 文件。備份只需 <code style="color:var(--cyan);font-size:11px;">cp brain.db brain.db.bak</code>，不需要備份腳本或管理員介入。</div>
       </div>
     </div>
     <div class="phil-item">
       <div class="phil-num">03</div>
       <div>
-        <div class="phil-title">降級永遠可用</div>
-        <div class="phil-desc">Brain 的故障模式是「靜默降級」，而不是「阻斷流程」。無 API Key 時跳過 LLM 提取，無向量索引時降級為 FTS5 搜尋，知識庫為空時回傳空字串。</div>
+        <div class="phil-title" data-i18n="phil03_title">降級永遠可用</div>
+        <div class="phil-desc" data-i18n="phil03_desc">Brain 的故障模式是「靜默降級」，而不是「阻斷流程」。無 API Key 時跳過 LLM 提取，無向量索引時降級為 FTS5 搜尋，知識庫為空時回傳空字串。</div>
       </div>
     </div>
     <div class="phil-item">
       <div class="phil-num">04</div>
       <div>
-        <div class="phil-title">信心分級，而非二元判斷</div>
-        <div class="phil-desc">知識不是「對」或「錯」，而是有不同程度的可信度。六因子動態衰減公式讓信心隨時間、版本差距、程式碼活動即時更新。</div>
+        <div class="phil-title" data-i18n="phil04_title">信心分級，而非二元判斷</div>
+        <div class="phil-desc" data-i18n="phil04_desc">知識不是「對」或「錯」，而是有不同程度的可信度。六因子動態衰減公式讓信心隨時間、版本差距、程式碼活動即時更新。</div>
       </div>
     </div>
     <div class="phil-item" style="grid-column:span 2;">
       <div class="phil-num">05</div>
       <div>
-        <div class="phil-title">人機協作，而非全自動</div>
-        <div class="phil-desc">自動化降低摩擦，但不替代判斷。<code style="color:var(--cyan);font-size:11px;">brain sync</code>（git hook）自動記錄每次 commit，提供原始素材。真正有價值的知識，仍然需要工程師主動用 <code style="color:var(--cyan);font-size:11px;">brain add</code> 確認和補充。這不是設計缺陷，是刻意的選擇——全自動提取的知識品質不足以直接信任。</div>
+        <div class="phil-title" data-i18n="phil05_title">人機協作，而非全自動</div>
+        <div class="phil-desc" data-i18n="phil05_desc">自動化降低摩擦，但不替代判斷。<code style="color:var(--cyan);font-size:11px;">brain sync</code>（git hook）自動記錄每次 commit，提供原始素材。真正有價值的知識，仍然需要工程師主動用 <code style="color:var(--cyan);font-size:11px;">brain add</code> 確認和補充。這不是設計缺陷，是刻意的選擇——全自動提取的知識品質不足以直接信任。</div>
       </div>
     </div>
   </div>
 
   <!-- Graceful Degradation -->
   <div class="card" style="margin-top:24px;">
-    <div class="card-title">降級對照表</div>
+    <div class="card-title" data-i18n="degrade_card_title">降級對照表</div>
     <div>
       <div class="degrade-item">
-        <div class="degrade-cond">無 API Key</div>
-        <div class="degrade-act">跳過 LLM 提取，仍記錄 commit 基本資訊，confidence 0.2</div>
+        <div class="degrade-cond" data-i18n="degrade_cond1">無 API Key</div>
+        <div class="degrade-act" data-i18n="degrade_act1">跳過 LLM 提取，仍記錄 commit 基本資訊，confidence 0.2</div>
       </div>
       <div class="degrade-item">
-        <div class="degrade-cond">無向量索引</div>
-        <div class="degrade-act">降級為 FTS5 關鍵字搜尋，語意匹配能力降低但仍可用</div>
+        <div class="degrade-cond" data-i18n="degrade_cond2">無向量索引</div>
+        <div class="degrade-act" data-i18n="degrade_act2">降級為 FTS5 關鍵字搜尋，語意匹配能力降低但仍可用</div>
       </div>
       <div class="degrade-item">
-        <div class="degrade-cond">MCP 連線失敗</div>
-        <div class="degrade-act">CLAUDE.md 提示 Agent 主動查詢，降級為手動模式</div>
+        <div class="degrade-cond" data-i18n="degrade_cond3">MCP 連線失敗</div>
+        <div class="degrade-act" data-i18n="degrade_act3">CLAUDE.md 提示 Agent 主動查詢，降級為手動模式</div>
       </div>
       <div class="degrade-item">
-        <div class="degrade-cond">知識庫為空</div>
-        <div class="degrade-act">回傳空字串，不阻擋 Agent 正常運作</div>
+        <div class="degrade-cond" data-i18n="degrade_cond4">知識庫為空</div>
+        <div class="degrade-act" data-i18n="degrade_act4">回傳空字串，不阻擋 Agent 正常運作</div>
       </div>
     </div>
   </div>
@@ -1413,31 +1499,31 @@
 
 <!-- ══ ACADEMIC ══ -->
 <section id="academic">
-  <div class="section-badge">學術定位</div>
-  <h2 class="section-title">研究對比 × <span>功能矩陣</span></h2>
-  <p class="section-sub">Project Brain 三層架構直接對應 Atkinson-Shiffrin 多儲存記憶模型（1968），並參考 CoALA（arXiv:2309.02427）對 AI Agent 記憶的系統化分類框架。</p>
+  <div class="section-badge" data-i18n="academic_badge">學術定位</div>
+  <h2 class="section-title" data-i18n="academic_title">研究對比 × <span>功能矩陣</span></h2>
+  <p class="section-sub" data-i18n="academic_sub">Project Brain 三層架構直接對應 Atkinson-Shiffrin 多儲存記憶模型（1968），並參考 CoALA（arXiv:2309.02427）對 AI Agent 記憶的系統化分類框架。</p>
 
   <!-- Papers -->
   <div class="papers-grid">
     <div class="paper-card">
       <div class="paper-id">Lore · arXiv:2603.15566 · 2026/03</div>
-      <div class="paper-title">將 git commit message 重新設計為結構化知識協議</div>
-      <div class="paper-diff"><strong>差異</strong>：Lore 改變寫法；Brain 從現有 commit 中提取，<strong>無需改變工作流</strong></div>
+      <div class="paper-title" data-i18n="paper_lore_title">將 git commit message 重新設計為結構化知識協議</div>
+      <div class="paper-diff" data-i18n="paper_lore_diff"><strong>差異</strong>：Lore 改變寫法；Brain 從現有 commit 中提取，<strong>無需改變工作流</strong></div>
     </div>
     <div class="paper-card">
       <div class="paper-id">MemCoder · arXiv:2603.13258 · 2026/03</div>
-      <div class="paper-title">從 commit history 提取 intent-to-code mapping</div>
-      <div class="paper-diff"><strong>差異</strong>：MemCoder 不分類；Brain 分類為 <strong>Pitfall/Decision/Rule</strong>，並接衰減管理</div>
+      <div class="paper-title" data-i18n="paper_memcoder_title">從 commit history 提取 intent-to-code mapping</div>
+      <div class="paper-diff" data-i18n="paper_memcoder_diff"><strong>差異</strong>：MemCoder 不分類；Brain 分類為 <strong>Pitfall/Decision/Rule</strong>，並接衰減管理</div>
     </div>
     <div class="paper-card">
       <div class="paper-id">MemGovern · arXiv:2601.06789 · 2026/01</div>
-      <div class="paper-title">從 GitHub Issues 提取 governed experience cards</div>
-      <div class="paper-diff"><strong>差異</strong>：MemGovern 的 quality gate 最接近 KRB；Brain 增加了 <strong>KG 持久化與衰減</strong></div>
+      <div class="paper-title" data-i18n="paper_memgovern_title">從 GitHub Issues 提取 governed experience cards</div>
+      <div class="paper-diff" data-i18n="paper_memgovern_diff"><strong>差異</strong>：MemGovern 的 quality gate 最接近 KRB；Brain 增加了 <strong>KG 持久化與衰減</strong></div>
     </div>
     <div class="paper-card">
       <div class="paper-id">Codified Context · arXiv:2602.20478 · 2026/02</div>
-      <div class="paper-title">為複雜 codebase 設計階層化 Agent context 架構</div>
-      <div class="paper-diff"><strong>差異</strong>：Codified Context 是靜態文件；Brain 是<strong>動態知識圖譜</strong>，有衰減與更新</div>
+      <div class="paper-title" data-i18n="paper_codified_title">為複雜 codebase 設計階層化 Agent context 架構</div>
+      <div class="paper-diff" data-i18n="paper_codified_diff"><strong>差異</strong>：Codified Context 是靜態文件；Brain 是<strong>動態知識圖譜</strong>，有衰減與更新</div>
     </div>
   </div>
 
@@ -1446,7 +1532,7 @@
     <table class="matrix-table" style="margin-top:32px;">
       <thead>
         <tr>
-          <th>功能</th>
+          <th data-i18n="matrix_th_feature">功能</th>
           <th>Project Brain</th>
           <th>Mem0</th>
           <th>Zep/Graphiti</th>
@@ -1457,7 +1543,7 @@
       </thead>
       <tbody>
         <tr class="brain-row">
-          <td>工程特化 KG Schema</td>
+          <td data-i18n="matrix_row1">工程特化 KG Schema</td>
           <td class="mx-y">✓</td>
           <td class="mx-n">✗</td>
           <td class="mx-n">✗</td>
@@ -1466,7 +1552,7 @@
           <td class="mx-n">✗</td>
         </tr>
         <tr>
-          <td>多因子知識衰減（6+）</td>
+          <td data-i18n="matrix_row2">多因子知識衰減（6+）</td>
           <td class="mx-y">✓</td>
           <td class="mx-p">單維</td>
           <td class="mx-n">✗</td>
@@ -1475,7 +1561,7 @@
           <td class="mx-n">✗</td>
         </tr>
         <tr class="brain-row">
-          <td>版本差距衰減 (F2)</td>
+          <td data-i18n="matrix_row3">版本差距衰減 (F2)</td>
           <td class="mx-y">✓</td>
           <td class="mx-n">✗</td>
           <td class="mx-n">✗</td>
@@ -1484,7 +1570,7 @@
           <td class="mx-n">✗</td>
         </tr>
         <tr>
-          <td>git 活動反衰減 (F3)</td>
+          <td data-i18n="matrix_row4">git 活動反衰減 (F3)</td>
           <td class="mx-y">✓</td>
           <td class="mx-n">✗</td>
           <td class="mx-n">✗</td>
@@ -1493,7 +1579,7 @@
           <td class="mx-n">✗</td>
         </tr>
         <tr class="brain-row">
-          <td>程式碼引用確認 (F5)</td>
+          <td data-i18n="matrix_row5">程式碼引用確認 (F5)</td>
           <td class="mx-y">✓</td>
           <td class="mx-n">✗</td>
           <td class="mx-n">✗</td>
@@ -1502,7 +1588,7 @@
           <td class="mx-n">✗</td>
         </tr>
         <tr>
-          <td>git commit 知識提取</td>
+          <td data-i18n="matrix_row6">git commit 知識提取</td>
           <td class="mx-y">✓</td>
           <td class="mx-n">✗</td>
           <td class="mx-n">✗</td>
@@ -1511,7 +1597,7 @@
           <td class="mx-n">✗</td>
         </tr>
         <tr class="brain-row">
-          <td>人工審核閘道 (KRB)</td>
+          <td data-i18n="matrix_row7">人工審核閘道 (KRB)</td>
           <td class="mx-y">✓ KRB</td>
           <td class="mx-n">✗</td>
           <td class="mx-n">✗</td>
@@ -1520,7 +1606,7 @@
           <td class="mx-y">✓</td>
         </tr>
         <tr>
-          <td>主動風險提醒 (NudgeEngine)</td>
+          <td data-i18n="matrix_row8">主動風險提醒 (NudgeEngine)</td>
           <td class="mx-y">✓ 零成本</td>
           <td class="mx-n">✗</td>
           <td class="mx-n">✗</td>
@@ -1529,7 +1615,7 @@
           <td class="mx-n">✗</td>
         </tr>
         <tr class="brain-row">
-          <td>零外部依賴</td>
+          <td data-i18n="matrix_row9">零外部依賴</td>
           <td class="mx-y">✓ SQLite</td>
           <td class="mx-n">✗</td>
           <td class="mx-p">需 Redis</td>
@@ -1555,31 +1641,31 @@
 
 <!-- ══ INSTALL ══ -->
 <section id="install">
-  <div class="section-badge">快速開始</div>
-  <h2 class="section-title">安裝 × <span>初始化</span></h2>
-  <p class="section-sub">三步驟完成：安裝套件、初始化專案、連接 Agent。系統需求：Python 3.10+，無需外部服務。</p>
+  <div class="section-badge" data-i18n="install_badge">快速開始</div>
+  <h2 class="section-title" data-i18n="install_title">安裝 × <span>初始化</span></h2>
+  <p class="section-sub" data-i18n="install_sub">三步驟完成：安裝套件、初始化專案、連接 Agent。系統需求：Python 3.10+，無需外部服務。</p>
 
   <div class="install-grid">
     <!-- Installation options -->
     <div class="card">
-      <div class="card-title">安裝選項</div>
+      <div class="card-title" data-i18n="install_options_title">安裝選項</div>
       <div class="install-box">
-        <div><span class="ib-cmt"># 標準安裝（含向量語意搜尋）</span></div>
+        <div><span class="ib-cmt" data-i18n="ib_cmt1"># 標準安裝（含向量語意搜尋）</span></div>
         <div><span class="ib-$">$</span> <span class="ib-cmd">pip install project-brain</span></div>
         <div>&nbsp;</div>
-        <div><span class="ib-cmt"># 含 MCP Server（Claude Code / Cursor）</span></div>
+        <div><span class="ib-cmt" data-i18n="ib_cmt2"># 含 MCP Server（Claude Code / Cursor）</span></div>
         <div><span class="ib-$">$</span> <span class="ib-cmd">pip install <span class="ib-str">"project-brain[mcp]"</span></span></div>
         <div>&nbsp;</div>
-        <div><span class="ib-cmt"># 含 Anthropic SDK（AI 知識提取）</span></div>
+        <div><span class="ib-cmt" data-i18n="ib_cmt3"># 含 Anthropic SDK（AI 知識提取）</span></div>
         <div><span class="ib-$">$</span> <span class="ib-cmd">pip install <span class="ib-str">"project-brain[anthropic]"</span></span></div>
         <div>&nbsp;</div>
-        <div><span class="ib-cmt"># 完整安裝</span></div>
+        <div><span class="ib-cmt" data-i18n="ib_cmt4"># 完整安裝</span></div>
         <div><span class="ib-$">$</span> <span class="ib-cmd">pip install <span class="ib-str">"project-brain[all]"</span></span></div>
         <div>&nbsp;</div>
-        <div><span class="ib-cmt"># 初始化專案</span></div>
+        <div><span class="ib-cmt" data-i18n="ib_cmt5"># 初始化專案</span></div>
         <div><span class="ib-$">$</span> <span class="ib-cmd">cd /your/project &amp;&amp; brain setup</span></div>
         <div>&nbsp;</div>
-        <div><span class="ib-cmt"># 驗證 sqlite-vec</span></div>
+        <div><span class="ib-cmt" data-i18n="ib_cmt6"># 驗證 sqlite-vec</span></div>
         <div><span class="ib-$">$</span> <span class="ib-cmd">brain doctor</span></div>
       </div>
     </div>
@@ -1587,27 +1673,27 @@
     <!-- Quick Start steps -->
     <div>
       <div class="card" style="margin-bottom:16px;">
-        <div class="card-title">三步驟快速開始</div>
+        <div class="card-title" data-i18n="quickstart_title">三步驟快速開始</div>
         <div style="display:flex;flex-direction:column;gap:12px;">
           <div style="display:flex;gap:14px;align-items:flex-start;">
             <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#fff;background:var(--cyan);border-radius:4px;padding:3px 8px;flex-shrink:0;">01</span>
             <div>
-              <div style="font-size:13px;font-weight:700;margin-bottom:4px;">加入第一條知識</div>
+              <div style="font-size:13px;font-weight:700;margin-bottom:4px;" data-i18n="qs_step1_title">加入第一條知識</div>
               <div style="font-family:'Roboto Mono',monospace;font-size:11.5px;color:var(--cyan);background:var(--surf2);border:1px solid var(--bord);border-radius:5px;padding:7px 10px;line-height:1.8;">brain add "JWT 必須使用 RS256" \<br>&nbsp;&nbsp;--kind Rule --confidence 0.9</div>
             </div>
           </div>
           <div style="display:flex;gap:14px;align-items:flex-start;">
             <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#fff;background:var(--cyan);border-radius:4px;padding:3px 8px;flex-shrink:0;">02</span>
             <div>
-              <div style="font-size:13px;font-weight:700;margin-bottom:4px;">驗證可以查到</div>
+              <div style="font-size:13px;font-weight:700;margin-bottom:4px;" data-i18n="qs_step2_title">驗證可以查到</div>
               <div style="font-family:'Roboto Mono',monospace;font-size:11.5px;color:var(--cyan);background:var(--surf2);border:1px solid var(--bord);border-radius:5px;padding:7px 10px;line-height:1.8;">brain ask "JWT 設定"<br>brain ask "支付退款"</div>
             </div>
           </div>
           <div style="display:flex;gap:14px;align-items:flex-start;">
             <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#fff;background:var(--cyan);border-radius:4px;padding:3px 8px;flex-shrink:0;">03</span>
             <div>
-              <div style="font-size:13px;font-weight:700;margin-bottom:4px;">連接 Claude Code</div>
-              <div style="font-size:12px;color:var(--muted);">加入 MCP 設定後，Agent 在每次任務開始時自動呼叫 <code style="color:var(--cyan);">get_context()</code> 取得相關知識。</div>
+              <div style="font-size:13px;font-weight:700;margin-bottom:4px;" data-i18n="qs_step3_title">連接 Claude Code</div>
+              <div style="font-size:12px;color:var(--muted);" data-i18n="qs_step3_desc">加入 MCP 設定後，Agent 在每次任務開始時自動呼叫 <code style="color:var(--cyan);">get_context()</code> 取得相關知識。</div>
             </div>
           </div>
         </div>
@@ -1615,23 +1701,23 @@
 
       <!-- Limits -->
       <div class="card">
-        <div class="card-title">已知限制與設計邊界</div>
+        <div class="card-title" data-i18n="limits_title">已知限制與設計邊界</div>
         <div>
           <div class="limit-item">
             <div class="limit-tag">~75%</div>
-            <div class="limit-text"><strong>語意召回率</strong>：FTS5 對語意相近但用詞不同的查詢效果有限。Phase 1 將加入向量語意搜尋。</div>
+            <div class="limit-text" data-i18n="limit1_text"><strong>語意召回率</strong>：FTS5 對語意相近但用詞不同的查詢效果有限。Phase 1 將加入向量語意搜尋。</div>
           </div>
           <div class="limit-item">
             <div class="limit-tag">重複</div>
-            <div class="limit-text"><strong>三層輸出可能重複</strong>：L2 episode 與 L3 node 可能說同一件事。Phase 4 計劃自動建立 DERIVES_FROM 邊。</div>
+            <div class="limit-text" data-i18n="limit2_text"><strong>三層輸出可能重複</strong>：L2 episode 與 L3 node 可能說同一件事。Phase 4 計劃自動建立 DERIVES_FROM 邊。</div>
           </div>
           <div class="limit-item">
             <div class="limit-tag">手動</div>
-            <div class="limit-text"><strong>scope 需手動指定</strong>：忘記加 <code style="color:var(--amber);font-size:11px;">--scope</code> 知識會變成全域污染。Phase 5 計劃從目錄自動推導。</div>
+            <div class="limit-text" data-i18n="limit3_text"><strong>scope 需手動指定</strong>：忘記加 <code style="color:var(--amber);font-size:11px;">--scope</code> 知識會變成全域污染。Phase 5 計劃從目錄自動推導。</div>
           </div>
           <div class="limit-item">
             <div class="limit-tag">邊界</div>
-            <div class="limit-text"><strong>無法捕捉隱性知識</strong>：只能記錄已被意識到的決策。這是設計邊界，不修。</div>
+            <div class="limit-text" data-i18n="limit4_text"><strong>無法捕捉隱性知識</strong>：只能記錄已被意識到的決策。這是設計邊界，不修。</div>
           </div>
         </div>
       </div>
@@ -1640,46 +1726,66 @@
 
   <!-- Environment Variables -->
   <div class="card" style="margin-top:24px;">
-    <div class="card-title">環境變數</div>
+    <div class="card-title" data-i18n="env_card_title">環境變數</div>
     <div style="overflow-x:auto;">
       <table class="cmp-table">
         <thead>
           <tr>
-            <th>變數</th>
-            <th>預設值</th>
-            <th>說明</th>
+            <th data-i18n="env_th_var">變數</th>
+            <th data-i18n="env_th_default">預設值</th>
+            <th data-i18n="env_th_desc">說明</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td><code style="color:var(--cyan);font-size:12px;">BRAIN_WORKDIR</code></td>
-            <td class="col-human">當前目錄</td>
-            <td>專案目錄（省略 --workdir）</td>
+            <td class="col-human" data-i18n="env_brain_workdir_default">當前目錄</td>
+            <td data-i18n="env_brain_workdir_desc">專案目錄（省略 --workdir）</td>
           </tr>
           <tr>
             <td><code style="color:var(--cyan);font-size:12px;">ANTHROPIC_API_KEY</code></td>
             <td class="col-human">—</td>
-            <td>Anthropic API（AI 提取功能）</td>
+            <td data-i18n="env_anthropic_desc">Anthropic API（AI 提取功能）</td>
           </tr>
           <tr>
             <td><code style="color:var(--cyan);font-size:12px;">BRAIN_LLM_PROVIDER</code></td>
             <td class="col-human">anthropic</td>
-            <td><code style="color:var(--amber);font-size:11px;">openai</code> 使用 Ollama / LM Studio</td>
+            <td data-i18n="env_llm_provider_desc"><code style="color:var(--amber);font-size:11px;">openai</code> 使用 Ollama / LM Studio</td>
           </tr>
           <tr>
             <td><code style="color:var(--cyan);font-size:12px;">BRAIN_LLM_MODEL</code></td>
             <td class="col-human">claude-haiku-4-5</td>
-            <td>模型名稱</td>
+            <td data-i18n="env_llm_model_desc">模型名稱</td>
           </tr>
           <tr>
             <td><code style="color:var(--cyan);font-size:12px;">BRAIN_SYNTHESIZE</code></td>
             <td class="col-human">0</td>
-            <td><code style="color:var(--teal);font-size:11px;">1</code> 啟用 Memory Synthesizer LLM 融合</td>
+            <td data-i18n="env_synthesize_desc"><code style="color:var(--teal);font-size:11px;">1</code> 啟用 Memory Synthesizer LLM 融合</td>
           </tr>
           <tr>
             <td><code style="color:var(--cyan);font-size:12px;">BRAIN_API_KEY</code></td>
             <td class="col-human">—</td>
-            <td>brain serve 的 API 認證金鑰</td>
+            <td data-i18n="env_api_key_desc">brain serve 的 API 認證金鑰</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_EMBED_PROVIDER</code></td>
+            <td class="col-human">auto</td>
+            <td data-i18n="env_embed_provider_desc"><code style="color:var(--amber);font-size:11px;">multilingual</code> / <code style="color:var(--amber);font-size:11px;">ollama</code> / <code style="color:var(--amber);font-size:11px;">openai</code> / <code style="color:var(--amber);font-size:11px;">local</code> / <code style="color:var(--amber);font-size:11px;">none</code></td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_MULTILINGUAL_MODEL</code></td>
+            <td class="col-human">multilingual-e5-small</td>
+            <td data-i18n="env_multilingual_desc">sentence-transformers 模型（中英混搜）</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_OLLAMA_EMBED_MODEL</code></td>
+            <td class="col-human">nomic-embed-text</td>
+            <td data-i18n="env_ollama_embed_desc">Ollama embedding 模型名稱</td>
+          </tr>
+          <tr>
+            <td><code style="color:var(--cyan);font-size:12px;">BRAIN_OLLAMA_URL</code></td>
+            <td class="col-human">http://localhost:11434</td>
+            <td data-i18n="env_ollama_url_desc">Ollama 服務位址（LLM 提取 + embedding）</td>
           </tr>
         </tbody>
       </table>
@@ -1691,10 +1797,10 @@
 <footer>
   <div>
     <div class="footer-logo">Project <span>Brain</span></div>
-    <div class="footer-tagline">
+    <div class="footer-tagline" data-i18n="footer_tagline">
       為 AI Agent 設計的工程記憶基礎設施。<br>
       讓每次對話都能承接上一次的決策、規則與踩坑。<br>
-      <span style="color:var(--cyan);">v0.1.0</span> · MIT License · Python 3.10+
+      <span style="color:var(--cyan);">v0.3.0</span> · MIT License · Python 3.10+
     </div>
   </div>
   <div class="footer-right">
@@ -1712,118 +1818,233 @@
 <script>
 (function () {
   /* ── Node metadata ── */
-  const META = {
-    agent: {
-      ico: '🤖', name: 'AI Agent', color: '#4368E4',
-      desc: 'Claude Code、Cursor 或任何支援 MCP/REST 的工具。每次任務開始時呼叫 get_context() 獲取相關知識，完成任務後寫入結構化 git commit（Conventional Commits 格式），形成完整的自動閉環。Agent 寫的 commit 品質遠優於人類隨意的提交，是系統的主要知識素材來源。',
-      tags: [
-        { k: '整合方式', v: 'MCP / REST API / Python SDK' },
-        { k: '讀取介面', v: 'get_context(task, scope)' },
-        { k: '寫入觸發', v: 'git commit → post-commit hook' },
-        { k: 'commit 信心', v: 'feat/fix → 0.5，wip → 0.2' },
-      ],
+  const META_LANGS = {
+    zh: {
+      agent: {
+        ico: '🤖', name: 'AI Agent', color: '#4368E4',
+        desc: 'Claude Code、Cursor 或任何支援 MCP/REST 的工具。每次任務開始時呼叫 get_context() 獲取相關知識，完成任務後寫入結構化 git commit（Conventional Commits 格式），形成完整的自動閉環。Agent 寫的 commit 品質遠優於人類隨意的提交，是系統的主要知識素材來源。',
+        tags: [
+          { k: '整合方式', v: 'MCP / REST API / Python SDK' },
+          { k: '讀取介面', v: 'get_context(task, scope)' },
+          { k: '寫入觸發', v: 'git commit → post-commit hook' },
+          { k: 'commit 信心', v: 'feat/fix → 0.5，wip → 0.2' },
+        ],
+      },
+      git: {
+        ico: '⑂', name: 'git commit', color: '#D4763A',
+        desc: 'AI Agent 完成任務後產生的結構化 commit。使用 Conventional Commits 格式（feat:/fix:/refactor:），意圖明確完整，直接來自任務描述，與人類隨意的 "fix bug" 或 "wip" 提交截然不同。這種高品質的結構化記錄，是 Brain 自動閉環的關鍵原料。',
+        tags: [
+          { k: '格式', v: 'Conventional Commits' },
+          { k: 'feat/fix/refactor', v: 'confidence 0.5' },
+          { k: 'wip / 無 prefix', v: 'confidence 0.2' },
+          { k: '觸發機制', v: 'post-commit hook 自動執行' },
+        ],
+      },
+      llm: {
+        ico: '⟳', name: 'LLM Extractor', color: '#2DAA86',
+        desc: '讀取 git commit message 與 diff，使用 LLM 分類知識類型（Pitfall/Decision/Rule/ADR）、提取決策內容，並評估信心分數。同時將事件存入 L2 情節記憶，並將候選知識送至 KRB 等待人工審核。無 API Key 時靜默跳過，仍存儲 commit 基本資訊。',
+        tags: [
+          { k: '預設模型', v: 'claude-haiku-4-5-20251001' },
+          { k: '本地替代', v: 'Ollama / LM Studio' },
+          { k: '無 API Key', v: '靜默降級，仍記錄基本資訊' },
+          { k: '預估費用', v: '每次 commit 約 $0.0001' },
+        ],
+      },
+      krb: {
+        ico: '👁', name: 'KRB 知識審核委員會', color: '#2DAA86',
+        desc: 'Knowledge Review Board。LLM 自動提取的候選知識暫存在此 staging 區域，等待工程師人工審核。審核通過後信心分數從 0.5 提升至 0.9，正式進入 L3 知識圖譜。這是「人機協作非全自動」設計哲學的核心體現——自動化降低摩擦，但判斷仍由人類負責。',
+        tags: [
+          { k: '候選來源', v: 'LLM Extractor 自動提取' },
+          { k: '審核指令', v: 'brain review approve <id>' },
+          { k: '核准後信心', v: '0.9（確認正確）' },
+          { k: '目的', v: '防止低品質知識污染 L3 圖譜' },
+        ],
+      },
+      madd: {
+        ico: '✚', name: 'brain add（人工加入）', color: '#3558CC',
+        desc: '工程師主動加入的知識，直接進入 L3 語意記憶，不需要 KRB 審核流程。信心預設 0.8，可透過 --confidence 參數調整。這是唯一能捕捉「不言而喻的隱性知識」的途徑——那些工程師覺得理所當然、從未寫入 commit 的技術約定。',
+        tags: [
+          { k: '預設信心', v: '0.8（信任但未驗證）' },
+          { k: '種類', v: '--kind Pitfall/Decision/Rule/ADR/Note' },
+          { k: '作用域', v: '--scope payment_service' },
+          { k: '範例', v: 'brain add "JWT 必須用 RS256" --kind Rule' },
+        ],
+      },
+      l1a: {
+        ico: '⚡', name: 'L1a 工作記憶 (Working Memory)', color: '#D4763A',
+        desc: '對應 Atkinson-Shiffrin 認知模型的 Working Memory 層。儲存當前任務的即時脈絡——今日筆記、任務上下文、當前對話狀態。Agent 對話結束後自動清除。優質的工作記憶內容會定期整合（consolidate）至 L3 語意記憶長期保存。',
+        tags: [
+          { k: '生命週期', v: '單次對話，結束後清除' },
+          { k: '內容', v: '今日筆記、當前任務脈絡、對話歷史' },
+          { k: '整合去向', v: '定期 consolidate → L3 語意記憶' },
+          { k: 'SQLite table', v: 'sessions' },
+        ],
+      },
+      l2: {
+        ico: '📚', name: 'L2 情節記憶 (Episodic Memory)', color: '#3558CC',
+        desc: '對應認知科學的 Episodic Memory 層。儲存 git commit 歷史與工程事件序列，支援「時光機查詢」——可查詢任意時間點或 git 分支的知識狀態（temporal_query）。回答「那次 JWT 漏洞事件是什麼時候發生的？當時做了什麼決策？」',
+        tags: [
+          { k: 'MCP 工具', v: 'temporal_query(at_time, git_branch)' },
+          { k: '主要來源', v: 'git commits via post-commit hook' },
+          { k: 'SQLite tables', v: 'episodes, temporal_edges' },
+          { k: '特色', v: '支援時序關聯查詢與 git 分支隔離' },
+        ],
+      },
+      l3: {
+        ico: '🕸', name: 'L3 語意記憶 (Semantic Memory)', color: '#4368E4',
+        desc: '系統的核心資產，對應 Semantic Memory 層。儲存結構化知識圖譜，包含工程特化的節點類型（Pitfall/Decision/Rule/ADR/Note）與因果關係邊（PREVENTS/CAUSES/REQUIRES/BLOCKS）。DecayEngine 每 7 天以六因子公式重算所有節點的信心分數，確保知識隨 codebase 演進動態更新。',
+        tags: [
+          { k: '知識類型', v: 'Pitfall / Decision / Rule / ADR / Note' },
+          { k: '邊類型', v: 'PREVENTS / CAUSES / REQUIRES / BLOCKS' },
+          { k: '衰減公式', v: 'F1×F2×F3×F4×F5 + F7' },
+          { k: 'SQLite tables', v: 'nodes, edges' },
+        ],
+      },
+      gctx: {
+        ico: '⊛', name: 'get_context()', color: '#4368E4',
+        desc: '系統對外的統一讀取介面，也是 MCP 最核心的工具。同時查詢 L1a（當前脈絡）、L2（相關歷史事件）、L3（知識圖譜+因果鏈），並透過 NudgeEngine 主動插入風險警告。支援 scope 過濾防止跨模組知識污染。',
+        tags: [
+          { k: '函式簽名', v: 'get_context(task: str, scope?: str)' },
+          { k: '回傳類型', v: 'ContextResult（含 to_prompt() 方法）' },
+          { k: 'NudgeEngine', v: '主動插入風險警告，零額外 LLM 成本' },
+          { k: '信心閾值', v: 'confidence > 0.20 才回傳' },
+        ],
+      },
+      synth: {
+        ico: '◈', name: 'Memory Synthesizer（融合層）', color: '#8668CE',
+        desc: '可選的 LLM 融合層（設定 BRAIN_SYNTHESIZE=1 啟用）。將 get_context() 回傳的三層原始資料交由 LLM 融合成一份精簡的「戰術摘要」，消除 L2 和 L3 之間的重複資訊，並將最重要的警告置頂。預設關閉以控制成本，可搭配本地 Ollama 免費使用。',
+        tags: [
+          { k: '啟用方式', v: 'export BRAIN_SYNTHESIZE=1' },
+          { k: '費用（雲端）', v: '每次約 $0.0002（claude-haiku）' },
+          { k: '費用（本地）', v: 'Ollama 免費' },
+          { k: '預設行為', v: '關閉，直接拼接三層原始輸出' },
+        ],
+      },
+      decay: {
+        ico: '⊖', name: 'DecayEngine（信心衰減引擎）', color: '#D64E48',
+        desc: '每 7 天對 L3 所有知識節點執行六因子信心重算。這是「以 git 歷史作為知識有效性真值來源」的核心機制——知識有效性不由 AI 自判，而由 codebase 的實際演進決定。信心低於 0.20 的節點自動標記為過時（不刪除，只降低查詢可見度）。',
+        tags: [
+          { k: '執行週期', v: '每 7 天（定期批次任務）' },
+          { k: '衰減公式', v: 'F1(時間) × F2(版本差距) × F3(git活動) × F4(矛盾) × F5(程式碼引用) + F7(查詢頻率)' },
+          { k: '過時閾值', v: 'confidence < 0.20 → 標記 stale' },
+          { k: '哲學', v: '降低可見度，不刪除知識' },
+        ],
+      },
     },
-    git: {
-      ico: '⑂', name: 'git commit', color: '#D4763A',
-      desc: 'AI Agent 完成任務後產生的結構化 commit。使用 Conventional Commits 格式（feat:/fix:/refactor:），意圖明確完整，直接來自任務描述，與人類隨意的 "fix bug" 或 "wip" 提交截然不同。這種高品質的結構化記錄，是 Brain 自動閉環的關鍵原料。',
-      tags: [
-        { k: '格式', v: 'Conventional Commits' },
-        { k: 'feat/fix/refactor', v: 'confidence 0.5' },
-        { k: 'wip / 無 prefix', v: 'confidence 0.2' },
-        { k: '觸發機制', v: 'post-commit hook 自動執行' },
-      ],
-    },
-    llm: {
-      ico: '⟳', name: 'LLM Extractor', color: '#2DAA86',
-      desc: '讀取 git commit message 與 diff，使用 LLM 分類知識類型（Pitfall/Decision/Rule/ADR）、提取決策內容，並評估信心分數。同時將事件存入 L2 情節記憶，並將候選知識送至 KRB 等待人工審核。無 API Key 時靜默跳過，仍存儲 commit 基本資訊。',
-      tags: [
-        { k: '預設模型', v: 'claude-haiku-4-5-20251001' },
-        { k: '本地替代', v: 'Ollama / LM Studio' },
-        { k: '無 API Key', v: '靜默降級，仍記錄基本資訊' },
-        { k: '預估費用', v: '每次 commit 約 $0.0001' },
-      ],
-    },
-    krb: {
-      ico: '👁', name: 'KRB 知識審核委員會', color: '#2DAA86',
-      desc: 'Knowledge Review Board。LLM 自動提取的候選知識暫存在此 staging 區域，等待工程師人工審核。審核通過後信心分數從 0.5 提升至 0.9，正式進入 L3 知識圖譜。這是「人機協作非全自動」設計哲學的核心體現——自動化降低摩擦，但判斷仍由人類負責。',
-      tags: [
-        { k: '候選來源', v: 'LLM Extractor 自動提取' },
-        { k: '審核指令', v: 'brain review approve <id>' },
-        { k: '核准後信心', v: '0.9（確認正確）' },
-        { k: '目的', v: '防止低品質知識污染 L3 圖譜' },
-      ],
-    },
-    madd: {
-      ico: '✚', name: 'brain add（人工加入）', color: '#3558CC',
-      desc: '工程師主動加入的知識，直接進入 L3 語意記憶，不需要 KRB 審核流程。信心預設 0.8，可透過 --confidence 參數調整。這是唯一能捕捉「不言而喻的隱性知識」的途徑——那些工程師覺得理所當然、從未寫入 commit 的技術約定。',
-      tags: [
-        { k: '預設信心', v: '0.8（信任但未驗證）' },
-        { k: '種類', v: '--kind Pitfall/Decision/Rule/ADR/Note' },
-        { k: '作用域', v: '--scope payment_service' },
-        { k: '範例', v: 'brain add "JWT 必須用 RS256" --kind Rule' },
-      ],
-    },
-    l1a: {
-      ico: '⚡', name: 'L1a 工作記憶 (Working Memory)', color: '#D4763A',
-      desc: '對應 Atkinson-Shiffrin 認知模型的 Working Memory 層。儲存當前任務的即時脈絡——今日筆記、任務上下文、當前對話狀態。Agent 對話結束後自動清除。優質的工作記憶內容會定期整合（consolidate）至 L3 語意記憶長期保存。',
-      tags: [
-        { k: '生命週期', v: '單次對話，結束後清除' },
-        { k: '內容', v: '今日筆記、當前任務脈絡、對話歷史' },
-        { k: '整合去向', v: '定期 consolidate → L3 語意記憶' },
-        { k: 'SQLite table', v: 'sessions' },
-      ],
-    },
-    l2: {
-      ico: '📚', name: 'L2 情節記憶 (Episodic Memory)', color: '#3558CC',
-      desc: '對應認知科學的 Episodic Memory 層。儲存 git commit 歷史與工程事件序列，支援「時光機查詢」——可查詢任意時間點或 git 分支的知識狀態（temporal_query）。回答「那次 JWT 漏洞事件是什麼時候發生的？當時做了什麼決策？」',
-      tags: [
-        { k: 'MCP 工具', v: 'temporal_query(at_time, git_branch)' },
-        { k: '主要來源', v: 'git commits via post-commit hook' },
-        { k: 'SQLite tables', v: 'episodes, temporal_edges' },
-        { k: '特色', v: '支援時序關聯查詢與 git 分支隔離' },
-      ],
-    },
-    l3: {
-      ico: '🕸', name: 'L3 語意記憶 (Semantic Memory)', color: '#4368E4',
-      desc: '系統的核心資產，對應 Semantic Memory 層。儲存結構化知識圖譜，包含工程特化的節點類型（Pitfall/Decision/Rule/ADR/Note）與因果關係邊（PREVENTS/CAUSES/REQUIRES/BLOCKS）。DecayEngine 每 7 天以六因子公式重算所有節點的信心分數，確保知識隨 codebase 演進動態更新。',
-      tags: [
-        { k: '知識類型', v: 'Pitfall / Decision / Rule / ADR / Note' },
-        { k: '邊類型', v: 'PREVENTS / CAUSES / REQUIRES / BLOCKS' },
-        { k: '衰減公式', v: 'F1×F2×F3×F4×F5 + F7' },
-        { k: 'SQLite tables', v: 'nodes, edges' },
-      ],
-    },
-    gctx: {
-      ico: '⊛', name: 'get_context()', color: '#4368E4',
-      desc: '系統對外的統一讀取介面，也是 MCP 最核心的工具。同時查詢 L1a（當前脈絡）、L2（相關歷史事件）、L3（知識圖譜+因果鏈），並透過 NudgeEngine 主動插入風險警告。支援 scope 過濾防止跨模組知識污染。',
-      tags: [
-        { k: '函式簽名', v: 'get_context(task: str, scope?: str)' },
-        { k: '回傳類型', v: 'ContextResult（含 to_prompt() 方法）' },
-        { k: 'NudgeEngine', v: '主動插入風險警告，零額外 LLM 成本' },
-        { k: '信心閾值', v: 'confidence > 0.20 才回傳' },
-      ],
-    },
-    synth: {
-      ico: '◈', name: 'Memory Synthesizer（融合層）', color: '#8668CE',
-      desc: '可選的 LLM 融合層（設定 BRAIN_SYNTHESIZE=1 啟用）。將 get_context() 回傳的三層原始資料交由 LLM 融合成一份精簡的「戰術摘要」，消除 L2 和 L3 之間的重複資訊，並將最重要的警告置頂。預設關閉以控制成本，可搭配本地 Ollama 免費使用。',
-      tags: [
-        { k: '啟用方式', v: 'export BRAIN_SYNTHESIZE=1' },
-        { k: '費用（雲端）', v: '每次約 $0.0002（claude-haiku）' },
-        { k: '費用（本地）', v: 'Ollama 免費' },
-        { k: '預設行為', v: '關閉，直接拼接三層原始輸出' },
-      ],
-    },
-    decay: {
-      ico: '⊖', name: 'DecayEngine（信心衰減引擎）', color: '#D64E48',
-      desc: '每 7 天對 L3 所有知識節點執行六因子信心重算。這是「以 git 歷史作為知識有效性真值來源」的核心機制——知識有效性不由 AI 自判，而由 codebase 的實際演進決定。信心低於 0.20 的節點自動標記為過時（不刪除，只降低查詢可見度）。',
-      tags: [
-        { k: '執行週期', v: '每 7 天（定期批次任務）' },
-        { k: '衰減公式', v: 'F1(時間) × F2(版本差距) × F3(git活動) × F4(矛盾) × F5(程式碼引用) + F7(查詢頻率)' },
-        { k: '過時閾值', v: 'confidence < 0.20 → 標記 stale' },
-        { k: '哲學', v: '降低可見度，不刪除知識' },
-      ],
+    en: {
+      agent: {
+        ico: '🤖', name: 'AI Agent', color: '#4368E4',
+        desc: 'Claude Code, Cursor, or any MCP/REST-compatible tool. Calls get_context() at task start to retrieve relevant knowledge, then writes a structured git commit (Conventional Commits) on completion, forming the auto-feedback loop. Agent commits are far higher quality than casual human commits—they are the primary knowledge source.',
+        tags: [
+          { k: 'Integration', v: 'MCP / REST API / Python SDK' },
+          { k: 'Read API', v: 'get_context(task, scope)' },
+          { k: 'Write trigger', v: 'git commit → post-commit hook' },
+          { k: 'Commit confidence', v: 'feat/fix → 0.5, wip → 0.2' },
+        ],
+      },
+      git: {
+        ico: '⑂', name: 'git commit', color: '#D4763A',
+        desc: "Structured commit produced by AI Agent after task completion. Uses Conventional Commits format (feat:/fix:/refactor:)—explicit, complete, derived directly from the task description. Far different from casual human \"fix bug\" or \"wip\" commits. This high-quality structured record is the key ingredient for Brain's auto-feedback loop.",
+        tags: [
+          { k: 'Format', v: 'Conventional Commits' },
+          { k: 'feat/fix/refactor', v: 'confidence 0.5' },
+          { k: 'wip / no prefix', v: 'confidence 0.2' },
+          { k: 'Trigger', v: 'post-commit hook auto-runs' },
+        ],
+      },
+      llm: {
+        ico: '⟳', name: 'LLM Extractor', color: '#2DAA86',
+        desc: 'Reads git commit message and diff, uses LLM to classify knowledge type (Pitfall/Decision/Rule/ADR), extract decisions, and estimate confidence. Simultaneously stores events in L2 episodic memory and sends candidate knowledge to KRB for review. Silently skips if no API key, still stores basic commit info.',
+        tags: [
+          { k: 'Default model', v: 'claude-haiku-4-5-20251001' },
+          { k: 'Local alternative', v: 'Ollama / LM Studio' },
+          { k: 'No API Key', v: 'Silent fallback, still records basics' },
+          { k: 'Estimated cost', v: '~$0.0001 per commit' },
+        ],
+      },
+      krb: {
+        ico: '👁', name: 'KRB — Knowledge Review Board', color: '#2DAA86',
+        desc: 'LLM-extracted candidate knowledge is staged here, awaiting engineer review. Approved knowledge has confidence raised from 0.5 to 0.9 and enters the L3 knowledge graph. This is the core of the "human-AI collaboration, not full automation" philosophy—automation reduces friction, but judgment remains human.',
+        tags: [
+          { k: 'Source', v: 'LLM Extractor auto-extraction' },
+          { k: 'Review command', v: 'brain review approve <id>' },
+          { k: 'Post-approval confidence', v: '0.9 (confirmed correct)' },
+          { k: 'Purpose', v: 'Prevent low-quality knowledge polluting L3' },
+        ],
+      },
+      madd: {
+        ico: '✚', name: 'brain add (Manual)', color: '#3558CC',
+        desc: 'Engineer-added knowledge enters L3 semantic memory directly, bypassing the KRB review flow. Confidence defaults to 0.8, adjustable via --confidence. This is the only way to capture "tacit knowledge"—technical conventions engineers consider obvious and never commit.',
+        tags: [
+          { k: 'Default confidence', v: '0.8 (trusted but unverified)' },
+          { k: 'Types', v: '--kind Pitfall/Decision/Rule/ADR/Note' },
+          { k: 'Scope', v: '--scope payment_service' },
+          { k: 'Example', v: 'brain add "JWT must use RS256" --kind Rule' },
+        ],
+      },
+      l1a: {
+        ico: '⚡', name: 'L1a Working Memory', color: '#D4763A',
+        desc: "Maps to the Working Memory layer of the Atkinson-Shiffrin model. Stores immediate task context—today's notes, task state, current session. Cleared after Agent session ends. High-quality working memory is periodically consolidated into L3 semantic memory for long-term storage.",
+        tags: [
+          { k: 'Lifecycle', v: 'Single session, cleared on exit' },
+          { k: 'Content', v: "Today's notes, task context, session history" },
+          { k: 'Consolidation', v: 'Periodic consolidate → L3 semantic memory' },
+          { k: 'SQLite table', v: 'sessions' },
+        ],
+      },
+      l2: {
+        ico: '📚', name: 'L2 Episodic Memory', color: '#3558CC',
+        desc: 'Maps to the Episodic Memory layer in cognitive science. Stores git commit history and engineering event sequences, supporting "time machine queries"—query knowledge state at any point in time or git branch (temporal_query). Answers: "When did that JWT vulnerability incident happen? What decisions were made?"',
+        tags: [
+          { k: 'MCP tool', v: 'temporal_query(at_time, git_branch)' },
+          { k: 'Primary source', v: 'git commits via post-commit hook' },
+          { k: 'SQLite tables', v: 'episodes, temporal_edges' },
+          { k: 'Feature', v: 'Temporal association queries & git branch isolation' },
+        ],
+      },
+      l3: {
+        ico: '🕸', name: 'L3 Semantic Memory', color: '#4368E4',
+        desc: "The system's core asset, mapping to the Semantic Memory layer. Stores a structured knowledge graph with engineering-specialized node types (Pitfall/Decision/Rule/ADR/Note) and causal relation edges (PREVENTS/CAUSES/REQUIRES/BLOCKS). DecayEngine recalculates all node confidence scores every 7 days using a six-factor formula, keeping knowledge current with codebase evolution.",
+        tags: [
+          { k: 'Knowledge types', v: 'Pitfall / Decision / Rule / ADR / Note' },
+          { k: 'Edge types', v: 'PREVENTS / CAUSES / REQUIRES / BLOCKS' },
+          { k: 'Decay formula', v: 'F1×F2×F3×F4×F5 + F7' },
+          { k: 'SQLite tables', v: 'nodes, edges' },
+        ],
+      },
+      gctx: {
+        ico: '⊛', name: 'get_context()', color: '#4368E4',
+        desc: 'The unified read interface and most critical MCP tool. Simultaneously queries L1a (current context), L2 (relevant history), L3 (knowledge graph + causal chains), and proactively injects risk warnings via NudgeEngine. Supports scope filtering to prevent cross-module knowledge pollution.',
+        tags: [
+          { k: 'Signature', v: 'get_context(task: str, scope?: str)' },
+          { k: 'Return type', v: 'ContextResult (with to_prompt() method)' },
+          { k: 'NudgeEngine', v: 'Proactive risk warnings, zero extra LLM cost' },
+          { k: 'Confidence threshold', v: 'confidence > 0.20 to return' },
+        ],
+      },
+      synth: {
+        ico: '◈', name: 'Memory Synthesizer', color: '#8668CE',
+        desc: 'Optional LLM fusion layer (enable with BRAIN_SYNTHESIZE=1). Takes raw three-layer output from get_context() and fuses it into a concise "tactical summary" via LLM, eliminating duplication between L2 and L3, and surfacing the most critical warnings. Off by default for cost control; works free with local Ollama.',
+        tags: [
+          { k: 'Enable', v: 'export BRAIN_SYNTHESIZE=1' },
+          { k: 'Cost (cloud)', v: '~$0.0002 per call (claude-haiku)' },
+          { k: 'Cost (local)', v: 'Ollama — free' },
+          { k: 'Default', v: 'Off — raw concatenation of three layers' },
+        ],
+      },
+      decay: {
+        ico: '⊖', name: 'DecayEngine', color: '#D64E48',
+        desc: 'Recalculates confidence for all L3 knowledge nodes every 7 days using a six-factor formula. This is the core mechanism of "using git history as the ground truth for knowledge validity"—validity is not self-assessed by AI, but determined by actual codebase evolution. Nodes with confidence below 0.20 are auto-marked stale (not deleted, just reduced visibility).',
+        tags: [
+          { k: 'Run cycle', v: 'Every 7 days (scheduled batch task)' },
+          { k: 'Decay formula', v: 'F1(time) × F2(version gap) × F3(git activity) × F4(contradiction) × F5(code reference) + F7(query frequency)' },
+          { k: 'Stale threshold', v: 'confidence < 0.20 → marked stale' },
+          { k: 'Philosophy', v: 'Reduce visibility, never delete knowledge' },
+        ],
+      },
     },
   };
+  let META = META_LANGS.zh;
 
   /* ── Mode switching ── */
   const dg = document.getElementById('dg');
@@ -1923,6 +2144,398 @@
     requestAnimationFrame(tick);
   }
   tick();
+})();
+
+/* ── i18n ── */
+const TRANSLATIONS = {
+  zh: {
+    nav_problem: '問題', nav_flow: '架構', nav_memory: '記憶層',
+    nav_confidence: '信心衰減', nav_philosophy: '設計理念',
+    nav_academic: '學術對比', nav_install: '安裝', nav_cta: '開始使用',
+    hero_tagline: '為 AI Agent 設計的工程記憶基礎設施。\n讓每次對話都能承接上一次的決策、規則與踩坑。',
+    hero_btn_install: '立即安裝',
+    term_cmt1: '# 初始化 Brain',
+    term_out1: '.brain/brain.db 建立完成',
+    term_out2: 'git post-commit hook 已安裝',
+    term_cmt2: '# 加入踩坑記錄',
+    term_cmt3: '# Agent 查詢時自動取得',
+    term_pitfall: 'Pitfall: 必須用 idempotency_key',
+    problem_badge: '核心問題',
+    problem_title: '每次對話，<span>歸零</span>的代價',
+    problem_sub: '你六個月前踩過 Stripe Webhook 冪等性的坑，修好了，寫了 commit。但下次 Agent 幫你實作退款時，它不知道——以完全一樣的方式再踩一次。這不是 Agent 不夠聰明，而是它沒有記憶。',
+    problem_card_title: '核心問題與解法',
+    pf_step1_label: '問題', pf_step1_val: 'AI 每次對話對專案一無所知，重複踩過同樣的坑',
+    pf_step2_label: '解法', pf_step2_val: '在專案中建立可被 Agent 查詢的長期記憶庫',
+    pf_step3_label: '結果', pf_step3_val: 'Agent 帶著歷史知識寫程式，不再重複錯誤',
+    loop_card_title: '自動正向閉環',
+    loop_item1: 'Agent 完成任務，結構化 commit',
+    loop_item2: 'Brain 提取決策與踩坑',
+    loop_item3: '下次 Agent 啟動時即知道',
+    loop_item4: 'Agent 不重複踩坑，寫更好的 commit',
+    cmp_card_title: 'AI Agent Commit vs 人類 Commit',
+    cmp_th1: '維度', cmp_th2: '人類', cmp_th3: 'AI Agent',
+    cmp_row1_dim: '格式', cmp_row1_human: '"fix bug"、"wip"',
+    cmp_row2_dim: '意圖', cmp_row2_human: '往往隱含、省略', cmp_row2_ai: '明確、完整',
+    cmp_row3_dim: '一致性', cmp_row3_human: '因人而異', cmp_row3_ai: '穩定，由 Prompt 決定',
+    cmp_row4_dim: '頻率', cmp_row4_human: '人工驅動，不定期', cmp_row4_ai: '任務完成即 commit',
+    flow_badge: '系統架構',
+    flow_title: 'Brain <span>互動資料流</span>',
+    flow_sub: '點擊節點查看詳情，切換模式高亮對應路徑。從 git commit 到 Agent 取得知識的完整閉環管線，寫入、記憶、讀取三條路徑各司其職。',
+    flow_btn_all: '全路徑', flow_btn_write: '⬡ 寫入路徑', flow_btn_read: '◈ 讀取路徑', flow_btn_maint: '⊙ 維護路徑',
+    flow_legend_write: '寫入路徑', flow_legend_read: '讀取路徑', flow_legend_maint: '維護路徑', flow_legend_consol: '記憶整合（定期）',
+    flow_col_write: 'Write Sources', flow_col_mem: 'Memory Layers', flow_col_read: 'Read Path',
+    flow_agent_ns: 'Claude Code / Cursor / 任何 MCP 工具',
+    flow_git_ns: 'feat: / fix: / refactor:\nAI Agent 結構化 commit',
+    flow_llm_ns: '分類知識類型\n提取決策與踩坑',
+    flow_krb_nn: 'KRB 審核委員會', flow_krb_ns: '候選知識暫存\n等待人工審核確認',
+    flow_madd_ns: '人工直接加入\nconfidence 0.8',
+    flow_l1a_nn: '工作記憶', flow_l1a_ns: 'Working Memory · 當前任務脈絡',
+    flow_l2_nn: '情節記憶', flow_l2_ns: 'Episodic Memory · git 歷史',
+    flow_l3_nn: '語意記憶', flow_l3_ns: 'Semantic Memory · 知識圖譜',
+    flow_gctx_ns: '統一讀取三層\n組裝 + 因果鏈推理',
+    flow_synth_ns: 'LLM 融合三層輸出\nBRAIN_SYNTHESIZE=1 啟用',
+    flow_decay_nn: 'DecayEngine', flow_decay_ns: '六因子信心重算\n每 7 天執行',
+    memory_badge: '記憶架構',
+    memory_title: 'Atkinson-Shiffrin <span>三層記憶</span>',
+    memory_sub: '架構直接對應認知科學的多儲存記憶模型，三層各司其職，get_context() 統一讀取並融合輸出。',
+    mem_l1a_name: '工作記憶', mem_l1a_en: 'Working Memory',
+    mem_l1a_desc: '當前任務的即時注意力，對話結束後自動清除。存儲今日筆記與當前任務脈絡。',
+    mem_l2_name: '情節記憶', mem_l2_en: 'Episodic Memory',
+    mem_l2_desc: '「那次 JWT 事件是什麼時候？」對應 git commit 歷史、事件序列，支援時光機查詢 temporal_query。',
+    mem_l3_name: '語意記憶', mem_l3_en: 'Semantic Memory',
+    mem_l3_desc: '「JWT 必須用 RS256」— 不是事件，是規律。精煉自 L2 的長期知識，支援知識圖譜因果關係。',
+    kinds_title: '知識類型 <span style="color:var(--cyan);">--kind</span>',
+    kinds_sub: 'L3 語意記憶的五種節點類型，從踩坑到架構決策全面覆蓋。',
+    kind_pitfall_name: '踩坑記錄', kind_pitfall_desc: '曾經犯過的錯誤、隱藏的陷阱。信心分數讓 Agent 評估可信度。',
+    kind_decision_name: '架構決策', kind_decision_desc: '為什麼選 A 而不選 B。保留決策背後的脈絡，防止未來重複討論。',
+    kind_rule_name: '工程規則', kind_rule_desc: '必須遵守的技術約定。Brain 回傳後 Agent 將其視為硬性約束。',
+    kind_adr_name: '架構決策記錄', kind_adr_desc: '正式的架構決策文件，對應 Architecture Decision Record 標準。',
+    kind_note_name: '一般筆記', kind_note_desc: '其他值得記住但不屬於上述類型的資訊。',
+    conf_badge: '知識可信度',
+    conf_title: '信心分級 × <span>多因子衰減</span>',
+    conf_sub: '知識不是「對」或「錯」，而是有不同程度的可信度，並隨時間與環境動態衰減。信心低於 0.20 自動標記為過時。',
+    conf_card_title: '信心分數來源',
+    conf_label1: '人工驗證後加入', conf_label2: '人工直接加入', conf_label3: 'Agent 自動發現',
+    conf_label4: 'git commit 提取', conf_label5: 'fix/wip commit',
+    decay_card_title: '六因子衰減公式',
+    decay_formula_label: '信心',
+    f1_name: '時間衰減', f1_desc: '基礎日衰減率 0.003，越舊越低',
+    f2_name: '技術版本落差', f2_desc: 'React 16 → 現在 React 18 → 懲罰',
+    f3_name: '程式碼活動信號', f3_desc: '相關檔案近 30 天有修改 → 加分',
+    f4_name: '矛盾偵測', f4_desc: '兩條知識互相矛盾 → 雙方懲罰',
+    f5_name: '程式碼引用確認', f5_desc: '知識中提到的類別仍存在 → 加分',
+    f7_name: '使用頻率', f7_desc: '被查詢越多次 → 衰減越慢',
+    decay_warning: '信心 < 0.20 → 自動標記為過時，衰減不刪除知識',
+    cli_badge: '使用介面',
+    cli_title: 'CLI 命令 × <span>Agent 整合</span>',
+    cli_sub: '完整的命令列介面，支援 MCP、REST API 與 Python SDK 三種 Agent 整合方式。',
+    cli_card_title: 'CLI 命令參考',
+    cli_desc_setup: '一鍵初始化，建立 DB + 安裝 git hook',
+    cli_desc_add: '手動加入知識節點',
+    cli_desc_ask: '查詢知識庫',
+    cli_desc_status: '記憶庫統計與健康狀態',
+    cli_desc_sync: '從最新 commit 手動學習',
+    cli_desc_serve: '啟動 REST API (port 7891)',
+    cli_desc_serve_mcp: '啟動 MCP Server',
+    cli_desc_webui: 'D3.js 知識圖譜視覺化',
+    cli_desc_doctor: '驗證 sqlite-vec 三層診斷',
+    cli_desc_review: 'KRB 人工審查待確認知識',
+    cli_desc_report: '匯出 JSON / Markdown 知識報告',
+    cli_desc_search: '語意搜尋知識庫（支援中英混搜）',
+    cli_desc_link_issue: '關聯 GitHub Issue 至知識節點',
+    cli_desc_prescreen: 'AI 輔助 KRB 批次預審',
+    cli_desc_fed_export: '匯出 global 知識聯邦 bundle',
+    cli_desc_fed_import: '匯入外部專案知識 bundle',
+    mcp_card_title: 'Claude Code MCP 設定',
+    mcp_tools_card_title: 'MCP 可用工具（v0.3.0 共 13 個）',
+    mcp_desc_get_context: '取得任務相關知識（含因果鏈 + 主動警告）',
+    mcp_desc_add_knowledge: 'Agent 寫入新知識到 Brain',
+    mcp_desc_search_knowledge: '直接語意搜尋知識庫',
+    mcp_desc_temporal_query: '時光機——讀取指定時間點的知識狀態',
+    mcp_desc_brain_status: '記憶庫統計',
+    mcp_desc_complete_task: '記錄任務完成，寫入決策 / 踩坑 / 經驗',
+    mcp_desc_report_knowledge_outcome: '回饋知識節點是否有效，動態調整信心分數',
+    mcp_desc_krb_pre_screen: 'AI 輔助 KRB 預審，批次生成審核建議',
+    mcp_desc_answer_question: '基於知識庫回答自然語言問題',
+    mcp_desc_impact_analysis: '分析修改影響範圍，查詢相關知識節點',
+    mcp_desc_reasoning_chain: '追蹤知識因果推理鏈',
+    mcp_desc_generate_questions: 'AI 生成待補充知識的問題清單',
+    mcp_desc_mark_helpful: '標記知識有幫助，信心 +0.03',
+    phil_badge: '工程哲學',
+    phil_title: '五個<span>設計原則</span>',
+    phil_sub: '對抗遺忘，而非追求全知。記憶是工程團隊的基礎設施。',
+    phil01_title: '零依賴優先', phil01_desc: '核心功能只依賴 Python 標準函式庫與 SQLite。不需要 Docker、Redis、向量資料庫，brain setup 一行指令，無需配置任何外部服務。',
+    phil02_title: '單一文件，備份即複製', phil02_desc: '所有記憶存在 .brain/brain.db，一個標準 SQLite 文件。備份只需 cp brain.db brain.db.bak，不需要備份腳本或管理員介入。',
+    phil03_title: '降級永遠可用', phil03_desc: 'Brain 的故障模式是「靜默降級」，而不是「阻斷流程」。無 API Key 時跳過 LLM 提取，無向量索引時降級為 FTS5 搜尋，知識庫為空時回傳空字串。',
+    phil04_title: '信心分級，而非二元判斷', phil04_desc: '知識不是「對」或「錯」，而是有不同程度的可信度。六因子動態衰減公式讓信心隨時間、版本差距、程式碼活動即時更新。',
+    phil05_title: '人機協作，而非全自動', phil05_desc: '自動化降低摩擦，但不替代判斷。brain sync（git hook）自動記錄每次 commit，提供原始素材。真正有價值的知識，仍然需要工程師主動用 brain add 確認和補充。這不是設計缺陷，是刻意的選擇——全自動提取的知識品質不足以直接信任。',
+    degrade_card_title: '降級對照表',
+    degrade_cond1: '無 API Key', degrade_act1: '跳過 LLM 提取，仍記錄 commit 基本資訊，confidence 0.2',
+    degrade_cond2: '無向量索引', degrade_act2: '降級為 FTS5 關鍵字搜尋，語意匹配能力降低但仍可用',
+    degrade_cond3: 'MCP 連線失敗', degrade_act3: 'CLAUDE.md 提示 Agent 主動查詢，降級為手動模式',
+    degrade_cond4: '知識庫為空', degrade_act4: '回傳空字串，不阻擋 Agent 正常運作',
+    academic_badge: '學術定位',
+    academic_title: '研究對比 × <span>功能矩陣</span>',
+    academic_sub: 'Project Brain 三層架構直接對應 Atkinson-Shiffrin 多儲存記憶模型（1968），並參考 CoALA（arXiv:2309.02427）對 AI Agent 記憶的系統化分類框架。',
+    paper_lore_title: '將 git commit message 重新設計為結構化知識協議',
+    paper_lore_diff: '<strong>差異</strong>：Lore 改變寫法；Brain 從現有 commit 中提取，<strong>無需改變工作流</strong>',
+    paper_memcoder_title: '從 commit history 提取 intent-to-code mapping',
+    paper_memcoder_diff: '<strong>差異</strong>：MemCoder 不分類；Brain 分類為 <strong>Pitfall/Decision/Rule</strong>，並接衰減管理',
+    paper_memgovern_title: '從 GitHub Issues 提取 governed experience cards',
+    paper_memgovern_diff: '<strong>差異</strong>：MemGovern 的 quality gate 最接近 KRB；Brain 增加了 <strong>KG 持久化與衰減</strong>',
+    paper_codified_title: '為複雜 codebase 設計階層化 Agent context 架構',
+    paper_codified_diff: '<strong>差異</strong>：Codified Context 是靜態文件；Brain 是<strong>動態知識圖譜</strong>，有衰減與更新',
+    matrix_th_feature: '功能',
+    matrix_row1: '工程特化 KG Schema', matrix_row2: '多因子知識衰減（6+）',
+    matrix_row3: '版本差距衰減 (F2)', matrix_row4: 'git 活動反衰減 (F3)',
+    matrix_row5: '程式碼引用確認 (F5)', matrix_row6: 'git commit 知識提取',
+    matrix_row7: '人工審核閘道 (KRB)', matrix_row8: '主動風險提醒 (NudgeEngine)',
+    matrix_row9: '零外部依賴',
+    install_badge: '快速開始',
+    install_title: '安裝 × <span>初始化</span>',
+    install_sub: '三步驟完成：安裝套件、初始化專案、連接 Agent。系統需求：Python 3.10+，無需外部服務。',
+    install_options_title: '安裝選項',
+    ib_cmt1: '# 標準安裝（含向量語意搜尋）',
+    ib_cmt2: '# 含 MCP Server（Claude Code / Cursor）',
+    ib_cmt3: '# 含 Anthropic SDK（AI 知識提取）',
+    ib_cmt4: '# 完整安裝',
+    ib_cmt5: '# 初始化專案',
+    ib_cmt6: '# 驗證 sqlite-vec',
+    quickstart_title: '三步驟快速開始',
+    qs_step1_title: '加入第一條知識',
+    qs_step2_title: '驗證可以查到',
+    qs_step3_title: '連接 Claude Code',
+    qs_step3_desc: '加入 MCP 設定後，Agent 在每次任務開始時自動呼叫 get_context() 取得相關知識。',
+    limits_title: '已知限制與設計邊界',
+    limit1_text: '<strong>語意召回率</strong>：FTS5 對語意相近但用詞不同的查詢效果有限。Phase 1 將加入向量語意搜尋。',
+    limit2_text: '<strong>三層輸出可能重複</strong>：L2 episode 與 L3 node 可能說同一件事。Phase 4 計劃自動建立 DERIVES_FROM 邊。',
+    limit3_text: '<strong>scope 需手動指定</strong>：忘記加 <code style="color:var(--amber);font-size:11px;">--scope</code> 知識會變成全域污染。Phase 5 計劃從目錄自動推導。',
+    limit4_text: '<strong>無法捕捉隱性知識</strong>：只能記錄已被意識到的決策。這是設計邊界，不修。',
+    env_card_title: '環境變數',
+    env_th_var: '變數', env_th_default: '預設值', env_th_desc: '說明',
+    env_brain_workdir_default: '當前目錄', env_brain_workdir_desc: '專案目錄（省略 --workdir）',
+    env_anthropic_desc: 'Anthropic API（AI 提取功能）',
+    env_llm_provider_desc: 'openai 使用 Ollama / LM Studio',
+    env_llm_model_desc: '模型名稱',
+    env_synthesize_desc: '1 啟用 Memory Synthesizer LLM 融合',
+    env_api_key_desc: 'brain serve 的 API 認證金鑰',
+    env_embed_provider_desc: 'multilingual / ollama / openai / local / none',
+    env_multilingual_desc: 'sentence-transformers 模型（中英混搜）',
+    env_ollama_embed_desc: 'Ollama embedding 模型名稱',
+    env_ollama_url_desc: 'Ollama 服務位址（LLM 提取 + embedding）',
+    footer_tagline: '為 AI Agent 設計的工程記憶基礎設施。\n讓每次對話都能承接上一次的決策、規則與踩坑。\nv0.3.0 · MIT License · Python 3.10+',
+  },
+  en: {
+    nav_problem: 'Problem', nav_flow: 'Architecture', nav_memory: 'Memory Layers',
+    nav_confidence: 'Confidence & Decay', nav_philosophy: 'Design Philosophy',
+    nav_academic: 'Research', nav_install: 'Install', nav_cta: 'Get Started',
+    hero_tagline: 'Engineering memory infrastructure for AI Agents.\nEvery conversation picks up where the last one left off.',
+    hero_btn_install: 'Install Now',
+    term_cmt1: '# Initialize Brain',
+    term_out1: '.brain/brain.db created',
+    term_out2: 'git post-commit hook installed',
+    term_cmt2: '# Add a pitfall record',
+    term_cmt3: '# Agent retrieves automatically',
+    term_pitfall: 'Pitfall: must use idempotency_key',
+    problem_badge: 'The Core Problem',
+    problem_title: 'The Cost of <span>Forgetting</span>',
+    problem_sub: "Six months ago you hit a Stripe Webhook idempotency bug, fixed it, committed it. But next time an Agent implements a refund—it doesn't know. It hits the exact same bug again. The Agent isn't dumb; it simply has no memory.",
+    problem_card_title: 'The Problem & Solution',
+    pf_step1_label: 'Problem', pf_step1_val: 'AI has no project context each session, repeatedly hits the same bugs',
+    pf_step2_label: 'Solution', pf_step2_val: 'Build a long-term memory store in your project that Agents can query',
+    pf_step3_label: 'Result', pf_step3_val: 'Agent writes code with institutional knowledge, never repeating mistakes',
+    loop_card_title: 'Automatic Positive Feedback Loop',
+    loop_item1: 'Agent completes task, structured commit',
+    loop_item2: 'Brain extracts decisions & pitfalls',
+    loop_item3: 'Next Agent session starts knowing',
+    loop_item4: 'Agent avoids repeat mistakes, writes better commits',
+    cmp_card_title: 'AI Agent Commit vs Human Commit',
+    cmp_th1: 'Dimension', cmp_th2: 'Human', cmp_th3: 'AI Agent',
+    cmp_row1_dim: 'Format', cmp_row1_human: '"fix bug", "wip"',
+    cmp_row2_dim: 'Intent', cmp_row2_human: 'Often implicit', cmp_row2_ai: 'Explicit, complete',
+    cmp_row3_dim: 'Consistency', cmp_row3_human: 'Varies by person', cmp_row3_ai: 'Stable, prompt-driven',
+    cmp_row4_dim: 'Frequency', cmp_row4_human: 'Manual, irregular', cmp_row4_ai: 'Commit on task completion',
+    flow_badge: 'System Architecture',
+    flow_title: 'Brain <span>Data Flow</span>',
+    flow_sub: 'Click nodes for details, switch modes to highlight paths. The full closed loop from git commit to Agent knowledge retrieval—write, remember, read paths each serve distinct roles.',
+    flow_btn_all: 'All Paths', flow_btn_write: '⬡ Write Path', flow_btn_read: '◈ Read Path', flow_btn_maint: '⊙ Maintenance Path',
+    flow_legend_write: 'Write Path', flow_legend_read: 'Read Path', flow_legend_maint: 'Maintenance Path', flow_legend_consol: 'Memory Consolidation (periodic)',
+    flow_col_write: 'Write Sources', flow_col_mem: 'Memory Layers', flow_col_read: 'Read Path',
+    flow_agent_ns: 'Claude Code / Cursor / Any MCP tool',
+    flow_git_ns: 'feat: / fix: / refactor:\nAI Agent structured commit',
+    flow_llm_ns: 'Classify knowledge type\nExtract decisions & pitfalls',
+    flow_krb_nn: 'KRB Review Board', flow_krb_ns: 'Candidate knowledge staged\nAwaiting human review',
+    flow_madd_ns: 'Manually added\nconfidence 0.8',
+    flow_l1a_nn: 'Working Memory', flow_l1a_ns: 'Working Memory · Current task context',
+    flow_l2_nn: 'Episodic Memory', flow_l2_ns: 'Episodic Memory · git history',
+    flow_l3_nn: 'Semantic Memory', flow_l3_ns: 'Semantic Memory · Knowledge graph',
+    flow_gctx_ns: 'Unified read of all three layers\nAssemble + causal chain reasoning',
+    flow_synth_ns: 'LLM fuses three-layer output\nBRAIN_SYNTHESIZE=1 to enable',
+    flow_decay_nn: 'DecayEngine', flow_decay_ns: 'Six-factor confidence recalc\nEvery 7 days',
+    memory_badge: 'Memory Architecture',
+    memory_title: 'Three-Layer <span>Cognitive Memory</span>',
+    memory_sub: 'Architecture directly mirrors the Atkinson-Shiffrin multi-store memory model. Three layers each serve distinct roles; get_context() provides unified read access.',
+    mem_l1a_name: 'Working Memory', mem_l1a_en: 'Working Memory',
+    mem_l1a_desc: 'Immediate attention for current task, cleared after session. Stores today\'s notes and task context.',
+    mem_l2_name: 'Episodic Memory', mem_l2_en: 'Episodic Memory',
+    mem_l2_desc: '"When did that JWT incident happen?" Maps to git commit history, event sequences. Supports time-machine queries.',
+    mem_l3_name: 'Semantic Memory', mem_l3_en: 'Semantic Memory',
+    mem_l3_desc: '"JWT must use RS256"—not an event, a pattern. Long-term knowledge refined from L2, with causal knowledge graph.',
+    kinds_title: 'Knowledge Types <span style="color:var(--cyan);">--kind</span>',
+    kinds_sub: 'Five node types in L3 semantic memory, from bugs to architecture decisions.',
+    kind_pitfall_name: 'Bug Record', kind_pitfall_desc: 'Past mistakes and hidden traps. Confidence score lets Agent evaluate reliability.',
+    kind_decision_name: 'Architecture Decision', kind_decision_desc: 'Why A and not B. Preserves context behind decisions, prevents re-discussion.',
+    kind_rule_name: 'Engineering Rule', kind_rule_desc: 'Technical conventions that must be followed. Brain returns these as hard constraints to the Agent.',
+    kind_adr_name: 'Architecture Decision Record', kind_adr_desc: 'Formal architecture decision document.',
+    kind_note_name: 'General Note', kind_note_desc: "Other information worth remembering that doesn't fit other types.",
+    conf_badge: 'Knowledge Confidence',
+    conf_title: 'Confidence Tiers × <span>Multi-Factor Decay</span>',
+    conf_sub: "Knowledge isn't 'right' or 'wrong'—it has varying degrees of confidence that decay dynamically over time. Confidence below 0.20 is automatically marked stale.",
+    conf_card_title: 'Confidence Score Sources',
+    conf_label1: 'Manually verified', conf_label2: 'Manually added', conf_label3: 'Auto-discovered by Agent',
+    conf_label4: 'Extracted from git commit', conf_label5: 'fix/wip commit',
+    decay_card_title: 'Six-Factor Decay Formula',
+    decay_formula_label: 'Confidence',
+    f1_name: 'Time Decay', f1_desc: 'Base daily decay rate 0.003, older = lower',
+    f2_name: 'Version Gap', f2_desc: 'React 16 → React 18 now → penalty applied',
+    f3_name: 'Code Activity Signal', f3_desc: 'Related file modified in past 30 days → boost',
+    f4_name: 'Contradiction Detection', f4_desc: 'Two knowledge nodes contradict → both penalized',
+    f5_name: 'Code Reference Check', f5_desc: 'Classes mentioned in knowledge still exist → boost',
+    f7_name: 'Query Frequency', f7_desc: 'More queries → slower decay',
+    decay_warning: 'confidence < 0.20 → auto-marked stale, decay never deletes knowledge',
+    cli_badge: 'Interfaces',
+    cli_title: 'CLI × <span>Agent Integration</span>',
+    cli_sub: 'Full command-line interface supporting MCP, REST API, and Python SDK for three Agent integration modes.',
+    cli_card_title: 'CLI Command Reference',
+    cli_desc_setup: 'One-command init: create DB + install git hook',
+    cli_desc_add: 'Manually add a knowledge node',
+    cli_desc_ask: 'Query the knowledge base',
+    cli_desc_status: 'Memory stats and health',
+    cli_desc_sync: 'Manually learn from latest commit',
+    cli_desc_serve: 'Start REST API (port 7891)',
+    cli_desc_serve_mcp: 'Start MCP Server',
+    cli_desc_webui: 'D3.js knowledge graph visualization',
+    cli_desc_doctor: 'Diagnose sqlite-vec and all three layers',
+    cli_desc_review: 'KRB manual review of pending knowledge',
+    cli_desc_report: 'Export JSON / Markdown knowledge report',
+    cli_desc_search: 'Semantic search (supports mixed Chinese/English)',
+    cli_desc_link_issue: 'Link a GitHub Issue to a knowledge node',
+    cli_desc_prescreen: 'AI-assisted KRB batch pre-screening',
+    cli_desc_fed_export: 'Export global knowledge federation bundle',
+    cli_desc_fed_import: 'Import external project knowledge bundle',
+    mcp_card_title: 'Claude Code MCP Config',
+    mcp_tools_card_title: 'MCP Tools (v0.3.0 — 13 total)',
+    mcp_desc_get_context: 'Get task-relevant knowledge (causal chains + proactive warnings)',
+    mcp_desc_add_knowledge: 'Agent writes new knowledge to Brain',
+    mcp_desc_search_knowledge: 'Direct semantic search of knowledge base',
+    mcp_desc_temporal_query: 'Time machine—read knowledge state at a given point in time',
+    mcp_desc_brain_status: 'Memory stats',
+    mcp_desc_complete_task: 'Record task completion with decisions / pitfalls / lessons',
+    mcp_desc_report_knowledge_outcome: 'Feedback on node usefulness, dynamically adjusts confidence',
+    mcp_desc_krb_pre_screen: 'AI-assisted KRB pre-review with batch recommendations',
+    mcp_desc_answer_question: 'Answer natural language questions from the knowledge base',
+    mcp_desc_impact_analysis: 'Analyze change impact scope, query related knowledge nodes',
+    mcp_desc_reasoning_chain: 'Trace knowledge causal reasoning chains',
+    mcp_desc_generate_questions: 'AI generates questions for knowledge gaps to fill',
+    mcp_desc_mark_helpful: 'Mark knowledge as helpful, confidence +0.03',
+    phil_badge: 'Engineering Philosophy',
+    phil_title: 'Five <span>Design Principles</span>',
+    phil_sub: 'Fight forgetting, not omniscience. Memory is engineering team infrastructure.',
+    phil01_title: 'Zero-Dependency First', phil01_desc: 'Core functionality relies only on Python stdlib and SQLite. No Docker, Redis, or vector databases needed.',
+    phil02_title: 'Single File, Backup = Copy', phil02_desc: 'All memory lives in .brain/brain.db—one standard SQLite file. Backup is cp brain.db brain.db.bak.',
+    phil03_title: 'Graceful Degradation Always', phil03_desc: "Brain's failure mode is \"silent fallback\", not \"block the flow\". No API key? Skip LLM extraction. No vector index? Fall back to FTS5.",
+    phil04_title: 'Confidence Tiers, Not Binary Judgments', phil04_desc: "Knowledge isn't right or wrong—it has degrees of confidence. The six-factor decay formula updates confidence dynamically.",
+    phil05_title: 'Human-AI Collaboration, Not Full Automation', phil05_desc: 'Automation reduces friction but doesn\'t replace judgment. git hook records every commit automatically. Valuable knowledge still needs an engineer to confirm with brain add.',
+    degrade_card_title: 'Graceful Degradation Table',
+    degrade_cond1: 'No API Key', degrade_act1: 'Skip LLM extraction, still record commit metadata, confidence 0.2',
+    degrade_cond2: 'No Vector Index', degrade_act2: 'Fall back to FTS5 keyword search, reduced semantic matching but still functional',
+    degrade_cond3: 'MCP Connection Failed', degrade_act3: 'CLAUDE.md prompts Agent to query manually, falls back to manual mode',
+    degrade_cond4: 'Empty Knowledge Base', degrade_act4: 'Returns empty string, does not block Agent operation',
+    academic_badge: 'Academic Context',
+    academic_title: 'Research Comparison × <span>Feature Matrix</span>',
+    academic_sub: "Project Brain's three-layer architecture directly mirrors the Atkinson-Shiffrin Multi-Store Memory Model (1968) and references CoALA (arXiv:2309.02427) for systematic AI Agent memory classification.",
+    paper_lore_title: 'Redesigns git commit messages as structured knowledge protocols',
+    paper_lore_diff: '<strong>Difference</strong>: Lore changes how you write; Brain extracts from existing commits, <strong>no workflow change needed</strong>',
+    paper_memcoder_title: 'Extracts intent-to-code mapping from commit history',
+    paper_memcoder_diff: "<strong>Difference</strong>: MemCoder doesn't classify; Brain classifies into <strong>Pitfall/Decision/Rule</strong> with decay management",
+    paper_memgovern_title: 'Extracts governed experience cards from GitHub Issues',
+    paper_memgovern_diff: "MemGovern's quality gate is closest to KRB; Brain adds <strong>KG persistence and decay</strong>",
+    paper_codified_title: 'Hierarchical Agent context architecture for complex codebases',
+    paper_codified_diff: 'Codified Context is static documents; Brain is a <strong>dynamic knowledge graph</strong> with decay and updates',
+    matrix_th_feature: 'Feature',
+    matrix_row1: 'Engineering-Specialized KG Schema', matrix_row2: 'Multi-Factor Knowledge Decay (6+)',
+    matrix_row3: 'Version Gap Decay (F2)', matrix_row4: 'git Activity Anti-Decay (F3)',
+    matrix_row5: 'Code Reference Check (F5)', matrix_row6: 'git commit Knowledge Extraction',
+    matrix_row7: 'Human Review Gate (KRB)', matrix_row8: 'Proactive Risk Alerts (NudgeEngine)',
+    matrix_row9: 'Zero External Dependencies',
+    install_badge: 'Quick Start',
+    install_title: 'Install × <span>Initialize</span>',
+    install_sub: 'Three steps: install package, init project, connect Agent. Requirements: Python 3.10+, no external services.',
+    install_options_title: 'Installation Options',
+    ib_cmt1: '# Standard install (with vector semantic search)',
+    ib_cmt2: '# With MCP Server (Claude Code / Cursor)',
+    ib_cmt3: '# With Anthropic SDK (AI knowledge extraction)',
+    ib_cmt4: '# Full install',
+    ib_cmt5: '# Initialize project',
+    ib_cmt6: '# Verify sqlite-vec',
+    quickstart_title: 'Three-Step Quick Start',
+    qs_step1_title: 'Add Your First Knowledge',
+    qs_step2_title: 'Verify It\'s Queryable',
+    qs_step3_title: 'Connect Claude Code',
+    qs_step3_desc: 'After adding the MCP config, the Agent automatically calls get_context() at the start of each task.',
+    limits_title: 'Known Limits & Design Boundaries',
+    limit1_text: '<strong>Semantic Recall Rate</strong>: FTS5 has limited effectiveness for semantically similar but differently-worded queries.',
+    limit2_text: '<strong>Three-layer output may overlap</strong>: L2 episode and L3 node may describe the same thing.',
+    limit3_text: '<strong>scope must be specified manually</strong>: forgetting <code style="color:var(--amber);font-size:11px;">--scope</code> makes knowledge global pollution.',
+    limit4_text: '<strong>Cannot capture tacit knowledge</strong>: only records decisions that have been consciously articulated. Design boundary, won\'t fix.',
+    env_card_title: 'Environment Variables',
+    env_th_var: 'Variable', env_th_default: 'Default', env_th_desc: 'Description',
+    env_brain_workdir_default: 'current dir', env_brain_workdir_desc: 'Project directory (omit --workdir)',
+    env_anthropic_desc: 'Anthropic API (AI extraction feature)',
+    env_llm_provider_desc: 'openai to use Ollama / LM Studio',
+    env_llm_model_desc: 'Model name',
+    env_synthesize_desc: '1 enables Memory Synthesizer LLM fusion',
+    env_api_key_desc: 'API authentication key for brain serve',
+    env_embed_provider_desc: 'multilingual / ollama / openai / local / none',
+    env_multilingual_desc: 'sentence-transformers model (multilingual search)',
+    env_ollama_embed_desc: 'Ollama embedding model name',
+    env_ollama_url_desc: 'Ollama service URL (LLM extraction + embedding)',
+    footer_tagline: 'Engineering memory infrastructure for AI Agents.\nEvery conversation picks up where the last one left off.\nv0.3.0 · MIT License · Python 3.10+',
+  },
+};
+
+function applyLang(lang) {
+  const T = TRANSLATIONS[lang];
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (T[key] !== undefined) {
+      if (key === 'hero_tagline' || key === 'footer_tagline') {
+        el.innerHTML = T[key].replace(/\n/g, '<br>');
+      } else if (key.startsWith('problem_title') || key.startsWith('flow_title') || key.startsWith('memory_title') ||
+                 key.startsWith('conf_title') || key.startsWith('cli_title') || key.startsWith('phil_title') ||
+                 key.startsWith('academic_title') || key.startsWith('install_title') || key.startsWith('kinds_title') ||
+                 key.startsWith('paper_') || key.startsWith('limit') || key.startsWith('flow_btn_') || key.startsWith('mcp_card_title')) {
+        el.innerHTML = T[key];
+      } else {
+        el.textContent = T[key];
+      }
+    }
+  });
+  META = META_LANGS[lang];
+  const btn = document.getElementById('lang-btn');
+  if (btn) btn.textContent = lang === 'zh' ? 'EN' : '中文';
+  document.documentElement.lang = lang === 'zh' ? 'zh-TW' : 'en';
+  localStorage.setItem('brain-lang', lang);
+}
+
+function toggleLang() {
+  const current = localStorage.getItem('brain-lang') || 'zh';
+  applyLang(current === 'zh' ? 'en' : 'zh');
+}
+
+(function() {
+  const saved = localStorage.getItem('brain-lang') || 'zh';
+  if (saved === 'en') applyLang('en');
 })();
 </script>
 </body>
