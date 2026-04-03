@@ -126,6 +126,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._route_graph(qs)
             elif path == "/api/stats":
                 self._route_stats()
+            elif path == "/api/analytics":
+                self._route_analytics()
             elif path == "/api/search":
                 self._route_search(qs)
             elif path.startswith("/api/node/") and not path.endswith("/pin"):
@@ -271,6 +273,22 @@ class _Handler(BaseHTTPRequestHandler):
                 for r in by_kind
             ],
         })
+
+    # ── API: /api/analytics ─────────────────────
+    def _route_analytics(self):
+        """PH2-01: ROI dashboard metrics — powered by AnalyticsEngine."""
+        conn = self._db()
+        try:
+            try:
+                from project_brain.analytics_engine import AnalyticsEngine
+                engine = AnalyticsEngine(conn)
+                report = engine.generate_report(period_days=7)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 500)
+                return
+        finally:
+            conn.close()
+        self._json(report)
 
     # ── API: /api/search ─────────────────────
     def _route_search(self, qs):
@@ -424,7 +442,7 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
   background:linear-gradient(135deg,#58a6ff 0%,#bc8cff 100%);
   display:flex;align-items:center;justify-content:center;font-size:13px;
   box-shadow:0 0 10px rgba(88,166,255,0.3)}}
-.logo .brand{{font-size:13px;font-weight:600;letter-spacing:-.01em}}
+.logo .brand{{font-size:13px;font-weight:600;letter-spacing:-.01em;color:#6ca4f8;}}
 .logo .ver{{font-size:10px;color:var(--text2);background:var(--bg3);
   border:1px solid var(--border);padding:1px 5px;border-radius:4px;margin-left:2px}}
 #proj-badge{{font-size:11px;color:var(--text2);background:var(--bg3);

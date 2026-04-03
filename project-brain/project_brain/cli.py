@@ -1804,6 +1804,148 @@ def cmd_health_report(args):
     print()
 
 
+def cmd_report(args):
+    """PH1-06: 週期性 ROI + 健康度 + 使用率綜合報告（brain report）"""
+    wd = _workdir(args)
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    import sqlite3 as _sqlite3
+    from project_brain.analytics_engine import AnalyticsEngine
+
+    # 找到 DB 檔案
+    db_path = None
+    for name in ("brain.db", "knowledge_graph.db"):
+        p = bd / name
+        if p.exists():
+            db_path = p
+            break
+    if not db_path:
+        _err("找不到 brain.db，請先執行 brain init"); return
+
+    period = getattr(args, 'days', 7) or 7
+    fmt    = getattr(args, 'format', 'text')
+    out    = getattr(args, 'output', None)
+
+    conn = _sqlite3.connect(str(db_path))
+    conn.row_factory = _sqlite3.Row
+    try:
+        engine = AnalyticsEngine(conn)
+        report = engine.generate_report(period_days=period)
+    finally:
+        conn.close()
+
+    if fmt == 'json':
+        import json as _j
+        text = _j.dumps(report, ensure_ascii=False, indent=2)
+        if out:
+            Path(out).write_text(text, encoding='utf-8')
+            _ok(f"報告已儲存：{out}")
+        else:
+            print(text)
+        return
+
+    # ── text output ─────────────────────────────────────────────────────────
+    roi   = report["roi"]
+    usage = report["usage"]
+    score = roi["knowledge_roi_score"]
+    score_c = G if score >= 0.70 else (Y if score >= 0.40 else RE)
+    bar_w = 20
+    filled = int(score * bar_w)
+    bar = f"{G}{'█' * filled}{GR}{'░' * (bar_w - filled)}{R}"
+
+    print(f"\n  {B}{P}📊  Brain Report  {GR}(last {period}d){R}")
+    print(f"  {GR}{'═' * 50}{R}")
+
+    # ROI
+    print(f"\n  {B}{C}ROI Metrics{R}")
+    print(f"  ROI Score     {bar}  {score_c}{B}{score:.0%}{R}")
+    hit  = roi['query_hit_rate']
+    ukr  = roi['useful_knowledge_rate']
+    pas  = roi['pitfall_avoidance_score']
+    _info(f"Query hit rate:          {f'{hit:.0%}' if hit is not None else 'n/a (no traces)'}")
+    _info(f"Useful knowledge rate:   {f'{ukr:.0%}' if ukr is not None else 'n/a (no feedback yet)'}")
+    _info(f"Pitfall avoidance score: {f'{pas:.0%}' if pas is not None else 'n/a (no pitfalls)'}")
+
+    # Usage
+    print(f"\n  {B}{C}Usage{R}")
+    _info(f"Total nodes: {B}{usage['total_nodes']}{R}   "
+          f"Added last {period}d: {G}{usage['recent_adds']}{R}")
+    _info(f"Total queries: {usage['total_queries']}   "
+          f"Queries last {period}d: {G}{usage['recent_queries']}{R}")
+    if usage['by_type']:
+        type_str = "  ".join(f"{t}:{n}" for t, n in usage['by_type'].items())
+        _info(f"By type:  {type_str}")
+
+    # Top pitfalls
+    if report['top_pitfalls']:
+        print(f"\n  {B}Most-accessed Pitfall nodes:{R}")
+        for n in report['top_pitfalls']:
+            print(f"    {GR}{n['access_count']:>3}×{R}  {RE}{n['title'][:55]}{R}")
+
+    # Summary
+    print(f"\n  {Y}{report['summary']}{R}\n")
+
+    if out:
+        import json as _j
+        Path(out).write_text(_j.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        _ok(f"詳細報告已儲存：{out}")
+
+
+def cmd_search(args):
+    """PH2-02: 純語意搜尋（brain search）— 直接查詢 BrainDB，不組裝 Context。
+
+    比 brain ask 更快、更直接。適合已知要找什麼、不需要 Context 注入的場景。
+    """
+    wd    = _workdir(args)
+    bd    = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    query = " ".join(args.query) if isinstance(args.query, list) else (args.query or "")
+    if not query:
+        _err("Usage: brain search <keywords>"); return
+
+    limit  = getattr(args, 'limit', 10) or 10
+    kind   = getattr(args, 'kind', None)
+    scope  = getattr(args, 'scope', None)
+    fmt    = getattr(args, 'format', 'text')
+
+    from project_brain.brain_db import BrainDB
+    db   = BrainDB(bd)
+    hits = db.search_nodes(query, limit=limit)
+
+    # filter by kind / scope post-query
+    if kind:
+        hits = [h for h in hits if (h.get("type") or h.get("kind","")).lower() == kind.lower()]
+    if scope:
+        hits = [h for h in hits if h.get("scope", "global").lower() == scope.lower()]
+
+    if fmt == 'json':
+        import json as _j
+        print(_j.dumps(hits, ensure_ascii=False, indent=2))
+        return
+
+    print(f"\n{C}{B}🔍  Brain Search: {query}{R}  {GR}({len(hits)} 筆){R}\n{GR}{'─'*50}{R}")
+    if not hits:
+        print(f"{Y}⚠{R}  找不到相關知識")
+        print(f"   可加入：{GR}brain add \"{query[:40]}\"{R}")
+        return
+
+    for n in hits:
+        k      = n.get("type") or n.get("kind") or "Note"
+        conf   = n.get("confidence", 0.8)
+        conf_c = G if conf >= 0.7 else (Y if conf >= 0.4 else RE)
+        k_c    = {"Pitfall": RE, "Decision": G, "Rule": C}.get(k, Y)
+        print(f"  {k_c}{B}[{k}]{R}  {B}{n['title']}{R}")
+        if n.get("content"):
+            print(f"  {D}  {(n['content'] or '')[:160]}{R}")
+        sc = n.get("scope", "global")
+        print(f"  {conf_c}conf={conf:.2f}{R}  {GR}scope={sc}  id={n['id'][:16]}{R}\n")
+    print(f"{GR}{'─'*50}{R}")
+
+
 def cmd_analytics(args):
     """FEAT-03: 使用率分析報告（brain analytics）"""
     wd = _workdir(args)
@@ -2087,6 +2229,20 @@ def main():
     p = mkp('health-report', 'FEAT-01：知識庫健康度儀表板')
     p.add_argument('--format', choices=['text','json'], default='text')
 
+    p = mkp('report', 'PH1-06：週期性 ROI + 健康度 + 使用率綜合報告')
+    p.add_argument('--days', type=int, default=7, help='回溯天數（預設：7）')
+    p.add_argument('--format', choices=['text','json'], default='text')
+    p.add_argument('--output', '-o', default=None, help='儲存報告至檔案')
+
+    p = mkp('search', 'PH2-02：純語意搜尋（不組裝 Context，速度更快）')
+    p.add_argument('query', nargs='+', help='搜尋關鍵詞')
+    p.add_argument('--limit', type=int, default=10, help='最多顯示幾筆（預設 10）')
+    p.add_argument('--kind', default=None,
+                   choices=['Decision','Pitfall','Rule','ADR','Component','Note'],
+                   help='只搜尋特定類型')
+    p.add_argument('--scope', default=None, help='只搜尋特定 scope')
+    p.add_argument('--format', choices=['text','json'], default='text')
+
     p = mkp('analytics', 'FEAT-03：使用率分析報告')
     p.add_argument('--format', choices=['text','json'], default='text')
     p.add_argument('--export', choices=['csv'], default=None,
@@ -2171,7 +2327,6 @@ def main():
         'web-ui':       'webui',
         'stat':         'status',
         'info':         'status',
-        'search':       'context',
         'query':        'context',
         'embed':        'index',
         'check':        'validate',
@@ -2227,6 +2382,8 @@ def main():
         'index':         cmd_index,
         'webui':         cmd_webui,
         'health-report': cmd_health_report,
+        'report':        cmd_report,
+        'search':        cmd_search,
         'analytics':     cmd_analytics,
         'export':        cmd_export,
         'import':        cmd_import,

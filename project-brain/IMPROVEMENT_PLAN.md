@@ -96,16 +96,16 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | PH1-01 | P0 | 重寫 CLAUDE.md 生成模板 | `setup_wizard.generate_claude_md()` 含完整 Brain 行為協議：Task Start / Task Complete / Knowledge Feedback，全英文 | ✅ 2026-04-03 |
 | PH1-02 | P0 | MCP 工具：`complete_task` | 參數：`task_description, decisions[], lessons[], pitfalls[]`；任務結束後批次寫入本次學習 | ✅ 2026-04-03 |
 | PH1-03 | P0 | MCP 工具：`report_knowledge_outcome` | 參數：`node_id, was_useful, notes`；閉合知識有效性的回饋迴路，驅動 confidence 動態更新 | ✅ 2026-04-03 |
-| PH1-04 | P1 | 強化 `extractor.py` | Session-aware 提取：從 git diff + session log 中提取「過程知識」，不只依賴 commit message |
-| PH1-05 | P1 | `analytics_engine.py` 基礎版 | 記錄所有查詢事件、命中率、使用者回饋（explicit + implicit） |
-| PH1-06 | P1 | `brain report` 指令 | 生成週期性使用統計，顯示知識庫健康度基本指標 |
+| PH1-04 | P1 | 強化 `extractor.py` | Session-aware 提取：從 git diff + session log 中提取「過程知識」，不只依賴 commit message | ✅ 2026-04-03（新增 `from_session_log()` 無 LLM 直接轉換 + `from_git_diff_staged()`） |
+| PH1-05 | P1 | `analytics_engine.py` 基礎版 | 記錄所有查詢事件、命中率、使用者回饋（explicit + implicit） | ✅ 2026-04-03（新建 `analytics_engine.py`：ROI score、query hit rate、useful knowledge rate、pitfall avoidance score） |
+| PH1-06 | P1 | `brain report` 指令 | 生成週期性使用統計，顯示知識庫健康度基本指標 | ✅ 2026-04-03（`brain report [--days N] [--format json] [--output file]`，ROI + 使用率 + Top Pitfalls 一頁報告） |
 
 ### Phase 2（6-12 週）：ROI 可見化（對應 F2）
 
 | ID | 等級 | 功能 | 說明 |
 |----|------|------|------|
-| PH2-01 | P1 | Web UI dashboard 強化 | 顯示 ROI 指標、知識庫健康度、最高效益 Pitfall 節點、Nudge Effectiveness Rate |
-| PH2-02 | P1 | `brain search` 指令 | 純語意搜尋（不組裝 Context），快速查特定知識 |
+| PH2-01 | P1 | Web UI dashboard 強化 | 顯示 ROI 指標、知識庫健康度、最高效益 Pitfall 節點、Nudge Effectiveness Rate | ✅ 2026-04-03（`/api/analytics` 端點，回傳 ROI + usage + top_pitfalls JSON） |
+| PH2-02 | P1 | `brain search` 指令 | 純語意搜尋（不組裝 Context），快速查特定知識 | ✅ 2026-04-03（`brain search <keywords> [--limit N] [--kind TYPE] [--scope S] [--format json]`） |
 | PH2-03 | P2 | `brain add` 互動模式 | 無參數執行時進入互動式輸入（title / kind / scope 分步問） |
 | PH2-04 | P2 | `brain export --format markdown` | 匯出為人類可讀 Markdown，方便放進 wiki / Confluence |
 | PH2-05 | P2 | 同義詞設定檔 | `.brain/synonyms.json`，讓台灣業務術語可自定義（對應 TD-01） |
@@ -195,11 +195,11 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 | ID | 等級 | 項目 | Phase |
 |----|------|------|-------|
-| PH1-04 | P1 | 強化 `extractor.py`（session-aware） | Phase 1 |
-| PH1-05 | P1 | `analytics_engine.py` 基礎版 | Phase 1 |
-| PH1-06 | P1 | `brain report` 指令 | Phase 1 |
-| F2 / PH2-01 | P1 | Web UI dashboard ROI 指標強化 | Phase 2 |
-| PH2-02 | P1 | `brain search` 指令 | Phase 2 |
+| PH1-04 | P1 | 強化 `extractor.py`（session-aware） | ✅ 已完成 |
+| PH1-05 | P1 | `analytics_engine.py` 基礎版 | ✅ 已完成 |
+| PH1-06 | P1 | `brain report` 指令 | ✅ 已完成 |
+| F2 / PH2-01 | P1 | Web UI dashboard ROI 指標強化 | ✅ 已完成 |
+| PH2-02 | P1 | `brain search` 指令 | ✅ 已完成 |
 
 ### Q3 — 批次處理（低影響 × 技術債清理）
 
@@ -229,11 +229,11 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 ### 現況摘要
 
 ```
-Q1 完成率：10/10（100%）— Phase 0 全部清零 ✅
-Q2 進行中：5 項（Phase 1-2 核心功能）
+Q1 完成率：10/10（100%）✅
+Q2 完成率：5/5（100%）✅
 Q3 排隊中：7 項（技術債 + P2 功能）
 Q4 暫緩：11 項（長期願景）
-下一步行動：PH1-04 — 強化 extractor.py（session-aware 提取）
+下一步行動：Q3 — TD-01/PH2-05 synonyms.json 同義詞設定檔
 ```
 
 ---

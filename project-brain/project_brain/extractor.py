@@ -298,6 +298,107 @@ Comments found:
             import logging; logging.getLogger(__name__).warning('extract_from_text: %s', e)
             return []
 
+    def from_session_log(
+        self,
+        task_description: str,
+        decisions: list,
+        lessons: list,
+        pitfalls: list,
+        source: str = "session",
+    ) -> dict:
+        """PH1-04: Session-aware extraction — convert structured complete_task data
+        directly to knowledge chunks WITHOUT an LLM call.
+
+        This captures "process knowledge" (what happened during a work session)
+        rather than relying solely on commit messages. Called by complete_task MCP tool.
+
+        Args:
+            task_description: One-sentence summary of what was done.
+            decisions:        List of architectural/design choices made.
+            lessons:          List of things learned that help future work.
+            pitfalls:         List of mistakes encountered or near-misses.
+            source:           Source tag for the chunks (default: 'session').
+
+        Returns:
+            Same dict format as other from_* methods:
+            {"knowledge_chunks": [...], "components_mentioned": [], "dependencies_detected": []}
+        """
+        chunks = []
+        ts = source  # e.g. "session" or "session:2026-04-03"
+
+        for decision in decisions:
+            if not decision or not decision.strip():
+                continue
+            title = decision.strip()[:60]
+            chunks.append({
+                "type":       "Decision",
+                "title":      title,
+                "content":    f"Task: {task_description}\nDecision: {decision.strip()}",
+                "tags":       ["session", "decision"],
+                "confidence": 0.85,
+                "source":     ts,
+            })
+
+        for lesson in lessons:
+            if not lesson or not lesson.strip():
+                continue
+            title = lesson.strip()[:60]
+            chunks.append({
+                "type":       "Rule",
+                "title":      title,
+                "content":    f"Task: {task_description}\nLesson: {lesson.strip()}",
+                "tags":       ["session", "lesson"],
+                "confidence": 0.80,
+                "source":     ts,
+            })
+
+        for pitfall in pitfalls:
+            if not pitfall or not pitfall.strip():
+                continue
+            title = pitfall.strip()[:60]
+            chunks.append({
+                "type":       "Pitfall",
+                "title":      title,
+                "content":    f"Task: {task_description}\nPitfall: {pitfall.strip()}",
+                "tags":       ["session", "pitfall"],
+                "confidence": 0.90,  # pitfalls are high-confidence: they actually happened
+                "source":     ts,
+            })
+
+        return {
+            "knowledge_chunks":       chunks,
+            "components_mentioned":   [],
+            "dependencies_detected":  [],
+        }
+
+    def from_git_diff_staged(self) -> dict:
+        """PH1-04: Extract knowledge from staged (uncommitted) git diff.
+
+        Captures in-progress decisions before they are committed, closing the
+        gap between 'work in progress' and 'commit message only' extraction.
+        Requires ANTHROPIC_API_KEY or OpenAI-compatible LLM.
+        """
+        try:
+            diff = subprocess.check_output(
+                ["git", "diff", "--cached", "--stat", "--unified=3"],
+                cwd=str(self.workdir),
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except Exception:
+            return {"knowledge_chunks": [], "components_mentioned": [],
+                    "dependencies_detected": [], "_error": "git diff --cached failed"}
+
+        if not diff.strip():
+            return {"knowledge_chunks": [], "components_mentioned": [],
+                    "dependencies_detected": []}
+
+        content = f"Staged (uncommitted) git diff:\n{diff[:6000]}"
+        result = self._call(content)
+        for chunk in result.get("knowledge_chunks", []):
+            chunk["source"] = "git:staged"
+        return result
+
     @staticmethod
     def make_id(prefix: str, content: str) -> str:
         """產生穩定的節點 ID"""
