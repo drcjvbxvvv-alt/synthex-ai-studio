@@ -139,7 +139,8 @@ class LocalTFIDFEmbedder:
     """
     Pure-Python TF-IDF embedder — zero external dependencies.
 
-    Uses hash-based random projection to produce a fixed 256-dim vector.
+    Uses hash-based random projection to produce a fixed-dim vector.
+    Dimension defaults to 256; override with BRAIN_TFIDF_DIM env var.
     Quality is lower than neural embeddings but:
       - Works offline with no API key
       - Deterministic (same text → same vector)
@@ -149,15 +150,16 @@ class LocalTFIDFEmbedder:
     Disable with: BRAIN_EMBED_PROVIDER=none
     """
 
-    MODEL = "local-tfidf-256"
-    DIM   = 256
+    DIM   = int(os.environ.get("BRAIN_TFIDF_DIM", "256"))
+    MODEL = f"local-tfidf-{DIM}"
 
     def __init__(self):
         self.dim = self.DIM
 
     def embed(self, text: str) -> list[float]:
-        # OPT-03: check module-level LRU cache first
-        cache_key = hashlib.md5((text or "").encode()).hexdigest()
+        # OPT-03: check module-level LRU cache first; include DIM so a
+        # dim change (via env var restart) never returns a wrong-size vector.
+        cache_key = hashlib.md5(f"{self.DIM}:{text or ''}".encode()).hexdigest()
         if cache_key in _TFIDF_CACHE:
             _TFIDF_CACHE.move_to_end(cache_key)   # BUG-14: promote to MRU position
             return _TFIDF_CACHE[cache_key]

@@ -594,6 +594,69 @@ class KnowledgeGraph:
         self._conn.commit()
         return cur.lastrowid
 
+    def add_edges_bulk(self, edges: list[dict]) -> int:
+        """
+        批次新增多條邊（單一 transaction）。
+
+        Args:
+            edges: list of dicts，每個 dict 需含 source_id / relation / target_id，
+                   其餘欄位（weight / note / causal_direction /
+                   trigger_condition / confidence）選填，使用 add_edge() 相同預設值。
+
+        Returns:
+            成功插入的邊數量。
+
+        Raises:
+            ValueError: 任何邊引用了不存在的節點 ID。
+
+        範例：
+            graph.add_edges_bulk([
+                {"source_id": "a", "relation": "DEPENDS_ON", "target_id": "b"},
+                {"source_id": "b", "relation": "ENABLES",    "target_id": "c",
+                 "weight": 0.9, "causal_direction": "ENABLES"},
+            ])
+        """
+        if not edges:
+            return 0
+
+        # Collect all referenced node IDs in one query
+        all_ids: set[str] = set()
+        for e in edges:
+            all_ids.add(e["source_id"])
+            all_ids.add(e["target_id"])
+
+        placeholders = ",".join("?" * len(all_ids))
+        found = {r[0] for r in self._conn.execute(
+            f"SELECT id FROM nodes WHERE id IN ({placeholders})", tuple(all_ids)
+        ).fetchall()}
+        missing = all_ids - found
+        if missing:
+            raise ValueError(
+                f"add_edges_bulk: referenced node(s) not found: {', '.join(sorted(missing))}"
+            )
+
+        rows = [
+            (
+                e["source_id"],
+                e["relation"],
+                e["target_id"],
+                e.get("weight",            1.0),
+                e.get("note",              ""),
+                e.get("causal_direction",  "CORRELATES"),
+                e.get("trigger_condition", ""),
+                e.get("confidence",        0.8),
+            )
+            for e in edges
+        ]
+        self._conn.executemany("""
+            INSERT INTO edges
+                (source_id, relation, target_id, weight, note,
+                 causal_direction, trigger_condition, confidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+        self._conn.commit()
+        return len(rows)
+
     def neighbors(self, node_id: str, relation: str = None, depth: int = 1) -> list:
         """找出 N 跳以內的相鄰節點"""
         if depth == 1:

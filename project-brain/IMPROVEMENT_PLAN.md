@@ -64,8 +64,8 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | ID    | 等級 | 模組                 | 描述                                                                        | 狀態      |
 | ----- | ---- | -------------------- | --------------------------------------------------------------------------- | --------- |
 | TD-01 | P2   | `context.py`         | `_SYNONYM_MAP` 硬編碼中文同義詞，應改為可從 `.brain/synonyms.json` 載入     | ✅ 已完成（PH2-05） |
-| TD-02 | P2   | `embedder.py`        | LocalTFIDF 的 hash 投影維度（256）固定，應可透過環境變數調整                | ⬜ 待執行 |
-| TD-03 | P2   | `graph.py`           | `add_edge()` 尚未支援批次操作，大量 edges 逐筆 INSERT 效能差                | ⬜ 待執行 |
+| TD-02 | P2   | `embedder.py`        | LocalTFIDF 的 hash 投影維度（256）固定，應可透過環境變數調整                | ✅ 已完成（`BRAIN_TFIDF_DIM` env var；預設 256；cache key 含 DIM 防跨維度污染） |
+| TD-03 | P2   | `graph.py`           | `add_edge()` 尚未支援批次操作，大量 edges 逐筆 INSERT 效能差                | ✅ 已完成（`add_edges_bulk(edges)` 單次驗證 + `executemany` + single commit） |
 | TD-04 | P3   | `decay_engine.py`    | F2 技術版本落差偵測規則硬編碼（React 16/18 等），無法自訂                   | ⬜ 待執行 |
 | TD-05 | P1   | `core/brain/`        | 與 `project_brain/` 幾乎完全重複，應降格為薄整合層（對應 F3）               | ✅ 已完成（PH0-02） |
 | TD-06 | P1   | `pyproject.toml`     | version 欄位為 0.1.0，與實際 `__version__` 0.2.0 不一致；URLs 仍為模板佔位 | ✅ 已完成（PH0-01） |
@@ -205,8 +205,8 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 | ID    | 等級 | 項目                          | 狀態      |
 | ----- | ---- | ----------------------------- | --------- |
-| TD-02 | P2   | `embedder.py` 維度環境變數化  | ⬜ 待執行 |
-| TD-03 | P2   | `graph.py` 批次 edge INSERT   | ⬜ 待執行 |
+| TD-02 | P2   | `embedder.py` 維度環境變數化  | ✅ 已完成 |
+| TD-03 | P2   | `graph.py` 批次 edge INSERT   | ✅ 已完成 |
 
 ### Q4 — 暫緩（長期願景）
 
@@ -229,9 +229,9 @@ Q2 完成率：5/5（100%）✅
 Phase 0 完成率：5/5（100%）✅
 Phase 1 完成率：6/6（100%）✅
 Phase 2 完成率：7/7（100%）✅
-Q3 待執行：2 項（TD-02、TD-03）
+Q3 完成率：2/2（100%）✅
 Q4 暫緩：8 項（長期願景）
-下一步行動：Q3 — TD-02 embedder.py 維度環境變數化
+下一步行動：Q4（PH3）長期願景 或 新需求
 ```
 
 ---
