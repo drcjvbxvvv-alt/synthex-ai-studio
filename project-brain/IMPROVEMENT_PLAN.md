@@ -163,6 +163,81 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 ---
 
+## 優先矩陣（Priority Matrix）
+
+> 最後更新：2026-04-03
+
+### 象限說明
+
+| 象限 | 定義 |
+|------|------|
+| **Q1：立即執行** | 高影響 × 高緊迫（P0/P1，阻礙核心或影響使用者） |
+| **Q2：計劃執行** | 高影響 × 可排期（P1/P2，重要但不緊急） |
+| **Q3：批次處理** | 低影響 × 技術債清理（P2，快速可解決的瑣碎問題） |
+| **Q4：暫緩或捨棄** | 低影響 × 低緊迫（P3，長期願景） |
+
+### Q1 — 立即執行（高影響 × 高緊迫）
+
+| ID | 等級 | 項目 | 狀態 |
+|----|------|------|------|
+| BUG-01 | P0 | `engine.py` 死鎖修復 | ✅ 已完成 |
+| F1 / PH1-01 | P0 | 重寫 CLAUDE.md 生成模板（Brain 行為協議） | ✅ 已完成 |
+| PH1-02 | P0 | MCP 工具：`complete_task` | ✅ 已完成 |
+| PH1-03 | P0 | MCP 工具：`report_knowledge_outcome` | ✅ 已完成 |
+| TD-05 / PH0-02 | P1 | `core/` 目錄重組為薄整合層 | ✅ 已完成 |
+| TD-06 / PH0-01 | P1 | `pyproject.toml` 修正（version / URLs） | ✅ 已完成 |
+| TD-07 / PH0-05 | P1 | `status_renderer.py` 修復 `db` 未定義 | ✅ 已完成 |
+| BUG-02 | P1 | v10 區塊節點/邊數量不顯示 | ✅ 已完成 |
+| PH0-03 | P1 | `CONTRIBUTING.md` 更新邊界說明 | ✅ 已完成 |
+| PH0-04 | P1 | 整合測試補全（init / add / ask） | 🚧 待執行 |
+
+### Q2 — 計劃執行（高影響 × 可排期）
+
+| ID | 等級 | 項目 | Phase |
+|----|------|------|-------|
+| PH1-04 | P1 | 強化 `extractor.py`（session-aware） | Phase 1 |
+| PH1-05 | P1 | `analytics_engine.py` 基礎版 | Phase 1 |
+| PH1-06 | P1 | `brain report` 指令 | Phase 1 |
+| F2 / PH2-01 | P1 | Web UI dashboard ROI 指標強化 | Phase 2 |
+| PH2-02 | P1 | `brain search` 指令 | Phase 2 |
+
+### Q3 — 批次處理（低影響 × 技術債清理）
+
+| ID | 等級 | 項目 | Phase |
+|----|------|------|-------|
+| TD-01 / PH2-05 | P2 | 同義詞設定檔 `.brain/synonyms.json` | Phase 2 |
+| TD-02 | P2 | `embedder.py` 維度環境變數化 | Phase 2 |
+| TD-03 | P2 | `graph.py` 批次 edge INSERT | Phase 2 |
+| PH2-03 | P2 | `brain add` 互動模式 | Phase 2 |
+| PH2-04 | P2 | `brain export --format markdown` | Phase 2 |
+| PH2-06 | P2 | GitHub Issues / Linear 整合 | Phase 2 |
+| PH2-07 | P2 | `brain ask --json` | Phase 2 |
+
+### Q4 — 暫緩（長期願景）
+
+| ID | 等級 | 項目 |
+|----|------|------|
+| TD-04 | P3 | `decay_engine.py` 版本落差規則可自訂 |
+| PH3-01 | P2 | `federation.py` 跨專案知識分享 |
+| PH3-02 | P2 | `knowledge_distiller.py` LoRA fine-tuning |
+| PH3-03 | P2 | AI 輔助 KRB 審核 |
+| PH3-04 | P3 | Cloud 版本 / 計費系統 |
+| PH3-05 | P3 | ANN 向量索引 |
+| PH3-06 | P3 | 多語言 embedding |
+| VISION-01~05 | P3 | 動態 confidence、知識衝突解決、跨專案遷移… |
+
+### 現況摘要
+
+```
+Q1 完成率：9/10（90%）— 剩 PH0-04 測試覆蓋
+Q2 進行中：5 項（Phase 1-2 核心功能）
+Q3 排隊中：7 項（技術債 + P2 功能）
+Q4 暫緩：11 項（長期願景）
+下一步行動：PH0-04 — 補充 init / add / ask 整合測試，完成 Phase 0 清零
+```
+
+---
+
 ## 如何使用此文件
 
 1. **發現問題** → 加入「已知問題」表格，標記等級
