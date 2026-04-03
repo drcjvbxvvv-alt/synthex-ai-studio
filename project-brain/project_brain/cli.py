@@ -2015,6 +2015,10 @@ def main():
     )
     parser.add_argument('--guide', action='store_true',
                         help='完整使用指南（新專案/舊專案/環境變數/LLM 整合）')
+    from project_brain import __version__ as _ver
+    parser.add_argument('--version', '-v', action='version',
+                        version=f'brain {_ver}',
+                        help='顯示版本號碼')
 
     sub = parser.add_subparsers(dest='cmd', metavar='<command>')
 
