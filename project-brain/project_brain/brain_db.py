@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 9           # DEF-04: bump on every schema change
+SCHEMA_VERSION = 10          # DEF-04: bump on every schema change
 MAX_SESSION_ENTRIES = 500    # DEF-06: per-session_id LRU eviction threshold
 
 _SYNONYM_MAP = {
@@ -159,33 +159,6 @@ class BrainDB:
         except Exception as _te:
             logger.debug("DEF-02 trigger creation: %s", _te)
 
-        # OPT-01 fix: one-time migration to rebuild FTS5 with bigram-enhanced n-grams.
-        # New entries use the enhanced _ngram() automatically; existing entries need rebuild.
-        try:
-            _migrated = self.conn.execute(
-                "SELECT value FROM brain_meta WHERE key='fts_bigram_v1'"
-            ).fetchone()
-            if not _migrated:
-                self.conn.execute("DELETE FROM nodes_fts")
-                _rows = self.conn.execute(
-                    "SELECT id, title, content, tags FROM nodes"
-                ).fetchall()
-                for _r in _rows:
-                    self.conn.execute(
-                        "INSERT INTO nodes_fts(id, title, content, tags) VALUES(?, ?, ?, ?)",
-                        (_r[0],
-                         BrainDB._ngram(_r[1] or ""),
-                         BrainDB._ngram(_r[2] or ""),
-                         _r[3] or "[]")
-                    )
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('fts_bigram_v1','done')"
-                )
-                self.conn.commit()
-                logger.debug("OPT-01: FTS5 rebuilt with bigram n-grams (%d nodes)", len(_rows))
-        except Exception as _oe:
-            logger.debug("OPT-01 FTS bigram migration: %s", _oe)
-
     def _run_migrations(self) -> None:
         """DEF-04: Versioned schema migrations — idempotent, incremental.
 
@@ -247,6 +220,16 @@ class BrainDB:
             # v9: FEAT-06 index on node_history
             ("node_history index",
              "CREATE INDEX IF NOT EXISTS idx_nh_node ON node_history(node_id, version)"),
+            # v10: DEF-08 fix — atomic FTS5 bigram rebuild (replaces non-idempotent _setup() hack)
+            ("FTS5 bigram atomic rebuild",
+             lambda conn: (
+                 conn.execute("DELETE FROM nodes_fts"),
+                 [conn.execute(
+                     "INSERT INTO nodes_fts(id, title, content, tags) VALUES(?, ?, ?, ?)",
+                     (r[0], BrainDB._ngram(r[1] or ""), BrainDB._ngram(r[2] or ""), r[3] or "[]")
+                 ) for r in conn.execute("SELECT id, title, content, tags FROM nodes").fetchall()],
+                 conn.execute("INSERT OR REPLACE INTO brain_meta(key,value) VALUES('fts_bigram_v1','done')")
+             )),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -254,7 +237,10 @@ class BrainDB:
             if ver <= current:
                 continue
             try:
-                self.conn.execute(sql)
+                if callable(sql):
+                    sql(self.conn)
+                else:
+                    self.conn.execute(sql)
             except Exception:
                 pass  # column/index already exists — safe to ignore
             self.conn.execute(
@@ -526,7 +512,18 @@ class BrainDB:
         terms = self._expand_terms(query)
         if not terms:
             return []
-        fts_q = " OR ".join(f'"{t}"' for t in terms)
+        # DEF-07 fix: expand each term through n-gram so CJK sub-word search works
+        _all_tokens: list[str] = []
+        for _t in terms:
+            _ngram_tokens = BrainDB._ngram(_t).split()
+            _all_tokens.extend(_ngram_tokens if _ngram_tokens else [_t])
+        _seen_set: set = set()
+        _unique: list[str] = []
+        for _tok in _all_tokens:
+            if _tok not in _seen_set:
+                _unique.append(_tok)
+                _seen_set.add(_tok)
+        fts_q = " OR ".join(f'"{tok}"' for tok in _unique) if _unique else f'"{terms[0]}"'
         try:
             # P1-A: scope-aware search
             # matching scope first (0), global second (1), other scopes excluded

@@ -235,6 +235,21 @@ class KnowledgeGraph:
         if not safe_terms:
             return []
 
+        # DEF-07 fix: expand each term through _ngram_text() for CJK sub-word matching
+        _expanded_terms: list[str] = []
+        for _st in safe_terms:
+            _tokens = KnowledgeGraph._ngram_text(_st).split()
+            _valid = [_tok for _tok in _tokens if len(_tok) >= 1]
+            _expanded_terms.extend(_valid if _valid else [_st])
+        # deduplicate preserving order
+        _seen_terms: set = set()
+        _deduped: list[str] = []
+        for _term in _expanded_terms:
+            if _term not in _seen_terms:
+                _deduped.append(_term)
+                _seen_terms.add(_term)
+        safe_terms = _deduped if _deduped else safe_terms
+
         fts_query = " OR ".join(f'"{t}"' for t in safe_terms)
 
         try:

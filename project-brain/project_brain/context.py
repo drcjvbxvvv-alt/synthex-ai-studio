@@ -191,11 +191,15 @@ class ContextEngineer:
                 access_cnt  = int(node.get("access_count") or 0)
                 # 正規化：50 次以上視為飽和（避免極端值主導）
                 access_norm = min(1.0, access_cnt / 50.0)
+                # BUG-11 fix: include emotional_weight in ranking
+                ew          = float(node.get("emotional_weight") or 0.5)
+                ew_boost    = (ew - 0.5) * 0.10   # range: -0.05 ~ +0.05
                 return (
                     pinned
                     + confidence  * 0.35
                     + access_norm * 0.25
                     + importance  * 0.15
+                    + ew_boost
                 )
 
             # 所有節點放進 priority queue，高優先度先填

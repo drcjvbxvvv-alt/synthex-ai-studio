@@ -54,6 +54,7 @@ Ollama、GPT、Gemini 存取 brain serve 時，L1 完全沉默。
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -158,6 +159,36 @@ class SessionStore:
             self._local.conn = c
         return self._local.conn
 
+    @contextlib.contextmanager
+    def _write_guard(self):
+        """DEF-09 fix: cross-process advisory lock for SessionStore writes (Unix).
+        Falls back to no-op on Windows (fcntl unavailable).
+        """
+        depth = getattr(self._local, "_wg_depth", 0)
+        self._local._wg_depth = depth + 1
+        if depth > 0:
+            try:
+                yield
+            finally:
+                self._local._wg_depth -= 1
+            return
+        try:
+            import fcntl
+            lf = open(str(self.brain_dir / ".session_write_lock"), "w")
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                self._local._wg_depth -= 1
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+                lf.close()
+        except ImportError:
+            # Windows: no fcntl, rely on SQLite busy_timeout
+            try:
+                yield
+            finally:
+                self._local._wg_depth -= 1
+
     def _setup(self) -> None:
         """建立 schema（冪等）"""
         self.brain_dir.mkdir(parents=True, exist_ok=True)
@@ -224,18 +255,24 @@ class SessionStore:
         logger.debug("session_store_ready: %s", self._db_path)
 
     def _purge_expired(self) -> int:
-        """清除過期條目（session_id 空 = 非持久化，也一併清理）"""
+        """BUG-10 fix: also purge non-persistent entries from previous sessions."""
         conn = self._conn_()
         now  = datetime.now(timezone.utc).isoformat()
-        # 清除有明確過期時間且已過期的條目
-        cur = conn.execute(
+        # Delete entries that have passed their explicit expiry time
+        cur1 = conn.execute(
             "DELETE FROM session_entries WHERE expires_at != '' AND expires_at < ?",
             (now,)
         )
-        deleted = cur.rowcount
+        # BUG-10 fix: delete non-persistent entries that belong to OTHER sessions
+        # (i.e. orphaned 'progress'/'notes' style entries from dead sessions)
+        cur2 = conn.execute(
+            "DELETE FROM session_entries WHERE persistent = 0 AND session_id != ?",
+            (self.session_id,)
+        )
+        deleted = cur1.rowcount + cur2.rowcount
         conn.commit()
         if deleted:
-            logger.info("session_store_purged: %d expired entries", deleted)
+            logger.info("session_store_purged: %d expired/non-persistent entries", deleted)
         return deleted
 
     # ── 核心讀寫 ──────────────────────────────────────────────
@@ -280,18 +317,19 @@ class SessionStore:
         meta_json = json.dumps(meta or {}, ensure_ascii=False)
 
         conn = self._conn_()
-        conn.execute("""
-            INSERT INTO session_entries
-                (key, value, category, session_id, created_at, expires_at, meta)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value      = excluded.value,
-                category   = excluded.category,
-                session_id = excluded.session_id,
-                expires_at = excluded.expires_at,
-                meta       = excluded.meta
-        """, (key, value, category, self.session_id, now_iso, expires_at, meta_json))
-        conn.commit()
+        with self._write_guard():
+            conn.execute("""
+                INSERT INTO session_entries
+                    (key, value, category, session_id, created_at, expires_at, meta)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value      = excluded.value,
+                    category   = excluded.category,
+                    session_id = excluded.session_id,
+                    expires_at = excluded.expires_at,
+                    meta       = excluded.meta
+            """, (key, value, category, self.session_id, now_iso, expires_at, meta_json))
+            conn.commit()
 
         return SessionEntry(
             key=key, value=value, category=category,
@@ -323,8 +361,9 @@ class SessionStore:
     def delete(self, key: str) -> bool:
         """刪除單一條目，回傳是否實際刪除"""
         conn = self._conn_()
-        cur  = conn.execute("DELETE FROM session_entries WHERE key = ?", (key,))
-        conn.commit()
+        with self._write_guard():
+            cur  = conn.execute("DELETE FROM session_entries WHERE key = ?", (key,))
+            conn.commit()
         return cur.rowcount > 0
 
     def list(
@@ -428,12 +467,13 @@ class SessionStore:
         conn  = self._conn_()
         non_persistent = [k for k, v in CATEGORY_CONFIG.items() if not v["persistent"]]
         placeholders   = ",".join("?" * len(non_persistent))
-        cur = conn.execute(
-            f"DELETE FROM session_entries WHERE session_id = ? "
-            f"AND category IN ({placeholders})",
-            [sid] + non_persistent
-        )
-        conn.commit()
+        with self._write_guard():
+            cur = conn.execute(
+                f"DELETE FROM session_entries WHERE session_id = ? "
+                f"AND category IN ({placeholders})",
+                [sid] + non_persistent
+            )
+            conn.commit()
         return cur.rowcount
 
     def stats(self) -> dict:

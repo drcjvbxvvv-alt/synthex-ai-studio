@@ -469,16 +469,72 @@ def db(self) -> 'BrainDB':
 
 ---
 
+## v1.0.2 Stability (P1)
+
+> **完成日期**: 2026-04-03 | **包含**: DEF-07、DEF-08、DEF-09、BUG-10、BUG-11
+
+---
+
+#### DEF-07：CJK 中文搜尋召回率不一致 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` `search_nodes()` + `graph.py` `search_nodes_multi()` |
+| **症狀** | FTS5 N-gram 只用於 INSERT，查詢字串未展開，搜「中文」找不到含「中文搜尋」的節點 |
+| **修復** | `search_nodes()` 將每個 term 通過 `_ngram()` 展開為 bigram token set 後再建 OR 查詢；`search_nodes_multi()` 同樣通過 `_ngram_text()` 展開 safe_terms；兩處均保序去重 |
+
+---
+
+#### DEF-08：FTS5 Bigram 遷移非冪等 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` `_run_migrations()` + `_setup()` |
+| **症狀** | FTS5 重建邏輯在 `_setup()` 中獨立執行，崩潰後旗標已設但索引未完整重建 |
+| **修復** | 將 FTS5 重建移入 `_run_migrations()` 作為 v10 migration（callable tuple），受版本號控管確保原子性；`SCHEMA_VERSION` 從 9 升至 10；移除 `_setup()` 中舊的 try/except 區塊 |
+
+---
+
+#### DEF-09：SessionStore 無跨進程寫入保護 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `session_store.py` |
+| **症狀** | `BrainDB` 有 `fcntl.flock()` 保護，`SessionStore` 完全無跨進程鎖，MCP + CLI 並發時條目遺失 |
+| **修復** | 新增 `_write_guard()` context manager（`fcntl.LOCK_EX` + 可重入 depth counter + Windows fallback）；`set()`、`delete()`、`clear_session()` 均以 `with self._write_guard():` 包覆 |
+
+---
+
+#### BUG-10：Session Store 非持久條目永不過期 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `session_store.py` — `_purge_expired()` |
+| **症狀** | `persistent=False` 條目 `expires_at=''`，舊 WHERE 只刪有明確到期時間的記錄 |
+| **修復** | 新增第二條 DELETE：`WHERE persistent = 0 AND session_id != current_session`，清除舊 session 的非持久化孤立條目 |
+
+---
+
+#### BUG-11：emotional_weight 未納入節點排名 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `context.py` — `_node_priority()` |
+| **症狀** | `emotional_weight` 欄位存在可設定，但排名公式完全忽略，重大事故 Pitfall 與普通筆記同等排名 |
+| **修復** | 加入 `ew_boost = (emotional_weight - 0.5) * 0.10`（範圍 −0.05 ~ +0.05），納入 priority 計算 |
+
+---
+
 ## 統計摘要
 
 | 類別 | 數量 | 說明 |
 |------|------|------|
-| 系統缺陷修復 | 7 | DEF-01~06, DEF-03 |
-| BUG 修復 | 10 | BUG-01~08, BUG-09, BUG-12 |
+| 系統缺陷修復 | 10 | DEF-01~09 + DEF-08 |
+| BUG 修復 | 12 | BUG-01~12 |
 | 性能優化 | 6 | OPT-01~06 |
 | 新增功能 | 10 | FEAT-01~10 |
 | 深度 AI 功能 | 4 | DEEP-01~04 |
-| **合計** | **37** | |
+| **合計** | **42** | |
 
 ---
 

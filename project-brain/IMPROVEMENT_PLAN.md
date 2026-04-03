@@ -332,7 +332,7 @@ def db(self) -> 'BrainDB':
 
 ---
 
-### DEF-07：CJK 中文搜尋召回率不一致 🟡
+### DEF-07：CJK 中文搜尋召回率不一致 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -387,7 +387,7 @@ def _fts_query(term: str) -> str:
 
 ---
 
-### BUG-10：Session Store 非持久條目永不過期 🟡
+### BUG-10：Session Store 非持久條目永不過期 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -405,7 +405,7 @@ WHERE (expires_at != '' AND expires_at < ?)
 
 ---
 
-### BUG-11：emotional_weight 欄位從未使用於排名 🟡
+### BUG-11：emotional_weight 欄位從未使用於排名 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -446,7 +446,7 @@ def search_nodes(self, ..., scope: str = "") -> list[dict]:
 
 ## 新發現系統缺陷
 
-### DEF-08：FTS5 Bigram 遷移非冪等 🟡
+### DEF-08：FTS5 Bigram 遷移非冪等 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -457,7 +457,7 @@ def search_nodes(self, ..., scope: str = "") -> list[dict]:
 
 ---
 
-### DEF-09：SessionStore 無跨進程寫入保護 🟡
+### DEF-09：SessionStore 無跨進程寫入保護 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -682,11 +682,11 @@ for file_path in files_changed:
 | DEF-03 | 延遲初始化執行緒鎖 | 缺陷 | ✅ 已完成 | Crash | 小 |
 | BUG-09 | 雙 FTS5 索引不同步 | Bug | ✅ 已完成 | 搜尋錯誤 | 中 |
 | BUG-12 | Scope 過濾無效 | Bug | ✅ 已完成 | 查詢污染 | 小 |
-| DEF-07 | CJK 查詢路徑召回率差 | 缺陷 | 🟠 P1 | 中文可用性 | 中 |
-| DEF-09 | SessionStore 無跨進程鎖 | 缺陷 | 🟠 P1 | 資料遺失 | 小 |
-| BUG-10 | Session 非持久條目不過期 | Bug | 🟠 P1 | 記憶體洩漏 | 小 |
-| BUG-11 | emotional_weight 未用於排名 | Bug | 🟠 P1 | 排名失準 | 小 |
-| DEF-08 | FTS5 遷移非冪等 | 缺陷 | 🟠 P1 | 索引損壞 | 中 |
+| DEF-07 | CJK 查詢路徑召回率差 | 缺陷 | ✅ 已完成 | 中文可用性 | 中 |
+| DEF-09 | SessionStore 無跨進程鎖 | 缺陷 | ✅ 已完成 | 資料遺失 | 小 |
+| BUG-10 | Session 非持久條目不過期 | Bug | ✅ 已完成 | 記憶體洩漏 | 小 |
+| BUG-11 | emotional_weight 未用於排名 | Bug | ✅ 已完成 | 排名失準 | 小 |
+| DEF-08 | FTS5 遷移非冪等 | 缺陷 | ✅ 已完成 | 索引損壞 | 中 |
 | DEF-10 | SR 執行緒競態 | 缺陷 | 🟡 P2 | 計數不準 | 小 |
 | OPT-07 | 消除重複 _ngram() | 優化 | 🟡 P2 | 維護性 | 小 |
 | OPT-08 | FTS5 查詢字串轉義 | 優化 | 🟡 P2 | 穩定性 | 小 |
