@@ -94,6 +94,11 @@ class StagedNode:
     l3_node_id:  str        = ""    # 核准後在 L3 的節點 ID
     applicability_condition: str = ""
     invalidation_condition:  str = ""
+    # PH3-03: AI 預篩欄位
+    ai_recommendation: str  = ""   # "approve" | "review" | "reject" | ""
+    ai_confidence:     float = 0.0
+    ai_reasoning:      str  = ""
+    ai_screened_at:    str  = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -103,7 +108,15 @@ class StagedNode:
                  STATUS_REJECTED: "❌", STATUS_CHANGES: "🔄"}
         icon = icons.get(self.status, "⬜")
         ts   = self.created_at[:16] if self.created_at else "?"
-        return f"{icon} [{self.id[:8]}] {self.kind:<12} {self.title[:40]:<40}  {ts}"
+        base = f"{icon} [{self.id[:8]}] {self.kind:<12} {self.title[:40]:<40}  {ts}"
+        # PH3-03: 附加 AI 預篩標籤
+        if self.ai_recommendation:
+            ai_icons = {"approve": "🤖✅", "review": "🤖⚠️", "reject": "🤖❌"}
+            ai_tag = ai_icons.get(self.ai_recommendation, "🤖")
+            conf   = f"{self.ai_confidence:.2f}"
+            reason = f"  {self.ai_reasoning[:30]}" if self.ai_reasoning else ""
+            base  += f"  [{ai_tag} {conf}{reason}]"
+        return base
 
 
 class KnowledgeReviewBoard:
@@ -164,7 +177,11 @@ class KnowledgeReviewBoard:
                 reviewed_at  TEXT NOT NULL DEFAULT '',
                 l3_node_id   TEXT NOT NULL DEFAULT '',
                 applicability_condition TEXT NOT NULL DEFAULT '',
-                invalidation_condition  TEXT NOT NULL DEFAULT ''
+                invalidation_condition  TEXT NOT NULL DEFAULT '',
+                ai_recommendation TEXT NOT NULL DEFAULT '',
+                ai_confidence     REAL NOT NULL DEFAULT 0.0,
+                ai_reasoning      TEXT NOT NULL DEFAULT '',
+                ai_screened_at    TEXT NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_staged_status
@@ -186,6 +203,27 @@ class KnowledgeReviewBoard:
             );
             CREATE INDEX IF NOT EXISTS idx_kh_node ON knowledge_history(l3_node_id);
         """)
+        conn.commit()
+
+        # PH3-03 migration: 對現有 DB 補加 ai_* 欄位（靜默，若已存在則跳過）
+        _ai_cols = {
+            "ai_recommendation": "TEXT NOT NULL DEFAULT ''",
+            "ai_confidence":     "REAL NOT NULL DEFAULT 0.0",
+            "ai_reasoning":      "TEXT NOT NULL DEFAULT ''",
+            "ai_screened_at":    "TEXT NOT NULL DEFAULT ''",
+        }
+        existing_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(staged_nodes)").fetchall()
+        }
+        for col, typedef in _ai_cols.items():
+            if col not in existing_cols:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE staged_nodes ADD COLUMN {col} {typedef}"
+                    )
+                except Exception:
+                    pass
         conn.commit()
 
     # ── 提交（Staging 入口）─────────────────────────────────────
@@ -552,22 +590,28 @@ class KnowledgeReviewBoard:
         ).fetchone()
 
     def _row_to_staged(self, row: sqlite3.Row) -> StagedNode:
+        d = dict(row)
         return StagedNode(
-            id          = row["id"],
-            kind        = row["kind"],
-            title       = row["title"],
-            content     = row["content"],
-            tags        = row["tags"],
-            source      = row["source"],
-            submitter   = row["submitter"],
-            status      = row["status"],
-            reviewer    = row["reviewer"],
-            review_note = row["review_note"],
-            created_at  = row["created_at"],
-            reviewed_at = row["reviewed_at"],
-            l3_node_id  = row["l3_node_id"],
-            applicability_condition = row["applicability_condition"] or "",
-            invalidation_condition  = row["invalidation_condition"]  or "",
+            id          = d["id"],
+            kind        = d["kind"],
+            title       = d["title"],
+            content     = d["content"],
+            tags        = d["tags"],
+            source      = d["source"],
+            submitter   = d["submitter"],
+            status      = d["status"],
+            reviewer    = d["reviewer"],
+            review_note = d["review_note"],
+            created_at  = d["created_at"],
+            reviewed_at = d["reviewed_at"],
+            l3_node_id  = d["l3_node_id"],
+            applicability_condition = d.get("applicability_condition") or "",
+            invalidation_condition  = d.get("invalidation_condition")  or "",
+            # PH3-03 AI 欄位（舊紀錄可能缺欄位，用 .get 安全存取）
+            ai_recommendation = d.get("ai_recommendation") or "",
+            ai_confidence     = float(d.get("ai_confidence") or 0.0),
+            ai_reasoning      = d.get("ai_reasoning") or "",
+            ai_screened_at    = d.get("ai_screened_at") or "",
         )
 
     def close(self) -> None:

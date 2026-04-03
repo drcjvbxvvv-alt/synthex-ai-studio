@@ -118,7 +118,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | ------ | ---- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | PH3-01 | P2   | `federation.py`                       | 跨專案知識分享協議；public scope 知識池；訂閱特定技術領域更新                                    |
 | PH3-02 | P2   | `knowledge_distiller.py` Layer 3 完工 | LoRA fine-tuning pipeline；Axolotl / Unsloth 整合；讓組織知識蒸餾進私有模型，不佔 context window |
-| PH3-03 | P2   | AI 輔助 KRB 審核                      | 由 Claude Haiku 輔助審核自動提取的知識，降低人工負擔                                             |
+| PH3-03 | P2   | AI 輔助 KRB 審核                      | 由 Claude Haiku 輔助審核自動提取的知識，降低人工負擔（✅ 2026-04-03：`krb_ai_assist.py` + `brain review pre-screen` + `krb_pre_screen` MCP 工具）|
 | PH3-04 | P3   | Cloud 版本                            | 託管服務、Team 計畫（$20/月/開發者）、計費系統                                                   |
 | PH3-05 | P3   | ANN 向量索引                          | sqlite-vec HNSW 索引，大型知識庫（5000+ 節點）搜尋 O(log N)                                      |
 | PH3-06 | P3   | 多語言 embedding                      | 支援 multilingual-e5 等多語言模型，中英混搜                                                      |

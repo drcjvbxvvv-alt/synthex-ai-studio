@@ -771,6 +771,88 @@ def create_server(workdir: str) -> Any:
             logger.error("report_knowledge_outcome error: %s", e)
             return {"ok": False, "error": str(e)}
 
+    # ── Tool: krb_pre_screen (PH3-03) ───────────────────────────────
+    @mcp.tool()
+    def krb_pre_screen(
+        limit:                   int   = 50,
+        auto_approve_threshold:  float = 0.0,
+        auto_reject_threshold:   float = 0.0,
+        max_api_calls:           int   = 10,
+        workdir:                 str   = "",
+    ) -> dict:
+        """
+        AI-assisted KRB review — pre-screen pending staged nodes with Claude Haiku.
+
+        Routes each pending knowledge node into one of three lanes:
+          approve lane  — AI confident the knowledge is clear and actionable
+          review lane   — needs human judgment (always used for Pitfall nodes)
+          reject lane   — likely noise, too vague, or duplicate
+
+        Call this after brain scan or any large batch import to reduce
+        manual review burden. Human still has final say — auto-approve and
+        auto-reject are OFF by default (set threshold > 0 to enable).
+
+        Args:
+            limit:                   Max pending nodes to process (default 50).
+            auto_approve_threshold:  AI confidence ≥ this → auto-approve.
+                                     0.0 = disabled (recommended default).
+                                     Pitfall nodes are NEVER auto-approved.
+            auto_reject_threshold:   AI confidence ≥ this AND recommends reject
+                                     → auto-reject. 0.0 = disabled.
+            max_api_calls:           Cost guard: max Haiku API calls (default 10).
+            workdir:                 Project working directory (optional).
+
+        Returns:
+            {
+              "total":          nodes processed,
+              "approve_lane":   count routed to approve,
+              "review_lane":    count routed to human review,
+              "reject_lane":    count routed to reject,
+              "auto_approved":  count actually auto-approved,
+              "auto_rejected":  count actually auto-rejected,
+              "api_calls_used": Haiku API calls consumed,
+            }
+        """
+        _rate_check()
+        import os as _os
+
+        api_key = _os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return {"error": "ANTHROPIC_API_KEY 未設定，無法執行 AI 預篩"}
+
+        b = _resolve_brain(workdir)
+        bd = b.brain_dir
+
+        try:
+            import anthropic
+            from project_brain.graph        import KnowledgeGraph
+            from project_brain.review_board import KnowledgeReviewBoard
+            from project_brain.krb_ai_assist import KRBAIAssistant
+
+            graph  = KnowledgeGraph(bd)
+            krb    = KnowledgeReviewBoard(bd, graph)
+            client = anthropic.Anthropic(api_key=api_key)
+            assist = KRBAIAssistant(krb, client)
+
+            aa = auto_approve_threshold if auto_approve_threshold > 0.0 else None
+            ar = auto_reject_threshold  if auto_reject_threshold  > 0.0 else None
+
+            summary = assist.pre_screen(
+                limit                  = max(1, min(200, limit)),
+                auto_approve_threshold = aa,
+                auto_reject_threshold  = ar,
+                max_api_calls          = max(1, min(50, max_api_calls)),
+            )
+            # Strip non-serialisable AIScreenResult objects
+            summary.pop("results", None)
+            return summary
+
+        except ImportError:
+            return {"error": "anthropic 套件未安裝，請執行：pip install anthropic"}
+        except Exception as e:
+            logger.error("krb_pre_screen 內部錯誤：%s", e)
+            return {"error": "預篩失敗，請檢查日誌"}
+
     return mcp
 
 

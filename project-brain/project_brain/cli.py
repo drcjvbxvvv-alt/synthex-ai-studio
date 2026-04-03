@@ -396,18 +396,72 @@ def cmd_review(args):
     krb   = KnowledgeReviewBoard(bd, graph)
 
     if sub == 'list' or sub is None:
-        limit   = getattr(args, 'limit', 20)
-        pending = krb.list_pending(limit=limit)
+        limit      = getattr(args, 'limit', 20)
+        ai_pending = getattr(args, 'pending_ai', False)
+        pending    = krb.list_pending(limit=limit)
+        if ai_pending:
+            pending = [n for n in pending if n.ai_recommendation == "review"]
         if not pending:
             _info("KRB Staging 目前沒有待審知識")
             _info("自動捕捉的知識（brain scan / git hook LLM 提取）會出現在這裡")
             return
-        print(f"\n{B}{C}  KRB Staging — 待審知識 ({len(pending)} 筆){R}")
-        print(f"{D}{'─'*54}{R}")
+        label = "待人工審查（AI 標記）" if ai_pending else f"待審知識 ({len(pending)} 筆)"
+        print(f"\n{B}{C}  KRB Staging — {label}{R}")
+        print(f"{D}{'─'*68}{R}")
         for node in pending:
             print(f"  {node.summary_line()}")
-        print(f"\n{D}  brain review approve <id>   核准進入 L3{R}")
-        print(f"{D}  brain review reject  <id>   拒絕並記錄原因{R}\n")
+        print(f"\n{D}  brain review approve <id>          核准進入 L3{R}")
+        print(f"{D}  brain review reject  <id>          拒絕並記錄原因{R}")
+        print(f"{D}  brain review pre-screen            AI 預篩所有 pending 節點{R}\n")
+
+    elif sub == 'pre-screen':
+        # PH3-03: AI 輔助 KRB 預篩
+        import os as _os
+        api_key = _os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            _err("需要 ANTHROPIC_API_KEY 環境變數才能執行 AI 預篩"); return
+        try:
+            import anthropic
+            from project_brain.krb_ai_assist import KRBAIAssistant
+        except ImportError:
+            _err("請安裝 anthropic 套件：pip install anthropic"); return
+
+        limit  = getattr(args, 'limit', 50)
+        aa     = getattr(args, 'auto_approve', None)
+        ar     = getattr(args, 'auto_reject',  None)
+        max_ap = getattr(args, 'max_api_calls', 20)
+
+        client = anthropic.Anthropic(api_key=api_key)
+        assist = KRBAIAssistant(krb, client)
+
+        print(f"\n{B}{C}  🤖 AI KRB 預篩{R}  {D}limit={limit}{R}")
+        if aa is not None:
+            print(f"  {D}auto-approve 閾值：{aa}  （≥{aa} 且非 Pitfall 自動核准）{R}")
+        if ar is not None:
+            print(f"  {D}auto-reject  閾值：{ar}  （≥{ar} 且建議拒絕自動執行）{R}")
+        print(f"{D}{'─'*54}{R}")
+
+        summary = assist.pre_screen(
+            limit                  = limit,
+            auto_approve_threshold = aa,
+            auto_reject_threshold  = ar,
+            max_api_calls          = max_ap,
+        )
+
+        if summary["total"] == 0:
+            _info("沒有需要預篩的 pending 節點（或全部已在 24 小時快取內）")
+            return
+
+        _ok(f"預篩完成：{summary['total']} 條")
+        print(f"  ✅ 快速道（approve）：{summary['approve_lane']} 條")
+        print(f"  ⚠️  人工道（review）： {summary['review_lane']} 條")
+        print(f"  ❌ 丟棄道（reject）： {summary['reject_lane']} 條")
+        if summary['auto_approved'] or summary['auto_rejected']:
+            print()
+            print(f"  🤖 已自動核准：{summary['auto_approved']} 條")
+            print(f"  🤖 已自動拒絕：{summary['auto_rejected']} 條")
+        print(f"\n  {D}API 呼叫：{summary['api_calls_used']} 次{R}")
+        print(f"\n{D}  使用 brain review list --pending-ai 查看待人工審查項目{R}\n")
 
     elif sub == 'approve':
         sid = getattr(args, 'id', None)
@@ -435,7 +489,7 @@ def cmd_review(args):
             _err(f"找不到 staging ID：{sid}")
 
     else:
-        _err(f"未知子命令：{sub}，可用：list / approve / reject")
+        _err(f"未知子命令：{sub}，可用：list / approve / reject / pre-screen")
 
 
 def cmd_setup(args):
@@ -2367,14 +2421,22 @@ def main():
 
     p = mkp('review', '審查 KRB Staging 中待核准的知識')
     p.add_argument('review_sub', nargs='?', default='list',
-                   choices=['list','approve','reject'],
+                   choices=['list','approve','reject','pre-screen'],
                    help='子命令（預設：list）')
     p.add_argument('id', nargs='?', default=None,
                    help='Staged node ID（approve / reject 時必填）')
-    p.add_argument('--reviewer', default='human', help='審查者名稱')
-    p.add_argument('--note',     default='',      help='核准備注')
-    p.add_argument('--reason',   default='',      help='拒絕原因')
-    p.add_argument('--limit',    type=int, default=20, help='列出筆數上限')
+    p.add_argument('--reviewer',      default='human', help='審查者名稱')
+    p.add_argument('--note',          default='',      help='核准備注')
+    p.add_argument('--reason',        default='',      help='拒絕原因')
+    p.add_argument('--limit',         type=int, default=20,  help='列出/預篩筆數上限')
+    p.add_argument('--pending-ai',    dest='pending_ai', action='store_true',
+                   help='只列出 AI 標記為 review 的待人工審查項目')
+    p.add_argument('--auto-approve',  dest='auto_approve', type=float, default=None,
+                   help='AI 信心 ≥ 此值時自動核准（預設關閉）')
+    p.add_argument('--auto-reject',   dest='auto_reject',  type=float, default=None,
+                   help='AI 信心 ≥ 此值且建議拒絕時自動執行（預設關閉）')
+    p.add_argument('--max-api-calls', dest='max_api_calls', type=int, default=20,
+                   help='pre-screen 最大 API 呼叫次數（預設 20）')
 
     p = mkp('doctor', '系統健康檢查與自動修復')
     p.add_argument('--fix', action='store_true', help='嘗試自動修復發現的問題')
