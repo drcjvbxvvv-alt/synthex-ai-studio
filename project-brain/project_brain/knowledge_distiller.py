@@ -80,6 +80,7 @@ class DistillationResult:
     output_files:   list[str]
     layers_done:    list[str]
     elapsed_ms:     int
+    lora_samples:   int = 0
 
     def summary(self) -> str:
         from .output import OK, B, G, Y, C, GR, R, W, hr
@@ -154,9 +155,11 @@ class KnowledgeDistiller:
             done_layers.append("prompts")
             print(f"  {OK} {B}Layer 2{R} Role Prompts  {GR}→{R} {W}{len(paths)}{R} 個角色")
 
+        lora_samples = 0
         if "lora" in layers:
-            path = self._distill_lora_dataset(all_nodes)
+            path, cfg_paths, lora_samples = self._distill_lora_dataset(all_nodes)
             output_files.append(str(path.relative_to(self.brain_dir)))
+            output_files.extend(str(p.relative_to(self.brain_dir)) for p in cfg_paths)
             done_layers.append("lora")
             print(f"  {OK} {B}Layer 3{R} LoRA Dataset  {GR}→{R} {W}{path.name}{R}")
 
@@ -171,6 +174,7 @@ class KnowledgeDistiller:
             output_files   = output_files,
             layers_done    = done_layers,
             elapsed_ms     = int((time.monotonic() - t0) * 1_000),
+            lora_samples   = lora_samples,
         )
 
     # ── Layer 1：Context Distillation ─────────────────────────
@@ -320,20 +324,23 @@ class KnowledgeDistiller:
 
     # ── Layer 3：LoRA 訓練數據 ─────────────────────────────────
 
-    def _distill_lora_dataset(self, nodes: list[dict]) -> Path:
+    def _distill_lora_dataset(self, nodes: list[dict]) -> tuple[Path, list[Path], int]:
         """
         生成 LoRA adapter 訓練數據（Alpaca instruction-following 格式）。
-        
+
         輸出：.brain/distilled/lora_dataset.jsonl
-        
+
         可用以下工具訓練：
-          - Axolotl：  axolotl finetune config.yml
-          - Unsloth：  pip install unsloth && python train.py
-          - LLaMA-Factory：llamafactory-cli train config.json
-          
+          - Axolotl：  axolotl finetune axolotl_config.yml
+          - Unsloth：  pip install unsloth && python unsloth_train.py
+          - LLaMA-Factory：llamafactory-cli train llamafactory_config.json
+
         注意：
           訓練 LoRA 需要 GPU（>= 24GB VRAM for 7B models）
           v4.0 只生成訓練數據，不執行訓練
+
+        Returns:
+            (dataset_path, config_paths, final_sample_count)
         """
         dataset: list[dict] = []
 
@@ -355,19 +362,26 @@ class KnowledgeDistiller:
             entries = self._node_to_qa(kind, title, content, tags)
             dataset.extend(entries)
 
+        # PH3-02: 去重複
+        original_count = len(dataset)
+        dataset = self._deduplicate_dataset(dataset)
+        dedup_removed = original_count - len(dataset)
+        final_samples = len(dataset)
+
         # 寫入 JSONL（每行一個 JSON 物件）
         path = self.out_dir / "lora_dataset.jsonl"
         with path.open("w", encoding="utf-8") as f:
             for entry in dataset:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-        # 訓練配置模板（供參考）
-        config_path = self.out_dir / "lora_training_config.yaml"
-        config_path.write_text(self._generate_training_config(len(dataset)),
-                               encoding="utf-8")
+        # PH3-02: 生成訓練配置
+        cfg_paths = self._generate_training_configs(path, final_samples)
 
-        logger.info("lora_dataset_generated | count=%s", len(dataset), path=str(path))
-        return path
+        logger.info(
+            "lora_dataset_generated | count=%s dedup_removed=%s final_samples=%s",
+            original_count, dedup_removed, final_samples,
+        )
+        return path, cfg_paths, final_samples
 
     def _node_to_qa(
         self, kind: str, title: str, content: str, tags: str
@@ -410,6 +424,215 @@ class KnowledgeDistiller:
             })
 
         return pairs
+
+    # ── PH3-02: 去重複 ────────────────────────────────────────
+
+    @staticmethod
+    def _deduplicate_dataset(dataset: list[dict]) -> list[dict]:
+        """
+        去除精確重複的 instruction 字串；
+        若 Jaccard 相似度 > 0.85 視為近似重複，保留信心最高的那筆
+        （以 confidence 欄位為準；若無則以最早出現者為準）。
+        """
+        def _tokens(s: str) -> set:
+            return set(re.findall(r'\w+', s.lower()))
+
+        # 先按 instruction 分組（精確重複只保留一筆）
+        seen_exact: dict[str, dict] = {}
+        near_groups: list[dict] = []
+
+        for item in dataset:
+            instr = item.get("instruction", "")
+            if instr in seen_exact:
+                # 保留 confidence 較高的
+                existing = seen_exact[instr]
+                if item.get("confidence", 0) > existing.get("confidence", 0):
+                    seen_exact[instr] = item
+            else:
+                seen_exact[instr] = item
+
+        unique = list(seen_exact.values())
+
+        # 近似重複（Jaccard > 0.85）—— O(N²) but dataset 通常 < 1000
+        result: list[dict] = []
+        used = [False] * len(unique)
+        for i, item_i in enumerate(unique):
+            if used[i]:
+                continue
+            group = [item_i]
+            toks_i = _tokens(item_i.get("instruction", ""))
+            for j in range(i + 1, len(unique)):
+                if used[j]:
+                    continue
+                toks_j = _tokens(unique[j].get("instruction", ""))
+                union  = toks_i | toks_j
+                if not union:
+                    continue
+                jaccard = len(toks_i & toks_j) / len(union)
+                if jaccard > 0.85:
+                    group.append(unique[j])
+                    used[j] = True
+            # 從組內保留 confidence 最高的
+            best = max(group, key=lambda x: x.get("confidence", 0.0))
+            result.append(best)
+        return result
+
+    # ── PH3-02: 生成訓練配置 ──────────────────────────────────
+
+    def _generate_training_configs(
+        self, dataset_path: Path, num_samples: int
+    ) -> list[Path]:
+        """
+        生成三種訓練工具的配置檔案到 .brain/distilled/。
+
+        Returns:
+            生成的檔案路徑列表
+        """
+        generated: list[Path] = []
+        dataset_abs = str(dataset_path)
+
+        # ── axolotl_config.yml ─────────────────────────────────
+        axolotl_content = f"""\
+# axolotl_config.yml — generated by Project Brain v4.0
+# Usage: axolotl finetune axolotl_config.yml
+
+base_model: meta-llama/Llama-3.2-3B-Instruct
+model_type: LlamaForCausalLM
+tokenizer_type: AutoTokenizer
+
+datasets:
+  - path: {dataset_abs}
+    type: alpaca
+
+# 訓練樣本數：{num_samples}
+val_set_size: 0.05
+sequence_len: 2048
+
+adapter: lora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - v_proj
+  - k_proj
+  - o_proj
+
+micro_batch_size: 2
+gradient_accumulation_steps: 4
+num_epochs: 3
+learning_rate: 0.0002
+optimizer: adamw_torch
+lr_scheduler: cosine
+warmup_steps: 10
+
+output_dir: ./outputs/project-brain-lora
+# 注意：需要 GPU >= 8GB VRAM（Llama-3.2-3B for inference, 12GB for training）
+"""
+        axolotl_path = self.out_dir / "axolotl_config.yml"
+        axolotl_path.write_text(axolotl_content, encoding="utf-8")
+        generated.append(axolotl_path)
+
+        # ── unsloth_train.py ───────────────────────────────────
+        unsloth_content = f'''\
+# unsloth_train.py — generated by Project Brain v4.0
+# Usage: pip install unsloth && python unsloth_train.py
+
+from unsloth import FastLanguageModel
+from trl import SFTTrainer
+from transformers import TrainingArguments
+from datasets import load_dataset
+
+# Model config
+MAX_SEQ_LENGTH = 2048
+DTYPE          = None   # auto-detect
+LOAD_IN_4BIT   = True
+
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name   = "meta-llama/Llama-3.2-3B-Instruct",
+    max_seq_length = MAX_SEQ_LENGTH,
+    dtype          = DTYPE,
+    load_in_4bit   = LOAD_IN_4BIT,
+)
+
+model = FastLanguageModel.get_peft_model(
+    model,
+    r                  = 16,
+    target_modules     = ["q_proj", "v_proj", "k_proj", "o_proj"],
+    lora_alpha         = 32,
+    lora_dropout       = 0.05,
+    bias               = "none",
+    use_gradient_checkpointing = "unsloth",
+)
+
+dataset = load_dataset("json", data_files="{dataset_abs}", split="train")
+
+trainer = SFTTrainer(
+    model        = model,
+    tokenizer    = tokenizer,
+    train_dataset = dataset,
+    dataset_text_field = "output",
+    max_seq_length = MAX_SEQ_LENGTH,
+    args = TrainingArguments(
+        per_device_train_batch_size   = 2,
+        gradient_accumulation_steps   = 4,
+        num_train_epochs              = 3,
+        learning_rate                 = 2e-4,
+        lr_scheduler_type             = "cosine",
+        warmup_steps                  = 10,
+        output_dir                    = "./outputs/project-brain-lora",
+        save_strategy                 = "epoch",
+        logging_steps                 = 10,
+        optim                         = "adamw_8bit",
+    ),
+)
+
+trainer.train()
+model.save_pretrained("./outputs/project-brain-lora")
+tokenizer.save_pretrained("./outputs/project-brain-lora")
+print("Training complete — saved to ./outputs/project-brain-lora")
+'''
+        unsloth_path = self.out_dir / "unsloth_train.py"
+        unsloth_path.write_text(unsloth_content, encoding="utf-8")
+        generated.append(unsloth_path)
+
+        # ── llamafactory_config.json ───────────────────────────
+        llamafactory_cfg = {
+            "model_name_or_path": "meta-llama/Llama-3.2-3B-Instruct",
+            "stage":              "sft",
+            "do_train":           True,
+            "finetuning_type":    "lora",
+            "lora_rank":          16,
+            "lora_target":        "q_proj,v_proj,k_proj,o_proj",
+            "dataset":            "project_brain_lora",
+            "dataset_dir":        str(self.out_dir),
+            "template":           "alpaca",
+            "cutoff_len":         2048,
+            "max_samples":        num_samples,
+            "per_device_train_batch_size": 2,
+            "gradient_accumulation_steps": 4,
+            "num_train_epochs":   3,
+            "learning_rate":      2e-4,
+            "lr_scheduler_type":  "cosine",
+            "warmup_ratio":       0.05,
+            "output_dir":         "./outputs/project-brain-lora",
+            "logging_steps":      10,
+            "save_steps":         100,
+            "fp16":               True,
+            "_comment": (
+                f"LLaMA-Factory config — generated by Project Brain v4.0. "
+                f"Samples: {num_samples}. "
+                "Usage: llamafactory-cli train llamafactory_config.json"
+            ),
+        }
+        llamafactory_path = self.out_dir / "llamafactory_config.json"
+        llamafactory_path.write_text(
+            json.dumps(llamafactory_cfg, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        generated.append(llamafactory_path)
+
+        return generated
 
     def _generate_training_config(self, dataset_size: int) -> str:
         """生成 Axolotl 風格的訓練配置（供用戶參考）"""

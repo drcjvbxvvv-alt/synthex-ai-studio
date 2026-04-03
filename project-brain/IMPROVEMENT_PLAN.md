@@ -66,7 +66,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | TD-01 | P2   | `context.py`         | `_SYNONYM_MAP` 硬編碼中文同義詞，應改為可從 `.brain/synonyms.json` 載入     | ✅ 已完成（PH2-05） |
 | TD-02 | P2   | `embedder.py`        | LocalTFIDF 的 hash 投影維度（256）固定，應可透過環境變數調整                | ✅ 已完成（`BRAIN_TFIDF_DIM` env var；預設 256；cache key 含 DIM 防跨維度污染） |
 | TD-03 | P2   | `graph.py`           | `add_edge()` 尚未支援批次操作，大量 edges 逐筆 INSERT 效能差                | ✅ 已完成（`add_edges_bulk(edges)` 單次驗證 + `executemany` + single commit） |
-| TD-04 | P3   | `decay_engine.py`    | F2 技術版本落差偵測規則硬編碼（React 16/18 等），無法自訂                   | ⬜ 待執行 |
+| TD-04 | P3   | `decay_engine.py`    | F2 技術版本落差偵測規則硬編碼（React 16/18 等），無法自訂                   | ✅ 已完成（2026-04-03：`.brain/decay_config.json` 自動生成；`current_versions` / `version_patterns` / `decay_params` 全部可覆蓋）|
 | TD-05 | P1   | `core/brain/`        | 與 `project_brain/` 幾乎完全重複，應降格為薄整合層（對應 F3）               | ✅ 已完成（PH0-02） |
 | TD-06 | P1   | `pyproject.toml`     | version 欄位為 0.1.0，與實際 `__version__` 0.2.0 不一致；URLs 仍為模板佔位 | ✅ 已完成（PH0-01） |
 | TD-07 | P1   | `status_renderer.py` | L246 引用未定義的 `db` 變數（被 try/except 靜默吞掉），v10 區塊功能失效     | ✅ 已完成（PH0-05） |
@@ -116,12 +116,12 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 | ID     | 等級 | 功能                                  | 說明                                                                                             |
 | ------ | ---- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| PH3-01 | P2   | `federation.py`                       | 跨專案知識分享協議；public scope 知識池；訂閱特定技術領域更新                                    |
-| PH3-02 | P2   | `knowledge_distiller.py` Layer 3 完工 | LoRA fine-tuning pipeline；Axolotl / Unsloth 整合；讓組織知識蒸餾進私有模型，不佔 context window |
+| PH3-01 | P2   | `federation.py`                       | 跨專案知識分享協議；public scope 知識池；訂閱特定技術領域更新（✅ 2026-04-03：`FederationExporter` / `FederationImporter` / `SubscriptionManager`；PII 自動清理；`.brain/federation.json` 訂閱管理）|
+| PH3-02 | P2   | `knowledge_distiller.py` Layer 3 完工 | LoRA fine-tuning pipeline；Axolotl / Unsloth 整合；讓組織知識蒸餾進私有模型，不佔 context window（✅ 2026-04-03：語意去重；自動生成 `axolotl_config.yml` / `unsloth_train.py` / `llamafactory_config.json`）|
 | PH3-03 | P2   | AI 輔助 KRB 審核                      | 由 Claude Haiku 輔助審核自動提取的知識，降低人工負擔（✅ 2026-04-03：`krb_ai_assist.py` + `brain review pre-screen` + `krb_pre_screen` MCP 工具）|
 | PH3-07 | P2   | KRB 審核 Ollama 本地後端              | `OllamaClient` adapter + `KRBAIAssistant.from_ollama()` + `make_client()` 工廠函數，零外部依賴、離線審核（✅ 2026-04-03）|
 | PH3-04 | P3   | Cloud 版本                            | 託管服務、Team 計畫（$20/月/開發者）、計費系統                                                   |
-| PH3-05 | P3   | ANN 向量索引                          | sqlite-vec HNSW 索引，大型知識庫（5000+ 節點）搜尋 O(log N)                                      |
+| PH3-05 | P3   | ANN 向量索引                          | sqlite-vec HNSW 索引，大型知識庫（5000+ 節點）搜尋 O(log N)（✅ 2026-04-03：`ann_index.py`；`HNSWIndex` + `LinearScanIndex` fallback；`get_ann_index()` 工廠；`build_index_from_graph()`；零額外依賴降級）|
 | PH3-06 | P3   | 多語言 embedding                      | 支援 multilingual-e5 等多語言模型，中英混搜（✅ 2026-04-03：新增 `MultilingualEmbedder`；`sentence-transformers` 選配依賴；`BRAIN_EMBED_PROVIDER=multilingual`；`BRAIN_MULTILINGUAL_MODEL` 可指定模型；e5 query/passage prefix 自動處理；`get_embedder()` 優先級最高）|
 
 ### 長期願景（v1.0+）
@@ -213,13 +213,13 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 | ID           | 等級 | 項目                                       |
 | ------------ | ---- | ------------------------------------------ |
-| TD-04        | P3   | `decay_engine.py` 版本落差規則可自訂       |
-| PH3-01       | P2   | `federation.py` 跨專案知識分享             |
-| PH3-02       | P2   | `knowledge_distiller.py` LoRA fine-tuning  |
+| ~~TD-04~~    | P3   | ~~`decay_engine.py` 版本落差規則可自訂~~（✅ 已完成）|
+| ~~PH3-01~~   | P2   | ~~`federation.py` 跨專案知識分享~~（✅ 已完成）|
+| ~~PH3-02~~   | P2   | ~~`knowledge_distiller.py` LoRA fine-tuning~~（✅ 已完成）|
 | PH3-03       | P2   | AI 輔助 KRB 審核                           |
 | ~~PH3-07~~   | P2   | ~~KRB 審核 Ollama 本地後端~~（✅ 已完成）  |
 | PH3-04       | P3   | Cloud 版本 / 計費系統                      |
-| PH3-05       | P3   | ANN 向量索引                               |
+| ~~PH3-05~~   | P3   | ~~ANN 向量索引~~（✅ 已完成）               |
 | ~~PH3-06~~   | P3   | ~~多語言 embedding~~（✅ 已完成）          |
 | VISION-01~05 | P3   | 動態 confidence、知識衝突解決、跨專案遷移… |
 
@@ -232,9 +232,10 @@ Phase 0 完成率：5/5（100%）✅
 Phase 1 完成率：6/6（100%）✅
 Phase 2 完成率：7/7（100%）✅
 Q3 完成率：2/2（100%）✅
-Phase 3 完成率：3/7（PH3-03 + PH3-06 + PH3-07 已完成）
-Q4 暫緩：7 項（長期願景）
-下一步行動：Q4（PH3）長期願景 或 新需求
+Phase 3 完成率：7/7（全部完成）✅
+TD 完成率：7/7（全部完成）✅
+Q4 暫緩：5 項（VISION-01~05 長期願景）
+下一步行動：VISION 長期願景 或 新需求
 ```
 
 ---

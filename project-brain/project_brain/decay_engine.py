@@ -77,6 +77,23 @@ CURRENT_MAJOR_VERSIONS: dict[str, int] = {
     "nestjs": 10, "postgresql": 16, "mysql": 8, "mongodb": 7, "redis": 7,
 }
 
+# 預設 decay_config 樣板
+_DEFAULT_DECAY_CONFIG = {
+    "_comment": "Project Brain decay engine config — edit to customise",
+    "current_versions": {
+        "react": 18, "vue": 3, "next": 15,
+    },
+    "version_patterns": [],
+    "decay_params": {
+        "base_decay_rate":       0.003,
+        "contradiction_penalty": 0.70,
+        "version_gap_penalty":   0.15,
+        "adoption_bonus":        0.05,
+        "code_ref_bonus":        0.10,
+        "activity_bonus":        0.08,
+    },
+}
+
 
 class DecayReport:
     """單一知識節點的衰減分析報告"""
@@ -120,6 +137,67 @@ class DecayEngine:
         self.graph    = graph
         self.workdir  = Path(workdir).resolve() if workdir else Path.cwd()
         self._decay_log: list[dict] = []
+
+        # TD-04: 可設定版本規則（從 .brain/decay_config.json 讀取）
+        brain_dir = self.workdir / ".brain"
+        if brain_dir.is_dir() and not (brain_dir / "decay_config.json").exists():
+            self.generate_sample_config(brain_dir)
+        cfg = self._load_decay_config()
+
+        # 合併版本對照表（user overrides win）
+        merged_versions = dict(CURRENT_MAJOR_VERSIONS)
+        merged_versions.update(cfg.get("current_versions", {}))
+        self._current_versions: dict[str, int] = merged_versions
+
+        # 合併版本模式（append，不取代）
+        extra_patterns = []
+        for pat_str in cfg.get("version_patterns", []):
+            try:
+                extra_patterns.append(re.compile(pat_str))
+            except re.error:
+                logger.warning("decay_config: invalid version_pattern ignored: %s", pat_str)
+        self._version_patterns: list[re.Pattern] = list(VERSION_PATTERNS) + extra_patterns
+
+        # 合併衰減參數（user overrides module-level constants）
+        params = cfg.get("decay_params", {})
+        self._params: dict[str, float] = {
+            "base_decay_rate":       float(params.get("base_decay_rate",       BASE_DECAY_RATE)),
+            "contradiction_penalty": float(params.get("contradiction_penalty", CONTRADICTION_PENALTY)),
+            "version_gap_penalty":   float(params.get("version_gap_penalty",   VERSION_GAP_PENALTY)),
+            "adoption_bonus":        float(params.get("adoption_bonus",        ADOPTION_BONUS)),
+            "code_ref_bonus":        float(params.get("code_ref_bonus",        CODE_REF_BONUS)),
+            "activity_bonus":        float(params.get("activity_bonus",        ACTIVITY_BONUS)),
+        }
+
+    # ── TD-04: 可設定配置 ───────────────────────────────────────
+
+    def _load_decay_config(self) -> dict:
+        """讀取 .brain/decay_config.json，解析使用者自訂版本規則。失敗時靜默回傳 {}。"""
+        try:
+            cfg_path = self.workdir / ".brain" / "decay_config.json"
+            if not cfg_path.exists():
+                return {}
+            with cfg_path.open(encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    @staticmethod
+    def generate_sample_config(brain_dir: Path) -> Path:
+        """
+        在 .brain/decay_config.json 寫入預設樣板（供使用者自訂）。
+        只在檔案不存在時呼叫，不覆蓋使用者設定。
+        """
+        cfg_path = brain_dir / "decay_config.json"
+        try:
+            cfg_path.write_text(
+                json.dumps(_DEFAULT_DECAY_CONFIG, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info("decay_config: 已建立預設樣板 → %s", cfg_path)
+        except Exception as e:
+            logger.debug("decay_config: 無法寫入樣板: %s", e)
+        return cfg_path
 
     # ── 主入口 ─────────────────────────────────────────────────
 
@@ -203,8 +281,9 @@ class DecayEngine:
 
                 # F4：矛盾懲罰
                 if node_id in contradicted_ids:
-                    new_conf *= CONTRADICTION_PENALTY
-                    report.factors["F4_contradiction"] = CONTRADICTION_PENALTY
+                    _contr = self._params.get("contradiction_penalty", CONTRADICTION_PENALTY)
+                    new_conf *= _contr
+                    report.factors["F4_contradiction"] = _contr
                     report.reason = "與其他決策存在矛盾"
 
                 # F5：程式碼引用確認
@@ -261,9 +340,10 @@ class DecayEngine:
         if not created_at:
             return 1.0
         try:
-            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            days    = max(0, (datetime.now(timezone.utc) - created).days)
-            return max(DECAY_FLOOR, math.exp(-BASE_DECAY_RATE * days))
+            created  = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            days     = max(0, (datetime.now(timezone.utc) - created).days)
+            base_rate = self._params.get("base_decay_rate", BASE_DECAY_RATE)
+            return max(DECAY_FLOOR, math.exp(-base_rate * days))
         except (ValueError, TypeError):
             return 0.9  # 無法解析時保守處理
 
@@ -271,21 +351,22 @@ class DecayEngine:
         """F2：技術版本衰減——偵測知識中的版本號與當前版本比較"""
         if not content:
             return 1.0
-        penalty = 1.0
-        for pattern in VERSION_PATTERNS:
+        penalty      = 1.0
+        gap_penalty  = self._params.get("version_gap_penalty", VERSION_GAP_PENALTY)
+        for pattern in self._version_patterns:
             for m in pattern.finditer(content):
                 tech  = m.group(1).lower()
                 try:
                     version_in_content = int(m.group(2))
                 except (IndexError, ValueError):
                     continue
-                current = CURRENT_MAJOR_VERSIONS.get(tech)
+                current = self._current_versions.get(tech)
                 if current is None:
                     continue
                 gap = max(0, current - version_in_content)
                 if gap > 0:
-                    # 每個主版本差異 -15% 信心，最多扣到 50%
-                    version_penalty = max(0.50, 1.0 - gap * VERSION_GAP_PENALTY)
+                    # 每個主版本差異，最多扣到 50%
+                    version_penalty = max(0.50, 1.0 - gap * gap_penalty)
                     penalty = min(penalty, version_penalty)
         return penalty
 
@@ -294,9 +375,10 @@ class DecayEngine:
         if not source_url or not recent_files:
             return 0.0
         # source_url 可能是 "file:src/payment/service.ts" 或 "commit:abc1234"
+        activity_bonus = self._params.get("activity_bonus", ACTIVITY_BONUS)
         for fname in recent_files:
             if fname in source_url or source_url in fname:
-                return ACTIVITY_BONUS
+                return activity_bonus
         return 0.0
 
     def _factor_code_reference(self, content: str) -> float:
@@ -307,6 +389,7 @@ class DecayEngine:
         class_names = re.findall(r'\b([A-Z][a-zA-Z]{4,})\b', content)[:5]
         if not class_names:
             return 0.0
+        code_ref_bonus = self._params.get("code_ref_bonus", CODE_REF_BONUS)
         # 快速 grep 搜尋（只搜尋 Python / TypeScript / JavaScript）
         for name in class_names:
             try:
@@ -319,7 +402,7 @@ class DecayEngine:
                     cwd=str(self.workdir),
                 )
                 if result.returncode == 0 and result.stdout.strip():
-                    return CODE_REF_BONUS
+                    return code_ref_bonus
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
                 pass
         return 0.0
