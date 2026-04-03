@@ -1,16 +1,27 @@
 """
-project_brain/embedder.py — Phase 1: Embedding Backend
+project_brain/embedder.py — Phase 1 + PH3-06: Embedding Backend
 
 Priority order:
-  1. Ollama (local, free, nomic-embed-text → 768 dim)
-  2. OpenAI (API, text-embedding-3-small → 1536 dim)
-  3. Anthropic voyage (if available)
-  4. None → fallback to FTS5
+  1. Multilingual (sentence-transformers, multilingual-e5-small → 384 dim)  [PH3-06]
+  2. Ollama (local, free, nomic-embed-text → 768 dim; model configurable)
+  3. OpenAI (API, text-embedding-3-small → 1536 dim)
+  4. Anthropic voyage (if available)
+  5. LocalTFIDF → zero-dep fallback
+
+Environment variables:
+  BRAIN_EMBED_PROVIDER      one of: multilingual | ollama | openai | local | none
+  BRAIN_MULTILINGUAL_MODEL  sentence-transformers model name
+                            (default: intfloat/multilingual-e5-small)
+  BRAIN_EMBED_E5_PREFIX     "1" (default) adds "query:"/"passage:" prefix for e5
+  BRAIN_OLLAMA_EMBED_MODEL  Ollama embedding model name
+                            (default: nomic-embed-text)
+                            multilingual alternative: mxbai-embed-large
+  BRAIN_TFIDF_DIM           LocalTFIDF projection dimension (default: 256)
 
 Usage:
     emb = get_embedder()
     if emb:
-        vec = emb.embed("JWT must use RS256")  # list[float]
+        vec = emb.embed("JWT 必須使用 RS256")  # list[float], 中英皆可
     else:
         vec = None  # system falls back to FTS5
 """
@@ -32,24 +43,111 @@ _TFIDF_CACHE: OrderedDict = OrderedDict()
 _TFIDF_CACHE_MAX = 1024
 
 # Standard dimensions
-DIM_OLLAMA  = 768   # nomic-embed-text
-DIM_OPENAI  = 1536  # text-embedding-3-small
-DIM_DEFAULT = 768
+DIM_MULTILINGUAL = 384   # multilingual-e5-small
+DIM_OLLAMA       = 768   # nomic-embed-text
+DIM_OPENAI       = 1536  # text-embedding-3-small
+DIM_DEFAULT      = 768
+
+# Default model names
+_DEFAULT_OLLAMA_EMBED_MODEL       = "nomic-embed-text"
+_DEFAULT_MULTILINGUAL_MODEL       = "intfloat/multilingual-e5-small"
+
+
+class MultilingualEmbedder:
+    """
+    Multilingual embedding via sentence-transformers (PH3-06).
+
+    Supports mixed Chinese-English text in a single vector space.
+    Uses multilingual-e5 prefix convention ("query: " / "passage: ")
+    which significantly improves retrieval accuracy for e5 models.
+
+    Install:  pip install sentence-transformers
+    Models:
+      intfloat/multilingual-e5-small  — 117M params, 384 dim, ~250 MB  (default)
+      intfloat/multilingual-e5-base   — 278M params, 768 dim, ~550 MB
+      intfloat/multilingual-e5-large  — 560M params, 1024 dim, ~2.2 GB
+
+    Configure:
+      BRAIN_MULTILINGUAL_MODEL=intfloat/multilingual-e5-base
+      BRAIN_EMBED_E5_PREFIX=0   # disable prefix (for non-e5 models)
+    """
+
+    def __init__(self, model_name: str | None = None) -> None:
+        self.model_name = (
+            model_name
+            or os.environ.get("BRAIN_MULTILINGUAL_MODEL", _DEFAULT_MULTILINGUAL_MODEL)
+        )
+        self._model = None   # lazy-loaded on first embed()
+        self.dim    = DIM_MULTILINGUAL  # updated after first load
+
+    # ── lazy load ────────────────────────────────────────────────────
+
+    def _load(self) -> None:
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            self._model = SentenceTransformer(self.model_name)
+            self.dim    = self._model.get_sentence_embedding_dimension()
+            logger.info(
+                "MultilingualEmbedder: loaded %s (%d dim)", self.model_name, self.dim
+            )
+
+    # ── public API ───────────────────────────────────────────────────
+
+    def embed(self, text: str, is_query: bool = True) -> Optional[list[float]]:
+        """
+        Embed text. Automatically adds "query: " / "passage: " prefix for e5
+        models unless BRAIN_EMBED_E5_PREFIX=0.
+
+        Args:
+            text:     Input text (Chinese / English / mixed).
+            is_query: True = knowledge retrieval query, False = document to index.
+        """
+        try:
+            self._load()
+            use_prefix = os.environ.get("BRAIN_EMBED_E5_PREFIX", "1") != "0"
+            if use_prefix and "e5" in self.model_name.lower():
+                text = ("query: " if is_query else "passage: ") + text
+            vec = self._model.encode(text[:4000], normalize_embeddings=True)
+            return vec.tolist()
+        except Exception as e:
+            logger.debug("MultilingualEmbedder.embed failed: %s", e)
+            return None
+
+    @classmethod
+    def is_available(cls) -> bool:
+        try:
+            import sentence_transformers  # type: ignore  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
 
 class OllamaEmbedder:
-    """Local embedding via Ollama — zero cost, zero privacy concern."""
+    """
+    Local embedding via Ollama — zero cost, zero privacy concern.
 
-    MODEL = "nomic-embed-text"
+    Default model: nomic-embed-text (768 dim, English-centric).
+    For multilingual Ollama embedding set:
+      BRAIN_OLLAMA_EMBED_MODEL=mxbai-embed-large
+    """
 
-    def __init__(self, base_url: str = "http://localhost:11434"):
+    DEFAULT_MODEL = _DEFAULT_OLLAMA_EMBED_MODEL
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        model:    str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.model    = model or os.environ.get(
+            "BRAIN_OLLAMA_EMBED_MODEL", self.DEFAULT_MODEL
+        )
         self.dim      = DIM_OLLAMA
 
-    def embed(self, text: str) -> Optional[list[float]]:
+    def embed(self, text: str, **_kwargs) -> Optional[list[float]]:
         try:
             import urllib.request, json
-            payload = json.dumps({"model": self.MODEL, "prompt": text[:2000]}).encode()
+            payload = json.dumps({"model": self.model, "prompt": text[:2000]}).encode()
             req     = urllib.request.Request(
                 f"{self.base_url}/api/embeddings",
                 data=payload, headers={"Content-Type": "application/json"}
@@ -208,8 +306,19 @@ def get_embedder():
     """
     Return the best available embedder.
 
-    Priority: Ollama > OpenAI-compat > LocalTFIDF (zero-dep fallback)
-    Set BRAIN_EMBED_PROVIDER=none to disable all embedding (pure FTS5).
+    Priority:
+      1. multilingual  (sentence-transformers; BRAIN_EMBED_PROVIDER=multilingual)
+      2. Ollama        (local; model configurable via BRAIN_OLLAMA_EMBED_MODEL)
+      3. OpenAI-compat (OPENAI_API_KEY or BRAIN_LLM_BASE_URL)
+      4. LocalTFIDF    (zero-dep fallback, always available)
+
+    Set BRAIN_EMBED_PROVIDER=none to disable all embedding (pure FTS5 only).
+
+    Multilingual notes:
+      - pip install sentence-transformers   to enable MultilingualEmbedder
+      - BRAIN_EMBED_PROVIDER=multilingual   to force-select it
+      - BRAIN_MULTILINGUAL_MODEL=<hf-id>   to pick a specific model
+      - For Ollama multilingual: set BRAIN_OLLAMA_EMBED_MODEL=mxbai-embed-large
     """
     provider = os.environ.get("BRAIN_EMBED_PROVIDER", "").lower()
 
@@ -217,20 +326,39 @@ def get_embedder():
         logger.debug("Embedder disabled via BRAIN_EMBED_PROVIDER=none")
         return None
 
+    # ── 1. Multilingual (sentence-transformers) ───────────────────
+    if provider == "multilingual" or (not provider and MultilingualEmbedder.is_available()):
+        e = MultilingualEmbedder()
+        vec = e.embed("test", is_query=True)
+        if vec and len(vec) > 0:
+            logger.info(
+                "Embedder: MultilingualEmbedder %s (%d dim)", e.model_name, len(vec)
+            )
+            e.dim = len(vec)
+            return e
+        if provider == "multilingual":
+            logger.warning(
+                "MultilingualEmbedder requested but unavailable — "
+                "run: pip install sentence-transformers"
+            )
+
+    # ── 2. Ollama ────────────────────────────────────────────────
     if provider == "ollama" or (not provider and OllamaEmbedder.is_available()):
         e = OllamaEmbedder()
         vec = e.embed("test")
         if vec and len(vec) > 0:
-            logger.info("Embedder: Ollama (%d dim)", len(vec))
+            logger.info("Embedder: Ollama %s (%d dim)", e.model, len(vec))
             e.dim = len(vec)
             return e
 
+    # ── 3. OpenAI-compatible ─────────────────────────────────────
     if provider == "openai" or (not provider and OpenAIEmbedder.is_available()):
         e = OpenAIEmbedder()
         logger.info("Embedder: OpenAI %s (%d dim)", e.MODEL, e.dim)
         return e
 
-    if provider in ("local", "tfidf", "") :
+    # ── 4. LocalTFIDF (zero-dep fallback) ────────────────────────
+    if provider in ("local", "tfidf", ""):
         e = LocalTFIDFEmbedder()
         logger.info("Embedder: LocalTFIDF (%d dim, zero-dep fallback)", e.DIM)
         return e

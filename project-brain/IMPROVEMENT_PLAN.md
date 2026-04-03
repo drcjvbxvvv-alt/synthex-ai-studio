@@ -122,7 +122,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | PH3-07 | P2   | KRB 審核 Ollama 本地後端              | `OllamaClient` adapter + `KRBAIAssistant.from_ollama()` + `make_client()` 工廠函數，零外部依賴、離線審核（✅ 2026-04-03）|
 | PH3-04 | P3   | Cloud 版本                            | 託管服務、Team 計畫（$20/月/開發者）、計費系統                                                   |
 | PH3-05 | P3   | ANN 向量索引                          | sqlite-vec HNSW 索引，大型知識庫（5000+ 節點）搜尋 O(log N)                                      |
-| PH3-06 | P3   | 多語言 embedding                      | 支援 multilingual-e5 等多語言模型，中英混搜                                                      |
+| PH3-06 | P3   | 多語言 embedding                      | 支援 multilingual-e5 等多語言模型，中英混搜（✅ 2026-04-03：新增 `MultilingualEmbedder`；`sentence-transformers` 選配依賴；`BRAIN_EMBED_PROVIDER=multilingual`；`BRAIN_MULTILINGUAL_MODEL` 可指定模型；e5 query/passage prefix 自動處理；`get_embedder()` 優先級最高）|
 
 ### 長期願景（v1.0+）
 
@@ -220,7 +220,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | ~~PH3-07~~   | P2   | ~~KRB 審核 Ollama 本地後端~~（✅ 已完成）  |
 | PH3-04       | P3   | Cloud 版本 / 計費系統                      |
 | PH3-05       | P3   | ANN 向量索引                               |
-| PH3-06       | P3   | 多語言 embedding                           |
+| ~~PH3-06~~   | P3   | ~~多語言 embedding~~（✅ 已完成）          |
 | VISION-01~05 | P3   | 動態 confidence、知識衝突解決、跨專案遷移… |
 
 ### 現況摘要
@@ -232,7 +232,7 @@ Phase 0 完成率：5/5（100%）✅
 Phase 1 完成率：6/6（100%）✅
 Phase 2 完成率：7/7（100%）✅
 Q3 完成率：2/2（100%）✅
-Phase 3 完成率：2/7（PH3-03 + PH3-07 已完成）
+Phase 3 完成率：3/7（PH3-03 + PH3-06 + PH3-07 已完成）
 Q4 暫緩：7 項（長期願景）
 下一步行動：Q4（PH3）長期願景 或 新需求
 ```
