@@ -7,8 +7,8 @@
 ## 快速開始
 
 ```bash
-git clone https://github.com/your-org/project-brain
-cd project-brain
+git clone https://github.com/drcjvbxvvv-alt/synthex-ai-studio
+cd synthex-ai-studio/project-brain
 
 # 安裝開發依賴
 pip install pytest pytest-cov
@@ -23,12 +23,28 @@ brain status
 
 ---
 
+## 程式碼架構邊界（重要）
+
+```
+project_brain/   ← 唯一業務邏輯來源（THE single source of truth）
+core/brain/      ← 薄整合層，僅做 re-export，不含業務邏輯
+```
+
+**黃金規則：**
+- 修改任何業務邏輯（知識圖譜、記憶、提取、衰減等）→ 只改 `project_brain/`
+- `core/brain/` 每個 .py 只有 2 行：docstring + `from project_brain.X import *`
+- 新增模組到 `core/brain/` 僅限於 Synthex orchestration（config 讀取、模型選擇）
+- 違反此規則會造成雙重維護負擔，任何 PR 若在 `core/brain/` 加入業務邏輯將被拒絕
+
+---
+
 ## 專案結構
 
 ```
 project-brain/
-├── brain.py                  ← CLI 主入口，所有 cmd_* 函數在這裡
-├── project_brain/               ← 核心記憶引擎
+├── brain.py                  ← CLI entry point, all cmd_* functions here
+├── core/brain/               ← Thin adapter only (2-line shims, re-export from project_brain/)
+├── project_brain/            ← ALL business logic lives here (single source of truth)
 │   ├── engine.py             ← ProjectBrain 門面（主要 API）
 │   ├── graph.py              ← L3 知識圖譜（SQLite + FTS5）
 │   ├── session_store.py      ← L1a 工作記憶（SQLite WAL）
@@ -182,3 +198,5 @@ export BRAIN_SKIP_LLM=1
 - **per-thread connections**：graph.py 和 session_store.py 均使用 `threading.local()`
 - **懶加載 graphiti**：`project_brain/__init__.py` 不匯入 graphiti，避免冷啟動代價
 - **KRB 人工把關**：所有 AI 自動提取的知識必須先進 Staging，不直接入庫
+- **鎖重入禁止**：`engine.py` 的 `_init_lock` 是非可重入鎖，不得在持鎖狀態下呼叫其他需要同一鎖的屬性（見 BUG-01 根因）
+- **core/ 不含業務邏輯**：`core/brain/` 每個檔案只能是 2 行 re-export shim，不得包含任何邏輯

@@ -624,7 +624,159 @@ def create_server(workdir: str) -> Any:
             logger.error("answer_question error: %s", e)
             return {"ok": False, "error": str(e)}
 
+    # ── Tool: complete_task (PH1-02) ────────────────────────────────
+    @mcp.tool()
+    def complete_task(
+        task_description: str,
+        decisions: list[str] | None = None,
+        lessons: list[str] | None = None,
+        pitfalls: list[str] | None = None,
+        workdir: str = "",
+    ) -> dict:
+        """
+        Batch-write session learnings to L3 after completing a task.
+
+        Call this at the end of EVERY non-trivial task. It creates permanent
+        knowledge nodes from the work just done, closing the knowledge
+        production loop so future agents benefit from this session.
+
+        Args:
+            task_description: One-sentence summary of what was accomplished.
+            decisions: Architectural or design choices made during the task
+                       (each item becomes a Decision node).
+            lessons:   Things learned that would help future work — best
+                       practices, non-obvious constraints, shortcuts found
+                       (each item becomes a Rule node).
+            pitfalls:  Mistakes encountered, near-misses, or traps to avoid
+                       (each item becomes a Pitfall node).
+            workdir:   Project working directory. Defaults to BRAIN_WORKDIR env var.
+
+        Returns:
+            {"ok": True, "created": N, "node_ids": [...]}
+        """
+        _rate_check()
+        import json as _json
+
+        wd_str = _safe_str(workdir or os.environ.get("BRAIN_WORKDIR", ""), 500, "workdir") or workdir
+        b = _resolve_brain(wd_str)
+
+        task_desc = _safe_str(task_description, MAX_CONTENT_LEN, "task_description")
+        _decisions = [_safe_str(d, MAX_CONTENT_LEN, "decisions[i]") for d in (decisions or [])]
+        _lessons   = [_safe_str(l, MAX_CONTENT_LEN, "lessons[i]")   for l in (lessons   or [])]
+        _pitfalls  = [_safe_str(p, MAX_CONTENT_LEN, "pitfalls[i]")  for p in (pitfalls  or [])]
+
+        created_ids: list[str] = []
+
+        kind_items: list[tuple[str, str]] = []
+        for d in _decisions:
+            kind_items.append(("Decision", d))
+        for l in _lessons:
+            kind_items.append(("Rule", l))
+        for p in _pitfalls:
+            kind_items.append(("Pitfall", p))
+
+        # Always record the task itself as a Decision summary if there are no
+        # sub-items, so the task is never silently swallowed.
+        if not kind_items:
+            kind_items.append(("Decision", task_desc))
+
+        for kind, content in kind_items:
+            title = content[:80].strip()
+            try:
+                node_id = b.add_knowledge(
+                    title=title,
+                    content=f"[Task: {task_desc[:120]}]\n{content}",
+                    kind=kind,
+                    tags=["auto:complete_task"],
+                    confidence=0.8,
+                )
+                created_ids.append(node_id)
+            except Exception as e:
+                logger.warning("complete_task: failed to write node %r: %s", title, e)
+
+        return {"ok": True, "created": len(created_ids), "node_ids": created_ids}
+
+    # ── Tool: report_knowledge_outcome (PH1-03) ──────────────────────
+    @mcp.tool()
+    def report_knowledge_outcome(
+        node_id: str,
+        was_useful: bool,
+        notes: str = "",
+        workdir: str = "",
+    ) -> dict:
+        """
+        Close the knowledge feedback loop by reporting whether a retrieved
+        knowledge node was actually useful.
+
+        Call this after using knowledge returned by get_context:
+        - was_useful=True  → confidence increases (node surfaces more often)
+        - was_useful=False → confidence decreases (node surfaces less often)
+
+        This drives the decay engine and keeps the knowledge base accurate
+        over time. Without this feedback, stale or incorrect knowledge never
+        gets deprioritised.
+
+        Args:
+            node_id:    The node ID from get_context or add_knowledge.
+            was_useful: True if the knowledge helped; False if outdated/wrong.
+            notes:      Optional explanation — especially important when
+                        was_useful=False to document why the node is wrong.
+            workdir:    Project working directory. Defaults to BRAIN_WORKDIR env var.
+
+        Returns:
+            {"ok": True, "node_id": "...", "confidence": 0.85, "delta": +0.03}
+        """
+        _rate_check()
+
+        node_id_clean = _safe_str(node_id, 100, "node_id")
+        notes_clean   = _safe_str(notes, MAX_CONTENT_LEN, "notes") if notes else ""
+        wd_str = _safe_str(workdir or os.environ.get("BRAIN_WORKDIR", ""), 500, "workdir") or workdir
+
+        from project_brain.brain_db import BrainDB
+        from pathlib import Path as _P
+
+        brain_root = _P(wd_str) / ".brain" if wd_str else None
+        if brain_root is None or not (brain_root / "brain.db").exists():
+            # Fall back to auto-detect
+            found = _find_brain_root(wd_str or os.getcwd())
+            if found:
+                brain_root = found / ".brain"
+        if brain_root is None or not (brain_root / "brain.db").exists():
+            return {"ok": False, "error": "Brain not initialized — run brain init first"}
+
+        try:
+            db      = BrainDB(brain_root)
+            delta   = 0.03 if was_useful else -0.05
+            new_conf = db.record_feedback(node_id_clean, helpful=bool(was_useful))
+
+            # If notes provided and node is now low-confidence, append note to content
+            if notes_clean and not was_useful:
+                try:
+                    db.conn.execute(
+                        "UPDATE nodes SET content = content || ? WHERE id = ?",
+                        (f"\n\n[Feedback {_now_iso()}: {notes_clean}]", node_id_clean),
+                    )
+                    db.conn.commit()
+                except Exception:
+                    pass  # non-critical
+
+            return {
+                "ok":         True,
+                "node_id":    node_id_clean,
+                "was_useful": was_useful,
+                "confidence": round(new_conf, 3),
+                "delta":      delta,
+            }
+        except Exception as e:
+            logger.error("report_knowledge_outcome error: %s", e)
+            return {"ok": False, "error": str(e)}
+
     return mcp
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def main() -> None:

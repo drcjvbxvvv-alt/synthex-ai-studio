@@ -207,17 +207,17 @@ def render_status(
     # ── v10 記憶功能狀態 ─────────────────────────────────────────
     lines.append(section("v10 記憶功能", ""))
 
-    # knowledge graph stats
+    # knowledge graph stats — use graph._conn (same SQLite DB, no extra dependency)
     try:
-        node_count = len(db.conn.execute("SELECT id FROM nodes LIMIT 100").fetchall())
-        edge_count = len(db.conn.execute("SELECT id FROM edges LIMIT 100").fetchall())
+        node_count = graph._conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        edge_count = graph._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
         lines.append(f"  {OK}  知識節點  {WHITE}{BOLD}{node_count}{RESET}  │  因果邊  {WHITE}{BOLD}{edge_count}{RESET}")
     except Exception:
         pass
 
     # Scope distribution
     try:
-        scopes = db.conn.execute(
+        scopes = graph._conn.execute(
             "SELECT scope, COUNT(*) as c FROM nodes GROUP BY scope ORDER BY c DESC LIMIT 3"
         ).fetchall()
         if scopes and any(row['scope'] != 'global' for row in scopes):

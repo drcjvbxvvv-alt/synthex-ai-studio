@@ -47,9 +47,9 @@ all = [
 brain = "project_brain.cli:main"
 
 [project.urls]
-Homepage      = "https://github.com/your-org/project-brain"
-Documentation = "https://github.com/your-org/project-brain/docs"
-Issues        = "https://github.com/your-org/project-brain/issues"
+Homepage      = "https://github.com/drcjvbxvvv-alt/synthex-ai-studio"
+Documentation = "https://github.com/drcjvbxvvv-alt/synthex-ai-studio/tree/main/project-brain"
+Issues        = "https://github.com/drcjvbxvvv-alt/synthex-ai-studio/issues"
 
 [tool.setuptools.packages.find]
 where   = ["."]
