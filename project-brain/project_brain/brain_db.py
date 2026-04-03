@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 6           # DEF-04: bump on every schema change
+SCHEMA_VERSION = 9           # DEF-04: bump on every schema change
 MAX_SESSION_ENTRIES = 500    # DEF-06: per-session_id LRU eviction threshold
 
 _SYNONYM_MAP = {
@@ -229,6 +229,24 @@ class BrainDB:
             # v6: valid_until column on nodes (BUG-02)
             ("valid_until column on nodes",
              "ALTER TABLE nodes ADD COLUMN valid_until TEXT DEFAULT NULL"),
+            # v7: OPT-06 synonym_index pre-computed table
+            ("synonym_index table",
+             """CREATE TABLE IF NOT EXISTS synonym_index (
+                 term TEXT NOT NULL, synonym TEXT NOT NULL,
+                 PRIMARY KEY(term, synonym)
+             )"""),
+            # v8: FEAT-06 node_history table for version history
+            ("node_history table",
+             """CREATE TABLE IF NOT EXISTS node_history (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 node_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+                 title TEXT, content TEXT, confidence REAL, tags TEXT,
+                 changed_by TEXT DEFAULT '', change_note TEXT DEFAULT '',
+                 snapshot_at TEXT DEFAULT (datetime('now'))
+             )"""),
+            # v9: FEAT-06 index on node_history
+            ("node_history index",
+             "CREATE INDEX IF NOT EXISTS idx_nh_node ON node_history(node_id, version)"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -385,6 +403,43 @@ class BrainDB:
                 add(syn)
         return expanded[:25]
 
+    # ── OPT-06: Pre-computed synonym index ───────────────────────
+
+    def build_synonym_index(self) -> int:
+        """OPT-06: 將 _SYNONYM_MAP 批次寫入 synonym_index 表（O(1) 查詢）。"""
+        rows = []
+        for term, synonyms in _SYNONYM_MAP.items():
+            for syn in synonyms:
+                rows.append((term, syn))
+        with self._write_guard():
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO synonym_index(term, synonym) VALUES(?,?)", rows
+            )
+            self.conn.commit()
+        return len(rows)
+
+    def expand_query(self, query: str) -> list:
+        """OPT-06: O(1) synonym lookup from pre-computed synonym_index table."""
+        import re
+        raw = re.findall(r"[a-zA-Z0-9_]+", query.lower())
+        result, seen = [], set()
+        def _add(w):
+            w = re.sub(r"[^\w\u4e00-\u9fff]", "", w)
+            if w and w not in seen:
+                seen.add(w); result.append(w)
+        for w in raw:
+            _add(w)
+            try:
+                rows = self.conn.execute(
+                    "SELECT synonym FROM synonym_index WHERE term=?", (w,)
+                ).fetchall()
+                for r in rows:
+                    _add(r[0])
+            except Exception:
+                for syn in _SYNONYM_MAP.get(w, []):
+                    _add(syn)
+        return result[:25]
+
     # -- L3: knowledge nodes --
 
     def add_node(self, node_id: str, node_type: str, title: str,
@@ -418,7 +473,8 @@ class BrainDB:
         return node_id
 
     def update_node(self, node_id: str, title=None, content=None,
-                    confidence=None, importance=None) -> bool:
+                    confidence=None, importance=None,
+                    changed_by: str = "", change_note: str = "") -> bool:
         ex = self.get_node(node_id)
         if not ex:
             return False
@@ -432,6 +488,21 @@ class BrainDB:
         ups.append("updated_at=datetime('now')")
         params.append(node_id)
         with self._write_guard():  # DEF-01 fix
+            # FEAT-06: snapshot BEFORE state into node_history
+            try:
+                last_ver = self.conn.execute(
+                    "SELECT COALESCE(MAX(version),0) FROM node_history WHERE node_id=?",
+                    (node_id,)
+                ).fetchone()[0]
+                self.conn.execute(
+                    "INSERT INTO node_history(node_id,version,title,content,confidence,tags,"
+                    "changed_by,change_note) VALUES(?,?,?,?,?,?,?,?)",
+                    (node_id, last_ver + 1, ex.get("title"), ex.get("content"),
+                     ex.get("confidence"), ex.get("tags","[]"),
+                     changed_by, change_note)
+                )
+            except Exception:
+                pass
             self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
             if title is not None or content is not None:
                 nt = title   if title   is not None else ex["title"]
@@ -541,6 +612,116 @@ class BrainDB:
             r = self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
             self.conn.commit()
         return r.rowcount > 0
+
+    # ── FEAT-06: Version History ──────────────────────────────────
+
+    def get_node_history(self, node_id: str) -> list:
+        """FEAT-06: 回傳節點的版本歷史（由舊到新）。"""
+        try:
+            rows = self.conn.execute(
+                "SELECT * FROM node_history WHERE node_id=? ORDER BY version ASC",
+                (node_id,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def rollback_node(self, node_id: str, to_version: int) -> bool:
+        """FEAT-06: 將節點恢復到指定版本的快照狀態。"""
+        rows = self.conn.execute(
+            "SELECT * FROM node_history WHERE node_id=? AND version=?",
+            (node_id, to_version)
+        ).fetchone()
+        if not rows:
+            return False
+        snap = dict(rows)
+        return self.update_node(
+            node_id,
+            title      = snap.get("title"),
+            content    = snap.get("content"),
+            confidence = snap.get("confidence"),
+            changed_by = "rollback",
+            change_note = f"Rolled back to v{to_version}",
+        )
+
+    # ── FEAT-07: Cross-project Migration ─────────────────────────
+
+    def migrate_from(self, source_db_path: "Path", scope: str = "global",
+                     min_confidence: float = 0.0, dry_run: bool = False) -> dict:
+        """FEAT-07: 從另一個 brain.db 複製節點（及邊）。"""
+        import sqlite3 as _sq
+        result = {"nodes": 0, "edges": 0, "skipped": 0, "errors": 0, "dry_run": dry_run}
+        try:
+            src = _sq.connect(str(source_db_path), uri=False, check_same_thread=False)
+            src.row_factory = _sq.Row
+            nodes = src.execute(
+                "SELECT * FROM nodes WHERE scope=? AND confidence>=?",
+                (scope, min_confidence)
+            ).fetchall()
+            for n in nodes:
+                d = dict(n)
+                if not dry_run:
+                    try:
+                        self.add_node(
+                            node_id=d["id"], node_type=d.get("type","Note"),
+                            title=d.get("title",""), content=d.get("content",""),
+                            scope=d.get("scope","global"),
+                            confidence=float(d.get("confidence",0.8)),
+                            importance=float(d.get("importance",0.5)),
+                        )
+                        result["nodes"] += 1
+                    except Exception:
+                        result["errors"] += 1
+                else:
+                    result["nodes"] += 1
+            edges = src.execute("SELECT * FROM edges").fetchall()
+            for e in edges:
+                d = dict(e)
+                if not dry_run:
+                    try:
+                        self.add_edge(d["source_id"], d["relation"], d["target_id"],
+                                      d.get("note",""))
+                        result["edges"] += 1
+                    except Exception:
+                        result["errors"] += 1
+                else:
+                    result["edges"] += 1
+            src.close()
+        except Exception as exc:
+            logger.warning("migrate_from failed: %s", exc)
+            result["errors"] += 1
+        return result
+
+    # ── DEEP-02: Bayesian Confidence Propagation ──────────────────
+
+    def propagate_confidence(self, node_id: str, dampening: float = 0.5) -> dict:
+        """DEEP-02: 透過圖譜邊傳播信心值（貝葉斯信念傳播）。
+
+        若節點 A REQUIRES 節點 B，且 A 的信心下降，
+        B 的有效信心調整為: conf_B * (1 - dampening * (1 - conf_A))
+
+        回傳 {node_id: adjusted_effective_confidence} 含所有受影響節點。
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return {}
+        conf_a = float(node.get("confidence", 0.8))
+        affected: dict = {}
+        try:
+            rows = self.conn.execute(
+                "SELECT target_id FROM edges WHERE source_id=? AND relation='REQUIRES'",
+                (node_id,)
+            ).fetchall()
+            for r in rows:
+                target = self.get_node(r[0])
+                if not target:
+                    continue
+                conf_b = float(target.get("confidence", 0.8))
+                adjusted = conf_b * (1 - dampening * (1 - conf_a))
+                affected[r[0]] = round(max(0.05, min(1.0, adjusted)), 4)
+        except Exception as exc:
+            logger.debug("propagate_confidence error: %s", exc)
+        return affected
 
     def all_nodes(self, node_type=None, limit: int = 500) -> list:
         if node_type:
@@ -1321,3 +1502,40 @@ class BrainDB:
             except Exception as e:
                 logger.warning("Legacy event migration: %s", e)
         return imported
+
+
+# ── OPT-05: CQRS Read/Write Separation ───────────────────────────────────────
+
+class ReadBrainDB(BrainDB):
+    """OPT-05: Read-only view of BrainDB — uses WAL snapshot, no writes."""
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if not getattr(self._local, "conn", None):
+            c = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True,
+                                check_same_thread=False)
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA query_only=ON")
+            c.execute("PRAGMA journal_mode=WAL")
+            c.create_function("brain_ngram", 1, lambda t: BrainDB._ngram(t or ""))
+            self._local.conn = c
+        return self._local.conn
+
+    def _setup(self): pass  # no-op: read-only, schema already exists
+
+    # Block all write methods
+    def add_node(self, *a, **kw):           raise PermissionError("ReadBrainDB is read-only")
+    def update_node(self, *a, **kw):        raise PermissionError("ReadBrainDB is read-only")
+    def delete_node(self, *a, **kw):        raise PermissionError("ReadBrainDB is read-only")
+    def add_episode(self, *a, **kw):        raise PermissionError("ReadBrainDB is read-only")
+    def add_edge(self, *a, **kw):           raise PermissionError("ReadBrainDB is read-only")
+    def add_temporal_edge(self, *a, **kw):  raise PermissionError("ReadBrainDB is read-only")
+    def emit(self, *a, **kw):               raise PermissionError("ReadBrainDB is read-only")
+    def session_set(self, *a, **kw):        raise PermissionError("ReadBrainDB is read-only")
+    def session_clear(self, *a, **kw):      raise PermissionError("ReadBrainDB is read-only")
+    def build_synonym_index(self, *a, **kw): raise PermissionError("ReadBrainDB is read-only")
+
+
+class WriteBrainDB(BrainDB):
+    """OPT-05: Write-only facade — enforces single-writer pattern via _write_guard."""
+    pass  # inherits all BrainDB write methods with _write_guard already applied

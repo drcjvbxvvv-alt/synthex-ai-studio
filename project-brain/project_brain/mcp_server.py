@@ -519,6 +519,57 @@ def create_server(workdir: str) -> Any:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+    # ── Tool: DEEP-01 推理鏈 ────────────────────────────────────────
+    @mcp.tool()
+    def reasoning_chain(task: str, workdir: str = "") -> str:
+        """DEEP-01: 從任務關鍵字出發，遍歷知識圖譜，產生推理鏈。
+
+        Args:
+            task: 當前任務描述
+            workdir: 工作目錄（選填）
+
+        Returns:
+            Markdown 格式推理鏈，顯示相關節點與邊的關係。
+        """
+        _rate_check()
+        t_clean = _safe_str(task, MAX_QUERY_LEN, "task")
+        b = _resolve_brain(workdir)
+        try:
+            from project_brain.context import ContextEngineer
+            ce = ContextEngineer(b.graph, b.brain_dir, brain_db=b.db)
+            return ce.build_reasoning_chain(t_clean) or "（無相關推理鏈）"
+        except Exception as e:
+            logger.error("reasoning_chain error: %s", e)
+            return ""
+
+    # ── Tool: DEEP-04 主動學習問題 ────────────────────────────────────
+    @mcp.tool()
+    def generate_questions(task: str, threshold: float = 0.5,
+                           workdir: str = "") -> list:
+        """DEEP-04: Ask Brain what it wants to know about the current task.
+
+        Returns low-confidence knowledge nodes that need user verification,
+        as a list of questions Brain wants to ask.
+
+        Args:
+            task:      當前任務描述
+            threshold: 信心門檻（低於此值觸發問題，預設 0.5）
+            workdir:   工作目錄（選填）
+
+        Returns:
+            [{"node_id": ..., "question": "...", "current_confidence": 0.38}]
+        """
+        _rate_check()
+        t_clean = _safe_str(task, MAX_QUERY_LEN, "task")
+        b = _resolve_brain(workdir)
+        try:
+            from project_brain.nudge_engine import NudgeEngine
+            ne = NudgeEngine(b.graph)
+            return ne.generate_questions(t_clean, threshold=float(threshold))
+        except Exception as e:
+            logger.error("generate_questions error: %s", e)
+            return []
+
     return mcp
 
 

@@ -287,7 +287,66 @@ class ContextEngineer:
                     result = _chain + result
         except Exception:
             pass
+        # DEEP-01: append reasoning chain when edges exist
+        try:
+            _rc = self.build_reasoning_chain(task)
+            if _rc:
+                result = (result or "") + _rc
+        except Exception:
+            pass
         return result or ""  # BUG-05 fix: guarantee str return, never None
+
+    def build_reasoning_chain(self, task: str) -> str:
+        """DEEP-01: 從任務關鍵字出發，遍歷圖譜邊，產生推理鏈輸出。
+
+        格式：
+          task_keyword
+            → REQUIRES → node_A (Rule, conf=0.9)
+              ⚠ Pitfall: "warning text"
+            → CAUSED_BY → incident_B
+        """
+        db = self._brain_db
+        if db is None:
+            return ""
+        try:
+            hits = db.search_nodes(task, limit=4)
+            if not hits:
+                return ""
+            lines = [f"## ⛓ 推理鏈（Reasoning Chain）：{task[:40]}"]
+            rel_icons = {
+                "REQUIRES": "📌", "PREVENTS": "🛡", "CAUSES": "⚠",
+                "BLOCKS": "🚫", "CAUSED_BY": "⬅", "SOLVED_BY": "✅",
+                "DEPENDS_ON": "🔗",
+            }
+            included_types = {"REQUIRES","PREVENTS","CAUSES","BLOCKS",
+                              "CAUSED_BY","SOLVED_BY","DEPENDS_ON"}
+            for n in hits[:3]:
+                nid  = n["id"]
+                ntype = n.get("type","?")
+                conf  = n.get("confidence", 0.8)
+                lines.append(f"  {n['title'][:60]}  ({ntype}, conf={conf:.2f})")
+                edges = db.conn.execute(
+                    "SELECT e.relation, e.note, n2.title, n2.type, n2.confidence "
+                    "FROM edges e JOIN nodes n2 ON e.target_id=n2.id "
+                    "WHERE e.source_id=? AND e.relation IN "
+                    "('REQUIRES','PREVENTS','CAUSES','BLOCKS','CAUSED_BY','SOLVED_BY','DEPENDS_ON')",
+                    (nid,)
+                ).fetchall()
+                for edge in edges:
+                    rel, note, tgt_title, tgt_type, tgt_conf = edge
+                    icon = rel_icons.get(rel, "→")
+                    tgt_conf_str = f"conf={tgt_conf:.2f}" if tgt_conf is not None else ""
+                    lines.append(
+                        f"    {icon} {rel} → \"{tgt_title[:50]}\"  ({tgt_type}, {tgt_conf_str})"
+                        + (f"  — {note}" if note else "")
+                    )
+                    if tgt_type == "Pitfall":
+                        lines.append(f"      ⚠ Pitfall 警告：注意相關風險")
+            if len(lines) <= 1:
+                return ""
+            return "\n".join(lines) + "\n\n"
+        except Exception:
+            return ""
 
     def _build_causal_chain(self, node_ids: list, db=None) -> str:
         """

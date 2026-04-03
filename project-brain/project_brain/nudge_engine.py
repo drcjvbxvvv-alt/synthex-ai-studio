@@ -212,3 +212,43 @@ class NudgeEngine:
             return " ".join(e.value[:100] for e in recent)
         except Exception:
             return ""
+
+    # ── DEEP-04: Active Learning Loop ────────────────────────────────
+
+    def generate_questions(self, task: str, threshold: float = 0.5) -> list:
+        """DEEP-04: 主動學習迴圈 — 對低信心節點產生問題，讓用戶填補知識缺口。
+
+        當 Brain 找到相關節點但信心低於 threshold 時，
+        生成一個問題請用戶確認或補充。
+
+        Returns: [{"node_id": ..., "question": "...", "current_confidence": 0.38}]
+        """
+        try:
+            results = self.graph.search_nodes(task, limit=10)
+        except Exception:
+            return []
+
+        questions = []
+        for r in results:
+            conf = float(r.get("confidence", 0.8) or 0.8)
+            if conf >= threshold:
+                continue
+            title = r.get("title","")
+            ntype = r.get("type","Note")
+            if ntype == "Pitfall":
+                q = f"以下踩坑描述是否仍然適用（conf={conf:.2f}）？「{title[:80]}」"
+            elif ntype == "Rule":
+                q = f"此規則目前是否仍然有效（conf={conf:.2f}）？「{title[:80]}」"
+            elif ntype == "Decision":
+                q = f"此架構決策是否需要重新評估（conf={conf:.2f}）？「{title[:80]}」"
+            else:
+                q = f"以下知識是否仍然正確（conf={conf:.2f}）？「{title[:80]}」"
+            questions.append({
+                "node_id":           r["id"],
+                "question":          q,
+                "current_confidence": round(conf, 3),
+                "node_type":         ntype,
+            })
+        # Sort by lowest confidence first (most uncertain)
+        questions.sort(key=lambda x: x["current_confidence"])
+        return questions[:5]

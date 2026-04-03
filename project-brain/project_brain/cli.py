@@ -367,16 +367,77 @@ def cmd_setup(args):
 
 
 def cmd_ask(args):
-    """Ask a question (alias for brain context)."""
+    """FEAT-08: Natural Language Query — 自然語言查詢知識庫。
+
+    用關鍵詞提取做語意搜尋，無需 LLM。
+    有 ANTHROPIC_API_KEY 時使用 AI 改寫問題（可選），否則純關鍵字。
+    """
+    import re as _re
     wd    = _workdir(args)
     query = " ".join(args.query) if isinstance(args.query, list) else (args.query or "")
     if not query:
-        _err("Usage: brain ask <question>")
+        _err("Usage: brain ask <question>"); return
+
+    # FEAT-08: Extract keywords from question (remove stop words)
+    _stop_zh = {"的","是","在","有","了","不","我","你","他","她","它","這","那",
+                "和","或","也","但","如果","因為","所以","為什麼","怎麼","什麼",
+                "請問","可以","需要","應該","會","都","還","就","嗎","呢"}
+    _stop_en = {"the","a","an","is","are","was","were","be","been","being","have",
+                "has","had","do","does","did","will","would","shall","should","may",
+                "might","can","could","to","of","in","for","on","with","at","by",
+                "from","as","into","through","why","how","what","when","where","who"}
+    tokens   = _re.findall(r"[a-zA-Z0-9_]{2,}|[\u4e00-\u9fff]+", query)
+    keywords = []
+    for t in tokens:
+        # CJK: split into individual chars / bigrams
+        if _re.match(r"[\u4e00-\u9fff]", t):
+            for ch in t:
+                if ch not in _stop_zh:
+                    keywords.append(ch)
+            for i in range(len(t)-1):
+                keywords.append(t[i:i+2])
+        else:
+            if t.lower() not in _stop_en:
+                keywords.append(t.lower())
+    search_q = " ".join(dict.fromkeys(keywords))[:200] or query
+
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    db   = BrainDB(bd)
+    hits = db.search_nodes(search_q, limit=5)
+
+    print(f"\n{C}{B}🧠  Brain Ask: {query}{R}\n{GR}{'─'*50}{R}")
+    if not hits:
+        print(f"{Y}⚠{R}  找不到相關知識")
+        print(f"   可加入：{GR}brain add \"{query[:40]}\"{R}")
         return
-    class _A:
-        workdir = wd
-        task    = [query]
-    cmd_context(_A())
+
+    for n in hits:
+        kind   = n.get("type","?")
+        conf   = n.get("confidence", 0.8)
+        conf_c = G if conf >= 0.7 else (Y if conf >= 0.4 else RE)
+        print(f"  {C}{B}[{kind}]{R}  {n['title']}")
+        if n.get("content"):
+            excerpt = (n["content"] or "")[:200]
+            print(f"  {D}  {excerpt}{R}")
+        print(f"  {conf_c}  conf={conf:.2f}{R}  {GR}id={n['id'][:16]}{R}\n")
+    print(f"{GR}{'─'*50}{R}")
+
+    # Also show reasoning chain if edges exist
+    try:
+        from project_brain.context import ContextEngineer
+        from project_brain.graph   import KnowledgeGraph
+        graph = KnowledgeGraph(bd)
+        ce    = ContextEngineer(graph)
+        ce._brain_db = db
+        chain = ce._build_causal_chain([n["id"] for n in hits[:3]], db=db)
+        if chain:
+            print(chain)
+    except Exception:
+        pass
 
 
 def cmd_sync(args):
@@ -455,6 +516,23 @@ def cmd_context(args):
         _err("請提供 --task 或直接寫任務描述"); return
     b   = _brain(wd)
     ctx = b.get_context(task)
+    # DEEP-04: show active learning questions in --interactive mode
+    if getattr(args, 'interactive', False):
+        try:
+            bd = Path(wd) / ".brain"
+            from project_brain.brain_db import BrainDB
+            from project_brain.nudge_engine import NudgeEngine
+            _db = BrainDB(bd)
+            ne  = NudgeEngine(b.graph)
+            qs  = ne.generate_questions(task)
+            if qs:
+                print(f"\n{P}{B}❓  Brain 想知道（低信心知識確認）{R}")
+                for q in qs:
+                    print(f"  {Y}?{R}  {q['question']}")
+                    print(f"     {GR}brain add --kind {q['node_type']} \"{q['question'][:40]}\"{R}")
+                print()
+        except Exception:
+            pass
     if ctx:
         print(f"\n{C}{B}🧠  相關知識注入{R}\n{GR}{'─'*50}{R}")
         print(ctx)
@@ -528,6 +606,163 @@ def cmd_meta_knowledge(args):
 
 
 
+def cmd_timeline(args):
+    """FEAT-06: 顯示節點的版本歷史（brain timeline <node_id_or_title>）"""
+    wd      = _workdir(args)
+    query   = " ".join(args.node_ref) if isinstance(args.node_ref, list) else (args.node_ref or "")
+    if not query:
+        _err("用法：brain timeline <node_id_or_title>"); return
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    db = BrainDB(bd)
+
+    # Try exact ID first, then title search
+    node = db.get_node(query)
+    if not node:
+        hits = db.search_nodes(query, limit=1)
+        node = hits[0] if hits else None
+    if not node:
+        _err(f"找不到節點：{query}"); return
+
+    history = db.get_node_history(node["id"])
+    print(f"\n{C}{B}📜  版本歷史：{node['title']}{R}")
+    print(f"  {GR}節點 ID：{node['id']}{R}")
+    print(f"  {GR}{'─'*48}{R}")
+    if not history:
+        _info("尚無版本歷史（update_node 後才會記錄）")
+        print(f"  {D}目前版本：conf={node.get('confidence',0.8):.2f}{R}\n")
+        return
+    for h in history:
+        print(f"  {G}v{h['version']}{R}  {GR}{h.get('snapshot_at','')[:19]}{R}"
+              f"  conf={h.get('confidence') or '?'}"
+              f"  {D}{h.get('change_note') or ''}{R}")
+        if h.get("title"):
+            print(f"       標題：{h['title'][:60]}")
+    print()
+
+
+def cmd_rollback(args):
+    """FEAT-06: 恢復節點到指定版本（brain rollback <node_id> --to <version>）"""
+    wd      = _workdir(args)
+    node_id = args.node_id
+    to_ver  = args.to
+    if not node_id or to_ver is None:
+        _err("用法：brain rollback <node_id> --to <version>"); return
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    db = BrainDB(bd)
+    ok = db.rollback_node(node_id, int(to_ver))
+    if ok:
+        _ok(f"節點 {C}{node_id[:16]}{R} 已恢復到版本 v{to_ver}")
+    else:
+        _err(f"找不到節點 {node_id} 的版本 v{to_ver}（可用 brain timeline {node_id} 查詢）")
+
+
+def cmd_migrate(args):
+    """FEAT-07: 跨專案知識遷移（brain migrate --from <path>）"""
+    wd        = _workdir(args)
+    src_path  = getattr(args, 'from_path', None)
+    if not src_path:
+        _err("請提供來源路徑：brain migrate --from <path_to_brain.db>"); return
+    from pathlib import Path as _P
+    src = _P(src_path).resolve()
+    if not src.exists():
+        # Try treating as workdir
+        alt = src / ".brain" / "brain.db"
+        if alt.exists():
+            src = alt
+        else:
+            _err(f"找不到來源資料庫：{src}"); return
+
+    bd = _P(wd) / ".brain"
+    if not bd.exists():
+        _err("目標 Brain 尚未初始化，請執行：brain setup"); return
+
+    scope      = getattr(args, 'scope', 'global') or 'global'
+    min_conf   = float(getattr(args, 'min_confidence', 0.0) or 0.0)
+    dry_run    = getattr(args, 'dry_run', False)
+    to_path    = getattr(args, 'to_path', None)
+
+    if to_path:
+        dest_bd = _P(to_path) / ".brain"
+    else:
+        dest_bd = bd
+
+    from project_brain.brain_db import BrainDB
+    db     = BrainDB(dest_bd)
+    result = db.migrate_from(src, scope=scope, min_confidence=min_conf, dry_run=dry_run)
+
+    tag = f"{Y}[DRY-RUN] {R}" if dry_run else ""
+    _ok(f"{tag}遷移完成：節點 {result['nodes']}  邊 {result['edges']}  錯誤 {result['errors']}")
+    if dry_run:
+        _info("加 --execute 參數可實際執行遷移（去掉 --dry-run）")
+
+
+def cmd_counterfactual(args):
+    """DEEP-03: 反事實推理（brain counterfactual "如果我們用 NoSQL"）"""
+    wd         = _workdir(args)
+    hypothesis = " ".join(args.hypothesis) if isinstance(args.hypothesis, list) else (args.hypothesis or "")
+    if not hypothesis:
+        _err("用法：brain counterfactual \"假設條件\""); return
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    from project_brain.graph    import KnowledgeGraph
+    import re as _re
+
+    db    = BrainDB(bd)
+    graph = KnowledgeGraph(bd)
+
+    # Extract key terms from hypothesis
+    terms = _re.findall(r"[a-zA-Z0-9_]{3,}|[\u4e00-\u9fff]{2,}", hypothesis)
+    search_q = " ".join(terms[:8])
+    hits = db.search_nodes(search_q, limit=8)
+
+    affected = []
+    seen_ids = set()
+
+    for n in hits:
+        nid = n["id"]
+        if nid in seen_ids:
+            continue
+        seen_ids.add(nid)
+        affected.append(n)
+        # Follow DEPENDS_ON / REQUIRES edges
+        try:
+            rows = graph._conn.execute(
+                "SELECT n2.* FROM edges e JOIN nodes n2 ON e.target_id=n2.id "
+                "WHERE e.source_id=? AND e.relation IN ('DEPENDS_ON','REQUIRES')",
+                (nid,)
+            ).fetchall()
+            for r in rows:
+                if r["id"] not in seen_ids:
+                    seen_ids.add(r["id"])
+                    affected.append(dict(r))
+        except Exception:
+            pass
+
+    print(f"\n{C}{B}🔮  反事實分析：{hypothesis}{R}\n{GR}{'─'*50}{R}")
+    if not affected:
+        print(f"{Y}⚠{R}  找不到相關知識節點")
+        return
+
+    print(f"\n  以下 {B}{len(affected)}{R} 個決策需要重新評估：\n")
+    for n in affected:
+        kind = n.get("type","?")
+        conf = n.get("confidence",0.8)
+        conf_c = G if conf >= 0.7 else (Y if conf >= 0.4 else RE)
+        print(f"  {C}[{kind}]{R}  \"{n['title'][:60]}\"  {conf_c}conf={conf:.2f}{R}")
+    print()
+
+
 def cmd_serve(args):
     """啟動 Project Brain API Server（L3 知識庫 + L1a Session Store）"""
     wd   = _workdir(args)
@@ -562,6 +797,12 @@ def cmd_serve(args):
     if not brain_dir.exists():
         _err(f"找不到 .brain 目錄，請先執行：brain init --workdir {wd}")
         return
+
+    # FEAT-10: set Slack webhook URL if provided
+    slack_wh = getattr(args, 'slack_webhook', None)
+    if slack_wh:
+        os.environ['BRAIN_SLACK_WEBHOOK_URL'] = slack_wh
+        _info(f"Slack Webhook 已設定")
 
     try:
         from flask import Flask, request, jsonify
@@ -1657,7 +1898,8 @@ def main():
 
     p = mkp('context', '查詢任務相關知識（Context 注入）')
     p.add_argument('task', nargs='*', help='任務描述')
-
+    p.add_argument('--interactive', '-i', action='store_true',
+                   help='DEEP-04: 顯示 Brain 想確認的低信心問題')
 
     p.add_argument('--dry-run', dest='dry_run', action='store_true',
                    help='只預覽，不執行（與不加 --execute 等效，提供慣用語法）')
@@ -1714,15 +1956,40 @@ def main():
     p = mkp('index', '向量索引（語意搜尋 Phase 1）')
     p.add_argument('--quiet', action='store_true')
 
+    # FEAT-06: Version history
+    p = mkp('timeline', 'FEAT-06：顯示節點版本歷史')
+    p.add_argument('node_ref', nargs='+', help='節點 ID 或標題')
+
+    p = mkp('rollback', 'FEAT-06：恢復節點到指定版本')
+    p.add_argument('node_id', help='節點 ID')
+    p.add_argument('--to', type=int, required=True, help='目標版本號')
+
+    # FEAT-07: Cross-project migration
+    p = mkp('migrate', 'FEAT-07：跨專案知識遷移')
+    p.add_argument('--from', dest='from_path', required=True,
+                   help='來源 brain.db 路徑（或含 .brain/ 的目錄）')
+    p.add_argument('--to', dest='to_path', default=None,
+                   help='目標目錄（預設：當前工作目錄）')
+    p.add_argument('--scope', default='global', help='遷移指定 scope（預設 global）')
+    p.add_argument('--min-confidence', dest='min_confidence', type=float, default=0.0,
+                   help='只遷移信心值 >= 此值的節點（預設 0.0）')
+    p.add_argument('--dry-run', action='store_true', help='預覽模式（不實際寫入）')
+
+    # DEEP-03: Counterfactual
+    p = mkp('counterfactual', 'DEEP-03：反事實推理')
+    p.add_argument('hypothesis', nargs='+', help='假設條件（如：如果我們用 NoSQL）')
+
     p = mkp('webui', 'D3.js 視覺化（驗證知識庫）')
     p.add_argument('--port', type=int, default=7890)
 
     p = mkp('serve', '啟動 OpenAI 相容 API（讓 Ollama/LM Studio/Cursor 查詢知識）')
-    p.add_argument('--port',       type=int,   default=7891,  help='監聽 port（預設：7891）')
-    p.add_argument('--production', action='store_true',       help='生產模式：使用 Gunicorn multi-worker')
-    p.add_argument('--workers',    type=int,   default=4,     help='Gunicorn worker 數量（--production 時有效）')
-    p.add_argument('--host',       default='0.0.0.0',        help='綁定 host（預設 0.0.0.0）')
-    p.add_argument('--mcp',        action='store_true',       help='MCP Server 模式（Claude Code / Cursor 直接連接）')
+    p.add_argument('--port',           type=int,   default=7891,  help='監聽 port（預設：7891）')
+    p.add_argument('--production',     action='store_true',       help='生產模式：使用 Gunicorn multi-worker')
+    p.add_argument('--workers',        type=int,   default=4,     help='Gunicorn worker 數量（--production 時有效）')
+    p.add_argument('--host',           default='0.0.0.0',         help='綁定 host（預設 0.0.0.0）')
+    p.add_argument('--mcp',            action='store_true',        help='MCP Server 模式（Claude Code / Cursor 直接連接）')
+    p.add_argument('--slack-webhook',  dest='slack_webhook', default=None,
+                   help='FEAT-10: Slack Incoming Webhook URL（覆蓋 BRAIN_SLACK_WEBHOOK_URL）')
 
 
     # 無參數時：印出設定區塊 + 標準 argparse help
@@ -1799,6 +2066,10 @@ def main():
         'analytics':     cmd_analytics,
         'export':        cmd_export,
         'import':        cmd_import,
+        'timeline':      cmd_timeline,
+        'rollback':      cmd_rollback,
+        'migrate':       cmd_migrate,
+        'counterfactual': cmd_counterfactual,
     }
 
     fn = dispatch.get(args.cmd)

@@ -431,6 +431,58 @@ def create_app(workdir: str, api_key: str = ""):
             })
         except Exception as e:
             return jsonify({'error': str(e)}), 500
-    
+
+    # ── FEAT-10: Webhook 端點 ─────────────────────────────────────────
+
+    @app.route('/webhook/slack', methods=['POST'])
+    def webhook_slack():
+        """FEAT-10: 接收 nudge 並推送到 Slack Incoming Webhook。
+
+        設定環境變數：BRAIN_SLACK_WEBHOOK_URL=https://hooks.slack.com/...
+        請求體：{"task": "...", "message": "..."}  （可選）
+        """
+        import urllib.request
+        slack_url = os.environ.get('BRAIN_SLACK_WEBHOOK_URL', '')
+        if not slack_url:
+            return jsonify({'error': 'BRAIN_SLACK_WEBHOOK_URL 未設定'}), 400
+        data = request.get_json(silent=True) or {}
+        task = str(data.get('task', ''))[:200]
+        msg  = str(data.get('message', task or 'Brain nudge'))[:500]
+        payload = json.dumps({'text': f'🧠 *Project Brain*: {msg}'}).encode()
+        try:
+            req = urllib.request.Request(
+                slack_url, data=payload,
+                headers={'Content-Type': 'application/json'}, method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                ok = r.status == 200
+        except Exception as exc:
+            return jsonify({'error': str(exc)[:100]}), 500
+        return jsonify({'sent': ok})
+
+    @app.route('/webhook/github', methods=['POST'])
+    def webhook_github():
+        """FEAT-10: 接收 GitHub push 事件，觸發 brain sync。
+
+        GitHub Webhook 設定：Content-Type: application/json, Event: push
+        """
+        import subprocess
+        event = request.headers.get('X-GitHub-Event', '')
+        if event not in ('push', 'ping'):
+            return jsonify({'skipped': True, 'reason': 'not push/ping'}), 200
+        if event == 'ping':
+            return jsonify({'pong': True}), 200
+        try:
+            result = subprocess.run(
+                ['brain', 'sync', '--workdir', wd, '--quiet'],
+                capture_output=True, text=True, timeout=30
+            )
+            return jsonify({
+                'synced': result.returncode == 0,
+                'stdout': result.stdout[:200],
+                'stderr': result.stderr[:200],
+            })
+        except Exception as exc:
+            return jsonify({'error': str(exc)[:100]}), 500
 
     return app

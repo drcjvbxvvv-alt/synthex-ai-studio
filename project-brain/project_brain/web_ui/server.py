@@ -197,6 +197,41 @@ def create_app(workdir) -> Any:
                           for n in neighbors],
         })
 
+    @app.route("/api/timeline")
+    def api_timeline():
+        """FEAT-09: 時間軸端點 — 依創建時間排序節點，供時間軸滑桿視覺化使用。"""
+        limit = min(MAX_NODES_RETURN, int(request.args.get("limit", 200)))
+        kind  = request.args.get("kind", None)
+        conn  = _db()
+        try:
+            if kind:
+                safe_kind = re.sub(r"[^a-zA-Z]", "", kind)[:20]
+                rows = conn.execute(
+                    "SELECT id, type as kind, title, confidence, created_at "
+                    "FROM nodes WHERE type=? ORDER BY created_at ASC LIMIT ?",
+                    (safe_kind, limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, type as kind, title, confidence, created_at "
+                    "FROM nodes ORDER BY created_at ASC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+        finally:
+            conn.close()
+        nodes = [
+            {
+                "id":          r["id"],
+                "title":       r["title"],
+                "type":        r["kind"],
+                "confidence":  r["confidence"] if r["confidence"] is not None else 0.8,
+                "created_at":  r["created_at"] or "",
+                "color":       KIND_COLOR.get(r["kind"], "#94a3b8"),
+            }
+            for r in rows
+        ]
+        return jsonify({"nodes": nodes, "count": len(nodes)})
+
     @app.route("/api/decay")
     def api_decay():
         conn = _db()

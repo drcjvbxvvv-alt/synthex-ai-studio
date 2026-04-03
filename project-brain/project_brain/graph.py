@@ -946,5 +946,52 @@ class KnowledgeGraph:
             "by_type": {r["type"]: r["cnt"] for r in by_type},
         }
 
+    def counterfactual_impact(self, hypothesis: str) -> list:
+        """DEEP-03: 反事實推理 — 找出假設條件下需要重新評估的知識節點。
+
+        Args:
+            hypothesis: 假設條件描述（如「如果我們用 NoSQL 代替 PostgreSQL」）
+
+        Returns:
+            list[dict]: 受影響節點列表，含 id, title, type, confidence, reason
+        """
+        import re
+        terms = re.findall(r"[a-zA-Z0-9_]{3,}|[\u4e00-\u9fff]{2,}", hypothesis)
+        search_q = " ".join(terms[:8])
+        affected = []
+        seen_ids = set()
+        try:
+            hits = self.search_nodes(search_q, limit=8)
+            for n in hits:
+                nid = n["id"]
+                if nid in seen_ids:
+                    continue
+                seen_ids.add(nid)
+                affected.append({
+                    "id": nid, "title": n.get("title",""),
+                    "type": n.get("type","?"),
+                    "confidence": n.get("confidence",0.8),
+                    "reason": "直接匹配假設條件",
+                })
+                # Follow DEPENDS_ON / REQUIRES edges
+                rows = self._conn.execute(
+                    "SELECT n2.id, n2.type, n2.title, n2.confidence "
+                    "FROM edges e JOIN nodes n2 ON e.target_id=n2.id "
+                    "WHERE e.source_id=? AND e.relation IN ('DEPENDS_ON','REQUIRES')",
+                    (nid,)
+                ).fetchall()
+                for r in rows:
+                    if r["id"] not in seen_ids:
+                        seen_ids.add(r["id"])
+                        affected.append({
+                            "id": r["id"], "title": r["title"],
+                            "type": r["type"],
+                            "confidence": r["confidence"] or 0.8,
+                            "reason": f"依賴受影響節點（{n.get('title','')[:30]}）",
+                        })
+        except Exception:
+            pass
+        return affected
+
     def close(self):
         self._conn.close()

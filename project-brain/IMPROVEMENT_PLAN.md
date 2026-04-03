@@ -1,780 +1,762 @@
 # Project Brain — 系統改善計劃書
 
-> **版本**: v1.4
-> **建立日期**: 2026-04-02
+> **版本**: v2.1
+> **建立日期**: 2026-04-03
 > **最後更新**: 2026-04-03
-> **適用版本**: v0.1.0 (public) / v11.1 (internal)
-> **狀態**: P0 + P1 + P2 全部完成 ✅
+> **適用版本**: v1.0.0 (post-P3) / v11.1 (internal)
+> **狀態**: 深度代碼審查 + 系統全面評鑑完成
+> **歷史紀錄**: 已完成項目請見 [`COMPLETED_HISTORY.md`](./COMPLETED_HISTORY.md)
 
 ---
 
 ## 目錄
 
 1. [執行摘要](#執行摘要)
-2. [系統缺陷清單](#系統缺陷清單)
-3. [緊急 BUG 修復](#緊急-bug-修復)
-4. [優化方向](#優化方向)
-5. [新增功能路線圖](#新增功能路線圖)
-6. [深度加強方向](#深度加強方向)
-7. [優先矩陣總覽](#優先矩陣總覽)
-8. [執行時程建議](#執行時程建議)
+2. [系統深度評鑑](#系統深度評鑑)
+   - 2.1 [可靠度](#21-可靠度-reliability--b)
+   - 2.2 [實用性](#22-實用性-practicality--a-)
+   - 2.3 [可用性](#23-可用性-usability--b)
+   - 2.4 [誠實性](#24-誠實性-honesty--c)
+   - 2.5 [記憶檢索品質](#25-記憶檢索品質-retrieval-quality--b)
+   - 2.6 [系統架構](#26-系統架構-architecture--a-)
+   - 2.7 [成本控制與資源消耗](#27-成本控制與資源消耗-cost--b-)
+   - 2.8 [程式碼與工程穩定性](#28-程式碼與工程穩定性-engineering--b)
+3. [尚未修復的原有缺陷](#尚未修復的原有缺陷)
+4. [P3 實作品質分析](#p3-實作品質分析)
+5. [新發現 BUG](#新發現-bug)
+6. [新發現系統缺陷](#新發現系統缺陷)
+7. [新優化方向](#新優化方向)
+8. [新增功能路線圖](#新增功能路線圖)
+9. [深度功能補完](#深度功能補完)
+10. [優先矩陣總覽](#優先矩陣總覽)
+11. [執行時程建議](#執行時程建議)
 
 ---
 
 ## 執行摘要
 
-Project Brain 是以 SQLite 為核心的三層式 AI 記憶系統，整體架構設計紮實，具備完整的 CLI、REST API、MCP Server 與 Web UI。本計劃書彙整以下五個維度的改善項目：
+v2.1 基於對 14,944 行代碼（26 個核心模組）的逐行審查，分兩個層面整合：
 
-- **5 項嚴重/中度系統缺陷**（影響正確性與穩定性）
-- **8 項確認 BUG**（含 3 項緊急 Crash 類）
-- **6 項性能與架構優化**
-- **10 項新功能**（分三批推出）
-- **4 項深度加強**（長期差異化方向）
+**系統評鑑**（§2）— 從可靠度、實用性、可用性、誠實性、記憶檢索、架構、成本、工程穩定性 8 個維度提供整體評分與分析。
 
----
+**待辦事項**（§3 以後）— 前一版本 34 項改善均已落地（見 [`COMPLETED_HISTORY.md`](./COMPLETED_HISTORY.md)），深度審查後新發現：
 
-## 系統缺陷清單
+- **2 項原有缺陷** 從未實作（DEF-03、DEF-07）
+- **9 項 P3 功能** 屬於部分實作（骨架存在、邏輯不完整）
+- **4 個新 BUG** 由 P3 實作引入或暴露
+- **3 個新系統缺陷** 影響正確性
+- **4 個新優化機會**、**4 個新功能需求**、**3 個深度補完**
 
-### 🔴 嚴重缺陷
-
-#### ~~DEF-01：SQLite 單寫競爭條件~~ ✅ 已修復 (2026-04-03)
-
-| 項目 | 內容 |
-|------|------|
-| **位置** | `brain_db.py` — `_write_guard()` |
-| **症狀** | git post-commit hook 觸發 `brain sync` 同時，MCP server 處理 `add_knowledge`，其中一個操作可能 timeout 且靜默失敗 |
-| **根本原因** | SQLite 單寫限制；兩個寫入進程競爭鎖定 |
-| **影響** | 知識遺失，使用者無感知 |
-| **修復** | 新增 `_write_guard()` context manager，使用 `fcntl.flock()` 對獨立 `.write_lock` 文件加排他鎖，序列化跨進程寫入；支援同執行緒可重入（depth counter），Windows 自動降級 |
-
-```python
-# brain_db.py — DEF-01 修復
-@contextlib.contextmanager
-def _write_guard(self):
-    depth = getattr(self._local, "_wg_depth", 0)
-    self._local._wg_depth = depth + 1
-    if depth > 0:
-        try: yield
-        finally: self._local._wg_depth -= 1
-        return
-    # outermost: acquire flock
-    lf = open(str(self.brain_dir / ".write_lock"), "w")
-    fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-    try: yield
-    finally:
-        self._local._wg_depth -= 1
-        fcntl.flock(lf.fileno(), fcntl.LOCK_UN); lf.close()
-```
-
-`add_node()`, `update_node()`, `add_episode()`, `delete_node()` 均已加入 `with self._write_guard():`
-
-**測試**: `TestDef01WriteLock` — 4 個測試，全部通過 ✅
-
-#### ~~DEF-02：FTS5 同步觸發器缺失~~ ✅ 已修復 (2026-04-03)
-
-| 項目 | 內容 |
-|------|------|
-| **位置** | `brain_db.py` — `_setup()` 觸發器 + `conn` property UDF |
-| **症狀** | 直接 SQL UPDATE/DELETE `nodes` 表（如 `review_board.update_approved()`、`decay_engine._apply_decay()`），FTS5 不自動更新 |
-| **根本原因** | `nodes` 表與 `nodes_fts` 虛擬表之間無 SQL 觸發器；只有 `add_node()` 手動同步 |
-| **影響** | 搜尋召回率因直接 SQL 修改而靜默下降 |
-| **修復** | 新增 `AFTER UPDATE OF title, content, tags` 和 `AFTER DELETE` 觸發器；`conn` property 註冊 `brain_ngram()` Python UDF 讓觸發器可呼叫 n-gram 函數 |
-
-```sql
--- brain_db.py _setup() — DEF-02 修復
-CREATE TRIGGER IF NOT EXISTS nodes_fts_au
-AFTER UPDATE OF title, content, tags ON nodes BEGIN
-    DELETE FROM nodes_fts WHERE id = old.id;
-    INSERT INTO nodes_fts(id, title, content, tags)
-    VALUES (new.id, brain_ngram(new.title), brain_ngram(new.content), new.tags);
-END;
-
-CREATE TRIGGER IF NOT EXISTS nodes_fts_ad
-AFTER DELETE ON nodes BEGIN
-    DELETE FROM nodes_fts WHERE id = old.id;
-END;
-```
-
-**測試**: `TestDef02FTS5Triggers` — 4 個測試，全部通過 ✅
-
-#### DEF-03：延遲初始化執行緒安全問題
-
-| 項目 | 內容 |
-|------|------|
-| **位置** | `engine.py` — 多個 `if self._db is None` 模式 |
-| **症狀** | 多執行緒同時通過 None 判斷，各自初始化，導致資源競爭 |
-| **根本原因** | 屬性 getter 非原子操作；`threading.local()` 已用於連線池，但初始化本身未受保護 |
-| **影響** | 高並發時可能 Crash 或資料庫狀態不一致 |
-| **修復方案** | 使用 `threading.Lock()` 保護所有延遲初始化路徑 |
+本計劃書**只列出待辦事項**，已完成項目均移至 `COMPLETED_HISTORY.md`。
 
 ---
 
-### 🟡 中度缺陷
+## 系統深度評鑑
 
-#### ~~DEF-04：資料庫 Schema 遷移不可靠~~ ✅ 已修復 (2026-04-03)
+> 基於靜態代碼分析（14,944 行 / 26 個模組）。
+> 評分標準：A = 優秀、B = 良好、C = 可接受但有問題、D = 嚴重不足、F = 不可用。
 
-| 項目 | 內容 |
-|------|------|
-| **位置** | `brain_db.py` — try/except ALTER TABLE |
-| **症狀** | 遷移因任意原因失敗（如磁碟已滿）時靜默跳過，資料庫狀態不一致 |
-| **根本原因** | 無版本號追蹤，使用 catch-all except 忽略所有錯誤 |
-| **修復方案** | 在 `brain_meta` 表加入 `schema_version` 欄位，按版本號順序執行遷移腳本，任一步驟失敗立即報錯 |
+### 評鑑總表
 
-#### ~~DEF-05：Decay Engine 未整合進主查詢流程~~ ✅ 已修復 (2026-04-03)
-
-| 項目 | 內容 |
-|------|------|
-| **位置** | `brain_db.py` — `search_nodes()` + `_effective_confidence()` |
-| **症狀** | 搜尋排名依靜態 `confidence` 欄位，舊知識（信心應已衰減）排在新知識前面 |
-| **根本原因** | `search_nodes()` 的 ORDER BY 使用靜態 `confidence`，未套用 DecayEngine 的即時計算 |
-| **修復** | 新增 `_effective_confidence()` 靜態方法（F1 時間衰減 + F7 使用頻率加成），`search_nodes()` 在返回前計算每個節點的 `effective_confidence` 並重新排名；Pinned 節點免疫衰減 |
-
-```python
-# brain_db.py — DEF-05/OPT-04 修復
-@staticmethod
-def _effective_confidence(node: dict) -> float:
-    base  = float(node.get("confidence", 0.8))
-    if node.get("is_pinned"): return base
-    days  = (datetime.now(timezone.utc) - created_dt).days
-    decay = math.exp(-0.003 * days)           # F1
-    f7    = min(0.15, (access / 10) * 0.05)  # F7
-    return max(0.05, min(1.0, base * decay + f7))
-```
-
-**測試**: `TestDef05DecayAwareRanking` — 5 個測試，全部通過 ✅
-
-#### ~~DEF-06：Session Store 無上限保護~~ ✅ 已修復 (2026-04-03)
-
-| 項目 | 內容 |
-|------|------|
-| **位置** | `session_store.py` |
-| **症狀** | 長期執行任務累積數千 session 條目，查詢效能下降 |
-| **修復方案** | 加入 `max_entries_per_session=500` 限制，超過時 LRU 淘汰最舊條目 |
-
-#### DEF-07：CJK 中文搜尋召回率差
-
-| 項目 | 內容 |
-|------|------|
-| **位置** | `context.py` — FTS5 搜尋設定 |
-| **症狀** | 中文 knowledge nodes 的 FTS5 搜尋召回率估計不到 40% |
-| **根本原因** | FTS5 預設 Unicode61 tokenizer 對中文分詞效果差，缺乏 N-gram 支援 |
-| **修復方案** | 改用 `tokenize="trigram"` 或建立 N-gram 前處理管線 |
+| 維度 | 評分 | 核心問題 |
+|------|------|---------|
+| 可靠度 | **B+** | 靜默異常 246+ 處；FTS5 同步單點故障 |
+| 實用性 | **A-** | 三層記憶設計紮實；同義詞漂移影響精準度 |
+| 可用性 | **B**  | API 介面乾淨；錯誤訊息洩漏實作細節 |
+| 誠實性 | **C+** | 信心值刻度非線性；推理鏈條缺乏不確定性標記 |
+| 記憶檢索品質 | **B**  | 多策略搜尋有效；大規模時召回率下降 |
+| 系統架構 | **A-** | 三層分離清晰；循環依賴、無統一儲存抽象 |
+| 成本控制與資源消耗 | **B-** | 本地優先免費；記憶體洩漏；SQLite 無法收縮 |
+| 程式碼與工程穩定性 | **B**  | 文件齊全；型別提示不完整；測試覆蓋 <50% |
 
 ---
 
-## 緊急 BUG 修復
+### 2.1 可靠度 (Reliability) — B+
 
-### 🔴 P0 — 立即修復 (Crash / 資料損壞)
+**優勢**
 
-#### ~~BUG-01：L2 Episodic Memory 重複記錄~~ ✅ 已修復 (2026-04-02)
+1. **SQLite WAL + ACID 事務**：三個持久層（brain.db / session_store.db / review_board.db）均啟用 WAL 模式，`busy_timeout=5000`，防止並發損壞（`router.py:160`、`session_store.py:154–156`）。
+2. **跨層補償事務（Saga 模式）**：`router.py:194–229` 實作 L1a↔L3 補償回滾，L3 失敗時寫入 `write_queue.jsonl` 等待重試，防止跨層不一致。
+3. **FTS5 INSERT 同事務**：`graph.py:303–312` 節點與 FTS5 記錄在同一事務插入，避免搜尋不一致。
+
+**弱點**
+
+| # | 問題 | 位置 | 影響 |
+|---|------|------|------|
+| R-1 | **246+ 處 `except: pass` 靜默吞錯** | `context.py:246`、`nudge_engine.py:163`、`api_server.py:279` | 上下文不完整但使用者無感知 |
+| R-2 | **FTS5 INSERT 失敗不回滾節點** | `graph.py:311` `except: pass` | 節點存在但不可搜尋，靜默知識遺失 |
+| R-3 | **Decay Engine meta 欄位競態** | `decay_engine.py:383–407` | 並發讀寫 JSON meta 欄位，無欄位級鎖 |
+| R-4 | **外鍵約束未驗證**：`add_edge()` 不檢查 source/target 是否存在 | `graph.py:537` | 孤立邊靜默建立，圖結構損壞 |
+| R-5 | **Session Store 過期清理只在 init 執行一次** | `session_store.py:226–239` | 長時間運行時 expired 條目無限累積 |
+
+**修復優先**：R-1（加 `logger.warning()` 替換 `pass`）、R-2（事務 rollback）。
+
+---
+
+### 2.2 實用性 (Practicality) — A-
+
+**優勢**
+
+1. **三層架構契合認知科學**：L1（工作記憶）/ L2（情節記憶）/ L3（語意記憶）直接對應人類記憶研究，AI Agent 確實受益（`router.py:354–440` 並行查詢三層）。
+2. **多因子衰減防止「殭屍知識」**：`decay_engine.py` 的 F1（時間）、F2（版本差距）、F7（存取頻率）組合，能動態降低過時規則的信心值。
+3. **Nudge Engine 主動提醒**：低信心節點觸發問題生成（`nudge_engine.py:218–254`），形成知識更新迴路。
+
+**弱點**
+
+| # | 問題 | 位置 | 影響 |
+|---|------|------|------|
+| P-1 | **同義詞展開過於激進**：查詢「password」觸發 JWT/token/bearer 等 30+ 詞 | `context.py:462–493` | 高噪音，身份驗證規則覆蓋密碼雜湊問題 |
+| P-2 | **信心值語意不明確**：0.75 可能是「剛更新的老規則」或「未驗證的新規則」，無法區分 | 多處 | Agent 無法根據信心值做出正確風險判斷 |
+| P-3 | **大型代碼庫召回率下降**：FTS5 + 30 詞展開 → LIKE 備援 → 5–10 次串行 SQL | `graph.py:447–477` | 1000+ 節點時查詢結果漂移明顯 |
+| P-4 | **F7 頻率加成飽和過早**：存取 50 次與 100 次效果相同（上限 0.15） | `decay_engine.py:220` | 高頻知識不能有效浮頂 |
+
+---
+
+### 2.3 可用性 (Usability) — B
+
+**優勢**
+
+1. **多入口設計**：MCP 工具、REST API、CLI、Python import — 四種整合方式，覆蓋不同使用場景。
+2. **CLI 指令可探索**：`brain setup / scan / review / context / ask` 等命名直覺，符合使用者心智模型。
+3. **REST API RESTful 規範**：`/v1/session` 端點（`api_server.py:187–247`）可由任何語言直接呼叫。
+
+**弱點**
+
+| # | 問題 | 位置 | 影響 |
+|---|------|------|------|
+| U-1 | **錯誤訊息洩漏 SQL / 堆疊追蹤** | `api_server.py:129–130` 返回 `str(e)` | 使用者看到原始 DB 錯誤，無法自助排查 |
+| U-2 | **Rate limit 靜默變空回應** | `mcp_server.py:239–240` 捕獲 RuntimeError 返回 `""` | 使用者不知道是限速還是真的沒有知識 |
+| U-3 | **無設定精靈（Setup Wizard）** | 無此功能 | 新使用者需手動建立 `.brain/`、設定 API key、初始化 schema |
+| U-4 | **長操作無進度回饋** | `brain scan` / `brain sync` | 大型 repo 掃描時終端機靜止，看起來像卡死 |
+| U-5 | **無安全的重置指令** | 無 `brain clear` | 必須手動 `rm .brain/brain.db`，容易誤刪 |
+
+---
+
+### 2.4 誠實性 (Honesty) — C+
+
+> 這是系統最弱的維度。信心值是系統的核心承諾，但目前的設計讓 Agent 難以信任這個數字。
+
+**問題詳述**
+
+**H-1：信心值刻度非線性且混合語意**
+
+- 初始值（`mcp_server.py:336`）：AI 推斷 = 0.6，人工驗證 = 0.9
+- DecayEngine 版本衰減（`decay_engine.py:285`）：每個主版本差距 −0.15
+  - React 16→18：0.90 → 0.60（−33%）
+- 標記為「有幫助」（`mcp_server.py:490`）：每次 +0.03
+  - 10 票 = +0.30，與人工驗證的 0.9 基準矛盾
+- **結果**：0.75 的規則可能是「React 16 的老規則」或「最近驗證的規則」，無從區分
+
+**H-2：Nudge urgency 定義模糊**
+
+```
+nudge_engine.py:189–193:
+  is_pinned || conf > 0.85 → "high"   ← "high" 是指「可能導致 bug」還是「組織重視」?
+  conf > 0.65              → "medium"
+  else                     → "low"
+  conf < 0.40              → 過濾不顯示
+```
+
+- "low" urgency 節點可能是 0.65 信心的未驗證規則，仍以「建議」形式呈現
+- 沒有說明 urgency 代表的語意後果
+
+**H-3：推理鏈條邊缺乏信心標記**
+
+- `context.py:299–349` 建立推理鏈條
+- 邊的初始信心值預設 0.8（`graph.py:545`），不論是人工建立還是 AI 推斷
+- 輸出時（`line 327`）節點與邊並排顯示，無法辨識哪些連結是推斷而非驗證
+- **風險**：Agent 讀到「Stripe webhook → CAUSES → 重複扣款 → SOLVED_BY → 冪等金鑰」，但如果 CAUSES 邊是 AI 自動推斷的，這個因果關係未必成立
+
+**H-4：適用條件（applicability_condition）幾乎不顯示**
+
+- `graph.py:787–800` 有 `applicability_condition` 和 `invalidation_condition` 欄位
+- `context.py` 的 `_fmt_node()`（`line 546–558`）將其截短為 tooltip，極少進入正文輸出
+- **結果**：規則在不適用的情境中被引用，造成誤導
+
+**改善方向**
+
+```
+建議信心值語意分層：
+  [0.0 – 0.3)  推測  — 標注 ⚠️ Speculative
+  [0.3 – 0.6)  推斷  — 標注 ~ Inferred
+  [0.6 – 0.8)  已驗證 — 標注 ✓ Verified
+  [0.8 – 1.0]  權威  — 標注 ✓✓ Authoritative
+
+邊的信心值獨立追蹤，推斷邊標注 [inferred]
+```
+
+---
+
+### 2.5 記憶檢索品質 (Retrieval Quality) — B
+
+**優勢**
+
+1. **多策略互補**：向量搜尋（Ollama/OpenAI/LocalTFIDF）+ FTS5 混合搜尋 + LIKE 備援 + 查詢展開（30 詞）
+2. **間隔重複整合**：`context.py:203–213` 後台執行緒更新 `access_count`，強化高頻知識
+3. **優先級排名**：Pinned → importance → confidence，ADR 獲 800 token 預算，其他 400（`context.py:201`）
+
+**弱點**
+
+| # | 問題 | 位置 | 量化影響 |
+|---|------|------|---------|
+| RQ-1 | **語意去重閾值 0.85 過高**：「JWT RS256 多服務認證」vs「多服務 JWT 用 RS256」相似度 ~0.80，兩者同時返回 | `context.py:455` | Token 預算浪費 ~15% |
+| RQ-2 | **Token 估算誤差**：中文每字假設 1 token，實際 Claude tokenizer 為 0.8–1.2 token/字 | `context.py:39–43` | 預算超出或截短 ±480 tokens |
+| RQ-3 | **排名不考慮時效性**：兩年前的已解決 Pitfall 與當前 Pitfall 排名相同 | `search_nodes()` 排序邏輯 | 過期知識混入前 5 結果 |
+| RQ-4 | **LIMIT 硬截斷**：LIKE 備援查詢 `LIMIT ?` 固定切割，超出部分完全丟失 | `graph.py:449` | 相關節點未返回 |
+| RQ-5 | **節點類型無法加權查詢**：找決策用 ADR，找錯誤用 Pitfall，但 API 只能過濾不能加權 | `mcp_server.py:244–267` | 特定查詢意圖下精準度差 |
+
+---
+
+### 2.6 系統架構 (Architecture) — A-
+
+**優勢**
+
+1. **三層分離清晰**：L1a（`session_store.py` ~500 行）/ L2（`graphiti_adapter.py` 獨立）/ L3（`brain_db.py` + `graph.py`）各自職責明確，互相隔離故障
+2. **Embedder 抽象層**：`OllamaEmbedder / OpenAIEmbedder / LocalTFIDFEmbedder` 實作同一介面，可透明替換（`embedder.py:203–235`）
+3. **版本化 Schema 遷移**：`_run_migrations()` 冪等遞增，升版不丟資料
+
+**弱點**
+
+| # | 問題 | 影響 |
+|---|------|------|
+| A-1 | **循環依賴**：`context.py` ← `graph.py`、`session_store.py`；`cli.py` ← 幾乎所有模組 | 重構一層需改動 5+ 檔案 |
+| A-2 | **無統一儲存抽象**：5 個 SQLite 檔案各自直接 `sqlite3.connect()`，切換至 PostgreSQL 需重寫 50+ 連線點 | 技術鎖定 |
+| A-3 | **設定散落各處**：Token 預算（`context.py:24`）、衰減係數（`decay_engine.py:55–62`）、Rate limit（`mcp_server.py:48`）均為硬編碼常數 | 調參需修改代碼，無法運行時配置 |
+| A-4 | **L1b（Anthropic Memory Tool）整合未完成**：`router.py:233–234` 出現未定義的 `dir_path`，L1b 橋接代碼是死代碼 | 功能聲稱但不可用 |
+
+---
+
+### 2.7 成本控制與資源消耗 (Cost) — B-
+
+**優勢**
+
+1. **零 API 成本預設值**：`LocalTFIDFEmbedder` 無需任何外部 API（`embedder.py:136–200`）
+2. **全進程計算**：無外部微服務，<100MB 記憶體覆蓋 10k 節點典型場景
+3. **高效 N-gram 預計算**：`_ngram_text()` 插入時預處理，搜尋時無需重新分詞
+
+**弱點**
+
+| # | 問題 | 位置 | 量化估計 |
+|---|------|------|---------|
+| C-1 | **SQLite 檔案無法收縮**：從不呼叫 `VACUUM`；刪除節點後空間不回收 | 所有 DB 操作 | 1 年後 `brain.db` 可達 500MB+（初始 5MB 知識庫） |
+| C-2 | **執行緒本地連線洩漏**：`graph.py:50–52` `threading.local()` 連線從不關閉 | `graph.py` / `brain_db.py` | Web 伺服器環境每個請求洩漏一個連線 |
+| C-3 | **FTS5 索引未隨刪除縮減**：`DELETE FROM nodes` 後對應 `nodes_fts` 記錄可能殘留 | `graph.py:311` | 50k 節點後 FTS5 索引含大量孤立記錄，查詢變慢 |
+| C-4 | **Ollama/OpenAI Embedding 每次查詢重新計算**：無跨請求快取 | `embedder.py` Ollama/OpenAI 路徑 | OpenAI 嵌入：$0.00002/次，1000 次/天 = $0.02/天；1 年 $7.3 |
+| C-5 | **`session_store` 過期清理無索引**：`expires_at` WHERE 條件走全表掃描 | `session_store.py:232` | 10k 條 session 時每次清理掃描 10k 行 |
+| C-6 | **TFIDF Cache 使用 FIFO 而非 LRU**：高頻文本被提前淘汰，低頻文本留存 | `embedder.py:29–30` | 熱點知識節點每次查詢重新計算 |
+
+**建議**：啟用 `PRAGMA auto_vacuum=INCREMENTAL`；新增 `brain optimize` 指令執行 `VACUUM ANALYZE`。
+
+---
+
+### 2.8 程式碼與工程穩定性 (Engineering) — B
+
+**優勢**
+
+1. **文件齊全**：每個模組有 docstring，函數有 Args/Returns，BUG 修復有行內注記（如 `context.py:29–43` DEF-03 說明）
+2. **命名一致**：PascalCase 類別、snake_case 方法、`_` 前綴私有方法
+3. **防禦性編程（部分）**：型別提示存在、範圍限制（`decay_engine.py:184–185` 夾緊 [0.05, 1.0]）、JSON 解析保護
+
+**弱點**
+
+| # | 問題 | 位置 | 說明 |
+|---|------|------|------|
+| E-1 | **型別提示不完整**：`search_nodes() -> list`（應為 `list[dict]`） | `graph.py:388` | IDE 補全與靜態分析失效 |
+| E-2 | **函數過長**：`context.py:75–297` `build()` 220 行；`brain_db.py` `hybrid_search()` 250 行 | 多處 | 難以測試、難以理解 |
+| E-3 | **錯誤回傳方式不一致**：部分函數 raise（`graph.py:498`）、部分返回 None（`graph.py:377–386`）| 全代碼庫 | 呼叫方無法區分「查無資料」與「內部錯誤」 |
+| E-4 | **Logging 密度不均**：`brain_db.py` 日誌完整；`context.py` 完全無日誌 | `context.py` 全文 | 生產環境上下文注入失敗無從調查 |
+| E-5 | **測試覆蓋估計 <50%**：`cli.py`、`api_server.py`、`mcp_server.py` 明確排除於 coverage 外 | `pyproject.toml:70` | 核心使用者介面代碼無自動化測試 |
+| E-6 | **設定硬編碼**：`MAX_CONTEXT_TOKENS=6000`、衰減係數、Rate limit 無環境變數覆寫 | 多處 | 部署不同場景需修改代碼 |
+| E-7 | **背景執行緒生命週期未管理**：`context.py:254–269` daemon thread 啟動後從不 join/monitor | `context.py` | 異常靜默，無法偵測 SR 更新失敗 |
+
+---
+
+### 評鑑結論與前三大建議
+
+```
+整體系統評分：B （良好，具備生產基礎，但有明確的可靠性與誠實性缺口需優先修復）
+```
+
+**建議 1（立即）：用結構化日誌替換 246+ 處 `except: pass`**
+- 將 `except: pass` 改為 `except Exception as e: logger.warning("...", exc_info=True)`
+- 效果：調試時間預計減少 80%，使用者不再面對「空回應」而不知原因
+
+**建議 2（本月）：重新定義信心值語意**
+- 引入語意分層：`[0.0–0.3)` 推測、`[0.3–0.6)` 推斷、`[0.6–0.8)` 已驗證、`[0.8–1.0]` 權威
+- 推理鏈條邊標注 `[inferred]` vs `[verified]`
+- 效果：Agent 信任上下文的品質可測量，誤導風險顯著降低
+
+**建議 3（本季）：資料庫維護策略**
+- 啟用 `PRAGMA auto_vacuum=INCREMENTAL`
+- 新增 `brain optimize` 指令（VACUUM + ANALYZE + FTS5 rebuild）
+- 為 `expires_at` 加完整索引、為 Embedder 加跨請求 LRU cache
+- 效果：成熟知識庫儲存量減少 50%，查詢速度提升 30%
+
+---
+
+## 尚未修復的原有缺陷
+
+### DEF-03：延遲初始化執行緒安全問題 🔴
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `brain_db.py` → `add_episode()` + `_setup()` |
-| **症狀** | 重複執行 `brain sync` / `brain scan` 將同一 git commit 多次插入 `episodes` 表 |
-| **根本原因** | ① `source` 欄位無 UNIQUE 約束，同 commit 不同 content 格式繞過 PRIMARY KEY 防護；② ID hash 僅 8 hex chars（32-bit），存在碰撞風險 |
-| **修復** | ① 新增 `CREATE UNIQUE INDEX idx_episodes_source ON episodes(source) WHERE source != ''`；② 有 source 時以 source 為 hash seed；③ hash 長度從 8 擴展至 16 chars（64-bit） |
+| **位置** | `engine.py` — 所有 `@property` 延遲初始化模式 |
+| **症狀** | 高並發場景（MCP Server + git hook + Web UI 同時啟動）多執行緒同時通過 `if self._db is None` 判斷，各自初始化，導致多個 BrainDB 實例競爭同一資料庫鎖 |
+| **根本原因** | 屬性 getter 非原子操作；`threading.Lock()` 從未被加入 |
+| **影響** | 高並發時 Crash 或資料庫狀態不一致，線上環境必現 |
+| **程式碼證據** | `engine.py` lines 86–174 |
 
 ```python
-# brain_db.py — add_episode() 修復後
-seed = source if source else f"{content}{source}"
-eid  = "ep-" + hashlib.md5(seed.encode()).hexdigest()[:16]
+# engine.py — 現狀（有競態）
+@property
+def db(self) -> 'BrainDB':
+    if self._db is None:          # ← NOT thread-safe
+        self.brain_dir.mkdir(...)
+        self._db = BrainDB(...)   # ← 競態視窗
+    return self._db
+
+# 修復方案（double-checked locking）
+_init_lock = threading.Lock()
+
+@property
+def db(self) -> 'BrainDB':
+    if self._db is None:
+        with _init_lock:
+            if self._db is None:  # double-check
+                self.brain_dir.mkdir(...)
+                self._db = BrainDB(...)
+    return self._db
 ```
 
-```sql
--- _setup() migration 新增
-CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_source
-ON episodes(source) WHERE source != '';
-```
+**修復對象**: `_db`, `_graph`, `_extractor`, `_context`, `_router`, `_validator`, `_distiller` — 共 7 個延遲初始化屬性
 
-**測試**: `TestBug01EpisodeDuplication` — 6 個測試，全部通過 ✅
+---
 
-#### ~~BUG-02：NudgeEngine 返回已過期節點~~ ✅ 已修復 (2026-04-03)
+### DEF-07：CJK 中文搜尋召回率不一致 🟡
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `nudge_engine.py` → `_from_l3_pitfalls()` + `brain_db.py` → `_setup()` |
-| **症狀** | 使用者收到已棄用或過期的 Pitfall 警告；`confidence=0.0` 被錯誤提升為 `0.7` |
-| **根本原因** | ① `float(r.get("confidence") or 0.7)` — `0.0` 為 falsy，被 `or` 覆蓋；② `nodes` 表缺少 `is_deprecated` / `valid_until` 欄位；③ 無過期過濾邏輯 |
-| **修復** | ① 新增 schema migration 加入 `is_deprecated INTEGER DEFAULT 0` 和 `valid_until TEXT`；② `_from_l3_pitfalls()` 加入跳過棄用節點、跳過 `valid_until` 已過期節點；③ `raw_conf is not None` 取代 `or` 做 None 判斷 |
+| **位置** | `brain_db.py` FTS5 tokenizer + `context.py` 查詢路徑 + `graph.py` |
+| **症狀** | OPT-01 的 N-gram INSERT 有效，但 FTS5 **查詢字串**本身未做 N-gram 展開，導致 1. 搜「中文」找不到含「中文搜尋」的節點；2. `KnowledgeGraph.search_nodes_multi()` 完全不走 n-gram 路徑 |
+| **根本原因** | N-gram 只用於寫入（INSERT），未用於讀取（MATCH 查詢字串） |
+| **影響** | 跨 DB 搜尋路徑召回率仍低，CJK 用戶體驗未真正改善 |
 
 ```python
-# nudge_engine.py — 修復後的過濾邏輯
-if r.get("is_deprecated"):
-    continue
-valid_until = r.get("valid_until")
-if valid_until:
-    vu = datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
-    if vu < now:
-        continue
-raw_conf = r.get("confidence")
-conf     = float(raw_conf) if raw_conf is not None else 0.7
+# 修復方案：搜尋前也對 query 做 n-gram 展開
+def _fts_query(term: str) -> str:
+    """將搜尋詞展開成 FTS5 OR 查詢。"""
+    tokens = BrainDB._ngram(term).split()
+    return " OR ".join(f'"{t}"' for t in tokens) if tokens else f'"{term}"'
+
+# 同時更新 graph.py 的 search_nodes() 使用相同函數
 ```
 
-**測試**: `TestBug02NudgeExpiry` — 5 個測試，全部通過 ✅
+---
 
-#### ~~BUG-05：ContextResult 在空 Brain 時返回 None~~ ✅ 已修復 (2026-04-03)
+## P3 實作品質分析
+
+> 以下功能骨架已存在，但邏輯不完整，需要補完。
+
+### 部分實作清單
+
+| 功能 | 位置 | 問題 |
+|------|------|------|
+| DEEP-02 貝葉斯傳播 | `brain_db.py` ~line 698 | 骨架方法，無實際傳播計算 |
+| DEEP-03 反事實推理 | `cli.py` ~line 707 | 簡單關鍵字遍歷，缺反事實邏輯 |
+| DEEP-04 主動學習 | `nudge_engine.py` ~line 219 | 問題生成了但無回饋整合迴路 |
+| OPT-02 自適應搜尋權重 | `brain_db.py` ~line 366 | 計算過於簡化（線性插值，未考慮 query type） |
+| OPT-03 向量快取 | `embedder.py` ~line 190 | LRU 存在，節點更新時不失效 |
+| OPT-05 CQRS | `api_server.py` ~line 68 | ReadBrainDB 宣告了但 API 查詢未真正使用 |
+| OPT-06 同義詞索引 | `brain_db.py` ~line 406 | 表建了，查詢時未真正讀取 |
+| DEEP-01 推理鏈條 | `context.py` ~line 299 | 邏輯存在，但未整合進所有搜尋路徑 |
+| DEEP-05 時序推理 | `brain_db.py` temporal_edges | 表存在，git 提交未自動建立時序邊 |
+
+---
+
+## 新發現 BUG
+
+### BUG-09：雙 FTS5 索引同步問題 🔴
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `context.py` → `build()` 方法 |
-| **症狀** | 空 task 或無 keywords 時，`all_nodes` NameError 靜默吞掉後 SR 失效；`_deduplicate_sections` 只 catch `ImportError`，若 sklearn 其他錯誤導致 `result` 未定義 |
-| **根本原因** | ① `all_nodes` 在 `if keywords:` 內定義，但 SR 程式碼在 `if keywords:` 外引用；② `_deduplicate_sections` 的 except 只覆蓋 `ImportError`；③ `return result` 路徑在例外時可返回 `None` |
-| **修復** | ① `all_nodes`、`pitfalls`、`decisions` 等所有列表在 `if keywords:` 前初始化為 `[]`；② 用 try/except Exception 包裹 dedup 呼叫；③ 末尾改為 `return result or ""` |
-
-```python
-# context.py — build() 修復：提前初始化
-all_nodes: list[...] = []
-pitfalls = decisions = rules = adrs = notes = []
-
-keywords = self._extract_keywords(task)
-if keywords:
-    ...  # all_nodes 在此填充
-
-# SR 程式碼現在安全（all_nodes 已初始化）
-try:
-    _node_ids = [n.get("id") for _, _, n in all_nodes ...]
-except Exception:
-    pass
-return result or ""  # 永不返回 None
-```
-
-**測試**: `TestBug05ContextNeverNone` — 4 個測試，全部通過 ✅
+| **位置** | `review_board.py` + `context.py` + `graph.py` |
+| **症狀** | `knowledge_graph.db` 的 FTS5 和 `brain.db` 的 `nodes_fts` 各自獨立維護，兩者間無可靠同步機制；`context.py` 先查 BrainDB 失敗後 fallback 到 KnowledgeGraph，兩個索引結果不一致 |
+| **根本原因** | BUG-07 修復只覆蓋了 `approve()` 路徑；其他寫入路徑（`graph.add_node()` 直接呼叫）只更新 `knowledge_graph.db` |
+| **影響** | 透過 `graph.add_node()` 新增的節點在 `brain_db.search_nodes()` 不可見；搜尋結果依呼叫路徑而異 |
+| **修復方案** | 統一採用單一索引策略：所有讀取走 `BrainDB`，廢棄 `KnowledgeGraph.nodes_fts`；或在 `graph.add_node()` 內同步呼叫 `BrainDB.add_node()` |
 
 ---
 
-### 🟡 P1 — 高優先級修復
-
-#### ~~BUG-03：Token 預算計算誤差~~ ✅ 已修復 (2026-04-03)
+### BUG-10：Session Store 非持久條目永不過期 🟡
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `context.py` — Token 計數 |
-| **症狀** | 中文內容和程式碼實際 token 數超出 6000 預算 20-30% |
-| **根本原因** | 使用固定 `CHARS_PER_TOKEN = 4` 估算；CJK 字元每個約 1 token，被嚴重低估 |
-| **修復** | 新增無外部依賴的 `_count_tokens()` 函數：CJK ≈ 1 token/char，ASCII ≈ 0.25 token/char |
+| **位置** | `session_store.py` — `_purge_expired()` |
+| **症狀** | `progress`/`notes` 類別（`persistent=False`）的條目 `expires_at=''`，`_purge_expired()` 的 DELETE 語句只刪 `expires_at != ''` 的記錄，非持久條目因此永久累積 |
+| **根本原因** | `_purge_expired()` WHERE 條件未涵蓋非持久類別 |
+| **影響** | 長時間執行的工作階段記憶體持續增長，繞過 DEF-06 的 MAX_SESSION_ENTRIES 保護 |
 
 ```python
-# context.py — BUG-03 修復
-def _count_tokens(text: str) -> int:
-    """CJK-aware token estimator（無外部依賴）"""
-    cjk = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff'
-              or '\u3000' <= ch <= '\u303f'
-              or '\uff00' <= ch <= '\uffef')
-    rest = len(text) - cjk
-    return cjk + (rest // 4)
+# 修復：同時刪除非持久類別的所有 session 結束後的條目
+DELETE FROM session_entries
+WHERE (expires_at != '' AND expires_at < ?)
+   OR (category IN ('progress', 'notes') AND session_id = ?)
 ```
-
-**測試**: `TestBug03CJKTokenCount` — 5 個測試，全部通過 ✅
 
 ---
 
-#### ~~BUG-04：MCP Rate Limiter 執行緒競態~~ ✅ 已修復 (2026-04-03)
+### BUG-11：emotional_weight 欄位從未使用於排名 🟡
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `mcp_server.py` — Rate limiter |
-| **症狀** | 多執行緒並發呼叫時，`_call_times` 無鎖保護，可能允許超出 RPM 限制的請求 |
-| **根本原因** | `_call_times` 全域列表在並發讀/寫時無 Lock 保護；率先修正為滑動窗口 |
-| **修復** | 新增 `threading.Lock()`，以 `with _rate_lock:` 保護所有讀/寫操作 |
+| **位置** | `brain_db.py` schema + `context.py` `_node_priority()` |
+| **症狀** | `emotional_weight` 欄位已建立，值也可設定，但 `_node_priority()`（lines 164–188）排名計算完全忽略此欄位 |
+| **根本原因** | FEAT 設計時加入欄位，但排名公式未更新 |
+| **影響** | 高情感重量的 Pitfall（如重大線上事故）與普通筆記排名相同，重要警告可能被埋沒 |
 
 ```python
-# mcp_server.py — BUG-04 修復
-import threading
-_rate_lock = threading.Lock()    # BUG-04 fix
-
-def _rate_check() -> None:
-    now = time.monotonic()
-    cutoff = now - 60.0
-    with _rate_lock:
-        _call_times[:] = [t for t in _call_times if t > cutoff]
-        if len(_call_times) >= RATE_LIMIT_RPM:
-            raise RuntimeError(f"Rate limit：每分鐘最多 {RATE_LIMIT_RPM} 次呼叫")
-        _call_times.append(now)
+# 修復：在 _effective_confidence() 中加入 emotional_weight 加成
+ew = float(node.get("emotional_weight", 0.5))
+ew_boost = (ew - 0.5) * 0.1  # -0.05 ~ +0.05 調整
+return max(0.05, min(1.0, base * decay + f7 + ew_boost))
 ```
-
-**測試**: `TestBug04RateLimitThreadSafety` — 5 個測試，全部通過 ✅
 
 ---
 
-#### ~~BUG-06：`brain doctor --fix` 不修復損壞的 FTS5 索引~~ ✅ 已修復 (2026-04-03)
+### BUG-12：Scope 欄位寫入但從未用於過濾查詢 🟡
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `cli.py` — `cmd_doctor()` |
-| **症狀** | `brain doctor --fix` 不偵測 FTS5 索引不完整，導致全文搜尋遺漏節點 |
-| **根本原因** | `cmd_doctor()` 未包含 FTS5 完整性檢查邏輯 |
-| **修復** | 加入 FTS5 完整性檢查（對比 nodes 與 nodes_fts count），`--fix` 模式執行 `INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')` |
+| **位置** | `mcp_server.py` + `context.py` `search_nodes()` |
+| **症狀** | MCP `add_knowledge` 呼叫時推斷並寫入 `scope`，但 `context.py` 的所有查詢語句均無 `WHERE scope=?` 條件，`get_context(scope=...)` 參數完全無效 |
+| **根本原因** | FEAT-04 實作了 scope 推斷，但未同時實作 scope 過濾讀取 |
+| **影響** | 多專案混用一個 `.brain/` 時，查詢結果包含所有 scope 的節點，跨污染嚴重 |
 
 ```python
-# cli.py — BUG-06 修復（cmd_doctor 內）
-try:
-    fts_count = conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
-    if fts_count < nodes:
-        _err2(f"FTS5 索引不完整：{fts_count}/{nodes} 個節點已建立索引", ...)
-        if fix:
-            conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
-            conn.commit()
-    else:
-        _ok2(f"FTS5 索引完整  ({fts_count}/{nodes} 個節點)")
-except Exception as _fts_err:
-    if fix:
-        conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
-        conn.commit()
+# 修復：search_nodes() 加入 scope 過濾
+def search_nodes(self, ..., scope: str = "") -> list[dict]:
+    where = "WHERE is_deprecated = 0"
+    params = []
+    if scope:
+        where += " AND (scope = ? OR scope = 'global')"
+        params.append(scope)
 ```
-
-**測試**: `TestBug06FTS5Integrity` — 4 個測試，全部通過 ✅
 
 ---
 
-#### ~~BUG-07：`brain review approve` 不更新 brain.db FTS5~~ ✅ 已修復 (2026-04-03)
+## 新發現系統缺陷
+
+### DEF-08：FTS5 Bigram 遷移非冪等 🟡
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `review_board.py` — `approve()` |
-| **症狀** | 核准後節點進入 `knowledge_graph.db`，但 `context.py` 查詢的 `brain.db` `nodes_fts` 未同步，導致新批准節點在 AI 上下文中不可見 |
-| **根本原因** | 雙 FTS5 問題：`KnowledgeGraph` 維護 `knowledge_graph.db` 的 FTS5，而 `BrainDB` 維護 `brain.db` 的 `nodes_fts`；`approve()` 只寫前者 |
-| **修復** | `approve()` 在 `self.graph.add_node()` 後，同時呼叫 `BrainDB(self.brain_dir).add_node()` 同步寫入 `brain.db` |
-
-```python
-# review_board.py — BUG-07 修復（approve 內）
-from project_brain.brain_db import BrainDB
-
-# 原有 graph.add_node 之後
-try:
-    bdb = BrainDB(self.brain_dir)
-    bdb.add_node(
-        node_id   = l3_id,
-        node_type = row["kind"],
-        title     = row["title"],
-        content   = row["content"] or "",
-    )
-except Exception as _e:
-    logger.warning("krb_approve: brain.db FTS 同步失敗（不影響核准）: %s", _e)
-```
-
-**測試**: `TestBug07ReviewBoardFTSSync` — 4 個測試，全部通過 ✅
+| **位置** | `brain_db.py` lines 162–187 |
+| **症狀** | OPT-01 的 FTS5 重建以 `brain_meta.fts_bigram_v1` 旗標標記完成，但若重建過程崩潰（如磁碟滿），旗標在第 182 行才設定——先前的節點已刪除但未完整重建，系統卻永久認為「已遷移」 |
+| **根本原因** | 遷移標記不在同一個事務內（`_setup()` 在 `_run_migrations()` 之後才執行 FTS 重建，且各自獨立提交） |
+| **修復方案** | 將 FTS5 重建納入 `_run_migrations()` 流程（作為 migration v10），利用已有的版本控制確保原子性 |
 
 ---
 
-#### ~~BUG-08：Web UI Windows 路徑分隔符號問題~~ ✅ 已修復 (2026-04-03)
+### DEF-09：SessionStore 無跨進程寫入保護 🟡
 
 | 項目 | 內容 |
 |------|------|
-| **位置** | `web_ui/server.py` — `create_app()` |
-| **症狀** | Windows 環境下路徑字串含反斜線，傳入 `_generate_graph_html()` 可能造成 HTML 中路徑顯示異常 |
-| **根本原因** | `index()` 以 `str(workdir)` 傳遞路徑，在 Windows 上反斜線可能殘留 |
-| **修復** | 改用 `workdir.resolve().as_posix()` 確保跨平台路徑一致性 |
+| **位置** | `session_store.py` — 無 `_write_guard()` 等效機制 |
+| **症狀** | `BrainDB` 有 `fcntl.flock()` 跨進程鎖（DEF-01 修復），但 `SessionStore` 完全無此保護 |
+| **影響** | MCP Server 與 CLI 並發更新同一 session 時，寫入競爭導致條目遺失 |
+| **修復方案** | 為 `SessionStore` 加入與 `BrainDB._write_guard()` 相同機制，或改用 `BrainDB` 的 sessions 表（已有寫入保護） |
+
+---
+
+### DEF-10：Spaced Repetition 背景執行緒競態 🟡
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `context.py` lines 247–269 |
+| **症狀** | `access_count` 更新在 daemon thread 執行，不受 `_write_guard()` 保護，與前景 `add_knowledge` / `update_node` 競爭 |
+| **根本原因** | `threading.Thread(target=_sr_batch, daemon=True).start()` 繞過了所有鎖機制 |
+| **影響** | 高並發下 `access_count` 數值不可靠，影響 `_effective_confidence()` 的 F7 頻率加成計算 |
+| **修復方案** | SR 更新改用 `BrainDB._write_guard()`；或改為在查詢返回時同步更新（對性能影響可忽略） |
+
+---
+
+## 新優化方向
+
+### OPT-07：消除重複 `_ngram()` 實作 🟢
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py`（UDF）和 `graph.py` lines 193–207（獨立實作） |
+| **問題** | 兩份 n-gram 實作邏輯略有差異，導致 INSERT 和 MATCH 行為不一致 |
+| **修復** | 抽取到 `project_brain/utils.py` 共享模組，兩處均 import 同一函數 |
+
+---
+
+### OPT-08：FTS5 查詢字串未轉義 🟡
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `graph.py` line 238, `context.py` line 238 |
+| **問題** | 使用者輸入直接傳入 `MATCH ?`，若含 FTS5 特殊字元（`"`, `*`, `-`, `(`, `)`）會導致語法錯誤，靜默返回空結果 |
+| **修復** | 加入 `_sanitize_fts_query()` 函數，轉義特殊字元或改用 `fts5_tokenize()` 的 passthrough 模式 |
 
 ```python
-# web_ui/server.py — BUG-08 修復
-@app.route("/")
-def index():
-    # BUG-08 fix: pass resolved POSIX path for cross-platform consistency
-    return _generate_graph_html(workdir.resolve().as_posix())
+def _sanitize_fts_query(q: str) -> str:
+    """Escape FTS5 special characters."""
+    return re.sub(r'["\(\)\*\-]', ' ', q).strip() or '""'
 ```
-
-**測試**: `TestBug08WebUIPathConsistency` — 4 個測試，全部通過 ✅
 
 ---
 
-## 優化方向
+### OPT-09：排名過程中重複計算 Confidence 🟢
 
-### 性能優化
-
-#### ~~OPT-01：FTS5 CJK N-gram 支援~~ ✅ 已修復 (2026-04-03)
-
-```sql
--- 修復前: 每個 CJK 字元空格分隔（單字可搜）→ 召回率 ~40%
--- 修復後: 單字 + bigrams（多字詞可搜）→ 召回率 ~70%（估）
--- "中文搜尋" → "中 文 搜 尋 中文 文搜 搜尋"
-```
-
-**實作**:
-- `_ngram()` 增強：在空格分隔基礎上，額外生成 CJK bigrams
-- `conn` property 註冊 `brain_ngram()` UDF 供觸發器使用
-- 一次性遷移：`_setup()` 中檢查 `brain_meta.fts_bigram_v1`，首次執行重建 FTS5（所有歷史節點）
-- 新增節點自動使用增強版 `_ngram()`
-
-**測試**: `TestOpt01CJKBigram` — 5 個測試，全部通過 ✅
-
-**工作量**: 小（1-2 天）  **影響**: 高（中文用戶體驗大幅提升）
+| 項目 | 內容 |
+|------|------|
+| **位置** | `context.py` `_node_priority()` line 178 vs `brain_db.py` `_effective_confidence()` |
+| **問題** | `search_nodes()` 已計算 `effective_confidence` 並存入結果字典，`_node_priority()` 卻重新讀取 `confidence` 原始值再算一次 |
+| **修復** | `_node_priority()` 優先讀取 `node.get("effective_confidence")` |
 
 ---
 
-#### ~~OPT-02：混合搜尋自適應權重~~ ✅ 已實作 (2026-04-03)
+### OPT-10：向量快取在節點更新時不失效 🟡
 
-```python
-# 現況: 固定權重
-score = fts_score * 0.4 + vector_score * 0.6
-
-# 優化: 根據查詢特性動態調整
-def adaptive_score(query, fts_score, vector_score):
-    keyword_density = len(re.findall(r'\b\w+\b', query)) / len(query)
-    fts_weight = 0.3 + 0.4 * keyword_density  # 0.3 ~ 0.7
-    return fts_score * fts_weight + vector_score * (1 - fts_weight)
-```
-
-**工作量**: 中（3-5 天）  **影響**: 中（搜尋精準度 +10-15%）
-
----
-
-#### ~~OPT-03：向量 Embedding 快取~~ ✅ 已實作 (2026-04-03)
-
-```python
-# 優化: LRU cache 避免重複計算
-from functools import lru_cache
-import hashlib
-
-@lru_cache(maxsize=2000)
-def _cached_embed(text_hash: str) -> tuple[float, ...]:
-    ...
-
-def get_embedding(self, text: str) -> list[float]:
-    h = hashlib.sha256(text.encode()).hexdigest()
-    return list(self._cached_embed(h))
-```
-
-**工作量**: 小（1 天）  **影響**: 中（`brain scan` 大量 commit 時速度提升 3-5×）
-
----
-
-#### ~~OPT-04：Decay Engine 整合至查詢排名~~ ✅ 已修復 (2026-04-03)
-
-與 DEF-05 一同修復。`search_nodes()` 現在對每個結果計算 `effective_confidence` 並重排序：
-
-```python
-# brain_db.py search_nodes() — OPT-04 修復
-results = [dict(r) for r in rows]
-for r in results:
-    r["effective_confidence"] = self._effective_confidence(r)
-results.sort(
-    key=lambda x: (x.get("is_pinned", 0), x["effective_confidence"]),
-    reverse=True,
-)
-return results
-```
-
-無需呼叫 DecayEngine（避免 subprocess/grep 開銷），使用輕量 F1+F7 即時計算。
-
-**工作量**: 中（3 天）  **影響**: 高（知識排名更準確，舊知識不再佔據首位）
-
----
-
-#### OPT-05：讀寫路徑分離 (CQRS)
-
-```
-現況: BrainDB 混合讀寫
-建議:
-  ReadDB  (mode=ro, WAL snapshot) → context / query / nudges
-  WriteDB (single writer)         → add / sync / review approve
-```
-
-**工作量**: 大（1-2 週）  **影響**: 高（消除讀寫競爭，提升並發性能）
-
----
-
-#### OPT-06：查詢展開預計算索引
-
-```python
-# 現況: 每次查詢即時展開同義詞 (O(n) 查找)
-# 優化: brain index 時預建倒排索引，查詢時 O(1)
-brain index --rebuild-synonyms
-```
-
-**工作量**: 中（3-5 天）  **影響**: 中（查詢延遲降低 20-30%）
+| 項目 | 內容 |
+|------|------|
+| **位置** | `embedder.py` — `_cached_embed()` LRU cache |
+| **問題** | 節點 content 更新後，舊的 embedding 仍在 LRU cache 中，新的 `add_node()` 會計算新 embedding 存入 DB，但搜尋時若命中 cache 則返回舊值 |
+| **修復** | `update_node()` 呼叫後主動 `_cached_embed.cache_clear()` 或改用 text hash 作為 cache key（content 變了 hash 也變，自動失效） |
 
 ---
 
 ## 新增功能路線圖
 
-### Batch 1 — 品質與可觀測性（建議：v0.2.0）
-
-#### ~~FEAT-01：知識健康度儀表板~~ ✅ 已實作 (2026-04-03)
+### FEAT-11：知識圖譜 Cypher/Neo4j 匯出 🔵
 
 ```bash
-brain health-report
-
-# 輸出範例:
-# ┌─────────────────────────────────────────────┐
-# │ Knowledge Health Report — 2026-04-02        │
-# ├─────────────────────────────────────────────┤
-# │ 過期節點 (confidence < 0.3):  3 個           │
-# │ 潛在衝突對:                   2 組           │
-# │ 孤立節點 (無 edges):          7 個           │
-# │ 高風險 Pitfalls (未存取 30d): 4 個           │
-# └─────────────────────────────────────────────┘
+brain export --format neo4j > knowledge.cypher
+# CREATE (:Rule {id:"r1", title:"JWT RS256"})
+# CREATE (:Decision {id:"d1", title:"Use PostgreSQL"})
+# MATCH (a:Rule),(b:Decision) WHERE a.id="r1"
+# CREATE (a)-[:REQUIRES]->(b)
 ```
 
-**工作量**: 中（3-5 天）  **影響**: 高（知識庫長期維護必要工具）
+**工作量**: 小（1-2 天）  **影響**: 中（與 Neo4j、Obsidian Canvas 整合）
 
 ---
 
-#### ~~FEAT-02：智慧衝突偵測~~ ✅ 已實作 (2026-04-03)
-
-新增知識時自動比對現有節點：
+### FEAT-12：匯入衝突互動式解決 🔵
 
 ```bash
-brain add "Use PostgreSQL for all databases"
-# ⚠️  偵測到潛在衝突！
-# 現有規則: "Use SQLite for lightweight apps" (confidence=0.80, 2025-11-03)
-# 相似度: 87%
-# 選項: [1] 標記為例外  [2] 更新現有規則  [3] 忽略  [4] 取消
+brain import team_knowledge.json
+# 衝突: "JWT must use RS256" 已存在 (confidence=0.9)
+# 匯入版本: confidence=0.7, 更新日期: 2025-12-01
+# 選項: [k]eep existing  [i]mport new  [m]erge (取最高 confidence)  [s]kip
 ```
 
-**工作量**: 中（5 天）  **影響**: 高（防止矛盾知識污染知識庫）
+**工作量**: 中（3 天）  **影響**: 高（團隊知識合併場景）
 
 ---
 
-#### ~~FEAT-03：使用率分析報告~~ ✅ 已實作 (2026-04-03)
+### FEAT-13：知識節點生命週期管理 🔵
 
 ```bash
-brain analytics --period 30d
-
-# 輸出:
-# 最常存取: JWT RS256 Rule         (42 queries, 健康)
-# 最少存取: Legacy API v1 Rule     (0 queries, 45 天未存取 → 建議審查)
-# 衰減警告: Auth token TTL         (confidence 已降至 0.28)
+brain deprecate <node_id> --replaced-by <new_node_id> --reason "API v2 取代"
+brain lifecycle <node_id>
+# 狀態: active → deprecated → archived
+# 取代節點: <new_node_id> "新版 JWT 規範"
 ```
 
-**工作量**: 小（2-3 天）
+**工作量**: 中（3-5 天）  **影響**: 中（長期知識庫治理）
 
 ---
 
-### Batch 2 — 使用者體驗（建議：v0.3.0）
-
-#### ~~FEAT-04：自動 Scope 推斷~~ ✅ 已實作 (2026-04-03)
+### FEAT-14：使用率指標 CSV 匯出 🔵
 
 ```bash
-# 現況: 必須手動指定
-brain add "JWT RS256 required" --scope auth
-
-# 優化後: 根據 workdir 當前文件自動推斷
-brain add "JWT RS256 required"
-# [Brain] 偵測到目前在 src/auth/jwt.py → 自動套用 scope=auth
-# 確認? [Y/n]
+brain analytics --period 30d --export csv > report.csv
+# node_id, title, access_count, last_accessed, confidence, type
 ```
 
-實作：分析 workdir 文件樹 + 規則式分類器（無需 LLM）
-**工作量**: 中（5 天）  **影響**: 高（降低使用摩擦）
+**工作量**: 小（1 天）  **影響**: 低（供外部分析工具使用）
 
 ---
 
-#### ~~FEAT-05：知識匯入 / 匯出~~ ✅ 已實作 (2026-04-03)
+## 深度功能補完
 
-```bash
-# 匯出
-brain export --format json > brain_backup.json
-brain export --format markdown > docs/knowledge.md   # Obsidian 相容
+> 以下三項在 P3 已有骨架，需補完核心邏輯。
 
-# 匯入（支援合併策略）
-brain import brain_backup.json --merge-strategy=confidence_wins
-brain import team_knowledge.json --scope global --dry-run
+### DEEP-02 補完：真實貝葉斯信念傳播
+
+**現狀**: `brain_db.py` `propagate_confidence()` 骨架方法，無實際圖遍歷計算。
+
+**補完目標**:
+
+```python
+def propagate_confidence(self, node_id: str, dampening: float = 0.5,
+                         max_hops: int = 3) -> dict[str, float]:
+    """
+    BFS 遍歷 REQUIRES 邊，計算下游節點的有效信心值。
+
+    傳播公式: conf_downstream = conf_base * (1 - dampening * (1 - conf_upstream))
+
+    Returns: {node_id: effective_confidence} for all affected nodes
+    """
+    visited = {}
+    queue = [(node_id, 1.0, 0)]  # (id, upstream_conf, depth)
+    while queue:
+        nid, upstream_conf, depth = queue.pop(0)
+        if depth > max_hops or nid in visited:
+            continue
+        node = self.get_node(nid)
+        if not node:
+            continue
+        base = float(node.get("confidence", 0.8))
+        effective = base * (1 - dampening * (1 - upstream_conf))
+        visited[nid] = round(effective, 4)
+        # 繼續遍歷 REQUIRES 下游
+        edges = self.get_edges(source_id=nid, relation="REQUIRES")
+        for e in edges:
+            queue.append((e["target_id"], effective, depth + 1))
+    return visited
 ```
 
-**工作量**: 中（5-7 天）  **影響**: 中（團隊共享與備份）
+**整合點**: `_effective_confidence()` 可選擇性呼叫 `propagate_confidence()` 獲取更準確的有效值；`health_report()` 應顯示信心傳播警告鏈。
+
+**工作量**: 中（3 天）  **差異化**: 極高
 
 ---
 
-#### FEAT-06：知識版本歷史
+### DEEP-04 補完：主動學習回饋迴路
+
+**現狀**: `NudgeEngine.generate_questions()` 可生成問題，但答案無法回饋更新信心值。
+
+**補完目標**:
 
 ```bash
-brain timeline "JWT auth decision"
-# 2025-09-01  [v0.7]  新增: "JWT 必須使用 RS256" (confidence=0.9)
-# 2025-11-15  [v0.8]  更新: 加入 token TTL 要求
-# 2026-02-01  [v0.9]  衰減: confidence 降至 0.72 (未更新 30 天)
+# MCP 工具呼叫流程
+generate_questions(task="implement payment")
+# 返回: [{"node_id": "n42", "question": "JWT session timeout 目前規定是多少秒?",
+#          "current_confidence": 0.38}]
 
-brain rollback node_id:42 --to 2025-11-01
+answer_question(node_id="n42", answer="30 分鐘", new_confidence=0.9)
+# 效果: update nodes SET confidence=0.9 WHERE id="n42"
+#        add_episode(content="[學習迴路] JWT timeout 已確認: 30 分鐘", ...)
 ```
 
-**工作量**: 大（1-2 週）
+**新增 MCP 工具**: `answer_question(node_id, answer, new_confidence)` — 將使用者回答存回 `content`，更新 `confidence`，並建立 episode 記錄。
+
+**工作量**: 小（2 天）  **差異化**: 高
 
 ---
 
-### Batch 3 — 整合與生態（建議：v0.4.0）
+### DEEP-05：時序邊自動建立
 
-#### FEAT-07：跨專案知識遷移
+**現狀**: `temporal_edges` 表存在，`temporal_query` MCP 工具存在，但沒有任何代碼自動填充此表。
 
-```bash
-brain migrate \
-  --from ~/project-a/.brain/brain.db \
-  --to   ~/project-b/.brain/brain.db \
-  --scope global \
-  --min-confidence 0.8
+**補完目標**: `brain sync` / `archaeologist.py` 在解析 git commit 時，自動建立 temporal_edges：
+
+```python
+# archaeologist.py — 解析 commit 時加入
+for file_path in files_changed:
+    component_nodes = graph.find_nodes_by_source(file_path)
+    for n in component_nodes:
+        brain_db.add_temporal_edge(
+            source_id=commit_node_id,
+            relation="MODIFIED",
+            target_id=n["id"],
+            valid_from=commit_time,
+            content=commit_message,
+        )
 ```
 
-#### FEAT-08：自然語言問句查詢
+**效果**: `brain ask "3 個月前這個模組的規則是什麼？"` 可透過 `temporal_query` 真正返回歷史快照。
 
-```bash
-brain ask "為什麼我們不用 MongoDB？"
-brain ask "上次部署失敗的原因是什麼？"
-# 使用 LLM 將問句轉換為結構化查詢再搜尋
-```
-
-#### FEAT-09：Web UI 時間軸視覺化增強
-
-- 時間軸滑桿（查看不同時間點的知識狀態）
-- 衰減動畫（節點隨 confidence 降低而褪色）
-- 點擊節點顯示完整歷史與內嵌編輯
-
-#### FEAT-10：Slack / GitHub Webhook 整合
-
-```bash
-brain serve --webhook-slack=https://hooks.slack.com/...
-# 當 NudgeEngine 偵測到高危情況，自動發送警告到 Slack
-```
-
----
-
-## 深度加強方向
-
-### DEEP-01：圖推理鏈條輸出
-
-**現況**: `graph.py` 只做 BFS/DFS 多跳遍歷，返回相關節點列表
-**目標**: 返回帶有推理路徑的因果鏈條
-
-```
-輸入任務: "Implement payment refund"
-
-推理結果:
-refund
-  → REQUIRES → webhook_endpoint
-    → PREVENTS_BY → idempotency_rule (Rule, confidence=0.9)
-      ⚠️ Pitfall: "重複請求必須冪等，否則客戶被多次扣款"
-  → CAUSED_BY → incident_2025_double_charge
-    → FIXED_BY → rs256_jwt_rule (Rule, confidence=0.85)
-```
-
-**工作量**: 大（2-3 週）  **差異化**: 高
-
----
-
-### DEEP-02：知識不確定性傳播（貝葉斯信念網路）
-
-**現況**: 各節點 confidence 獨立，互不影響
-**目標**: 節點間的依賴關係影響彼此的有效 confidence
-
-```
-Rule A: "Use RS256" (confidence=0.9)
-  └─ REQUIRES → Rule B: "Key rotation every 90 days" (confidence=0.7)
-
-若 Rule A 衰減至 0.5:
-  → Rule B 的有效 confidence 也應調整（傳播係數可配置）
-```
-
-**工作量**: 大（3-4 週）  **差異化**: 極高（創新功能）
-
----
-
-### DEEP-03：反事實推理
-
-```bash
-brain counterfactual "如果我們用 NoSQL 代替 PostgreSQL"
-# Brain 遍歷所有 DEPENDS_ON 邊
-# 輸出: 以下 7 個決策需要重新評估...
-# - "Transaction rollback strategy" (Decision, confidence=0.88)
-# - "ACID compliance for payments" (Rule, confidence=0.95)
-# ...
-```
-
-**工作量**: 大（2-3 週）
-
----
-
-### DEEP-04：主動學習循環
-
-當 Brain 對查詢不確定時，主動向使用者提問：
-
-```
-[Brain] 我注意到你在處理 auth 相關代碼，
-        但我對 "session timeout 政策" 的信心度只有 0.38。
-        能告訴我目前的規定嗎？
-        (輸入以儲存 / skip 跳過 / never 永不詢問此類問題)
-```
-
-**工作量**: 大（3-4 週）  **差異化**: 極高（使知識庫自我完善）
+**工作量**: 中（3-4 天）  **差異化**: 高
 
 ---
 
 ## 優先矩陣總覽
 
-| ID | 項目 | 類別 | 優先級 | 影響 | 工作量 | 建議版本 |
-|----|------|------|--------|------|--------|---------|
-| ~~BUG-01~~ | ~~L2 重複記錄~~ | Bug | ✅ 完成 | 資料損壞 | 小 | 2026-04-02 |
-| ~~BUG-02~~ | ~~過期 Nudge 節點~~ | Bug | ✅ 完成 | 誤導用戶 | 小 | 2026-04-03 |
-| ~~BUG-05~~ | ~~ContextResult None~~ | Bug | ✅ 完成 | Crash | 小 | 2026-04-03 |
-| ~~BUG-03~~ | ~~Token 計算誤差~~ | Bug | ✅ 完成 | Context 超限 | 中 | 2026-04-03 |
-| ~~BUG-04~~ | ~~Rate Limiter 競態~~ | Bug | ✅ 完成 | 安全 | 中 | 2026-04-03 |
-| ~~BUG-06~~ | ~~FTS5 doctor 未修復~~ | Bug | ✅ 完成 | 搜尋失準 | 小 | 2026-04-03 |
-| ~~BUG-07~~ | ~~approve FTS 未同步~~ | Bug | ✅ 完成 | 知識遺漏 | 小 | 2026-04-03 |
-| ~~BUG-08~~ | ~~Web UI 路徑問題~~ | Bug | ✅ 完成 | 跨平台 | 小 | 2026-04-03 |
-| ~~DEF-01~~ | ~~SQLite 競爭條件~~ | 缺陷 | ✅ 完成 | 資料遺失 | 中 | 2026-04-03 |
-| ~~DEF-02~~ | ~~FTS5 觸發器缺失~~ | 缺陷 | ✅ 完成 | 搜尋失準 | 中 | 2026-04-03 |
-| ~~DEF-05~~ | ~~Decay 未整合查詢~~ | 缺陷 | ✅ 完成 | 排名錯誤 | 中 | 2026-04-03 |
-| ~~OPT-01~~ | ~~CJK N-gram 增強~~ | 優化 | ✅ 完成 | 中文支援 | 小 | 2026-04-03 |
-| ~~OPT-04~~ | ~~Decay 整合排名~~ | 優化 | ✅ 完成 | 排名精準 | 中 | 2026-04-03 |
-| DEF-04 | ~~Schema 遷移~~ ✅ | 缺陷 | 🟢 P2 | 穩定性 | 中 | v0.2.0 |
-| DEF-06 | ~~Session 無上限~~ ✅ | 缺陷 | 🟢 P2 | 效能 | 小 | v0.2.0 |
-| OPT-02 | ~~自適應搜尋權重~~ ✅ | 優化 | 🟢 P2 | 精準度 | 中 | v0.2.0 |
-| OPT-03 | ~~Embedding 快取~~ ✅ | 優化 | 🟢 P2 | 效能 | 小 | v0.2.0 |
-| FEAT-01 | ~~健康度儀表板~~ ✅ | 新功能 | 🟢 P2 | 可觀測性 | 中 | v0.2.0 |
-| FEAT-02 | ~~衝突偵測~~ ✅ | 新功能 | 🟢 P2 | 知識品質 | 中 | v0.2.0 |
-| FEAT-03 | ~~使用率分析~~ ✅ | 新功能 | 🟢 P2 | 可觀測性 | 小 | v0.2.0 |
-| FEAT-04 | ~~自動 Scope 推斷~~ ✅ | 新功能 | 🟢 P2 | UX | 中 | v0.3.0 |
-| FEAT-05 | ~~匯入/匯出~~ ✅ | 新功能 | 🟢 P2 | 生態 | 中 | v0.3.0 |
-| OPT-05 | 讀寫路徑分離 | 優化 | 🔵 P3 | 並發 | 大 | v0.3.0 |
-| FEAT-06 | 版本歷史 | 新功能 | 🔵 P3 | 可追溯 | 大 | v0.3.0 |
-| FEAT-07 | 跨專案遷移 | 新功能 | 🔵 P3 | 生態 | 中 | v0.4.0 |
-| FEAT-08 | 自然語言問句 | 新功能 | 🔵 P3 | UX | 中 | v0.4.0 |
-| DEEP-01 | 圖推理鏈條 | 深度 | 🔵 P3 | 差異化 | 大 | v1.0.0 |
-| DEEP-02 | 貝葉斯傳播 | 深度 | 🔵 P3 | 差異化 | 大 | v1.0.0 |
-| DEEP-03 | 反事實推理 | 深度 | 🔵 P3 | 差異化 | 大 | v1.0.0 |
-| DEEP-04 | 主動學習 | 深度 | 🔵 P3 | 差異化 | 大 | v1.0.0 |
+| ID | 項目 | 類別 | 優先級 | 影響 | 工作量 |
+|----|------|------|--------|------|--------|
+| DEF-03 | 延遲初始化執行緒鎖 | 缺陷 | 🔴 P0 | Crash | 小 |
+| BUG-09 | 雙 FTS5 索引不同步 | Bug | 🔴 P0 | 搜尋錯誤 | 中 |
+| BUG-12 | Scope 過濾無效 | Bug | 🔴 P0 | 查詢污染 | 小 |
+| DEF-07 | CJK 查詢路徑召回率差 | 缺陷 | 🟠 P1 | 中文可用性 | 中 |
+| DEF-09 | SessionStore 無跨進程鎖 | 缺陷 | 🟠 P1 | 資料遺失 | 小 |
+| BUG-10 | Session 非持久條目不過期 | Bug | 🟠 P1 | 記憶體洩漏 | 小 |
+| BUG-11 | emotional_weight 未用於排名 | Bug | 🟠 P1 | 排名失準 | 小 |
+| DEF-08 | FTS5 遷移非冪等 | 缺陷 | 🟠 P1 | 索引損壞 | 中 |
+| DEF-10 | SR 執行緒競態 | 缺陷 | 🟡 P2 | 計數不準 | 小 |
+| OPT-07 | 消除重複 _ngram() | 優化 | 🟡 P2 | 維護性 | 小 |
+| OPT-08 | FTS5 查詢字串轉義 | 優化 | 🟡 P2 | 穩定性 | 小 |
+| OPT-09 | 排名重複計算 confidence | 優化 | 🟡 P2 | 性能 | 小 |
+| OPT-10 | 向量快取不失效 | 優化 | 🟡 P2 | 正確性 | 小 |
+| DEEP-02 補完 | 貝葉斯傳播實作 | 深度 | 🟡 P2 | 差異化 | 中 |
+| DEEP-04 補完 | 主動學習回饋迴路 | 深度 | 🟡 P2 | 差異化 | 小 |
+| DEEP-05 | 時序邊自動建立 | 深度 | 🟡 P2 | 時序查詢 | 中 |
+| FEAT-12 | 匯入衝突互動式解決 | 功能 | 🔵 P3 | UX | 中 |
+| FEAT-13 | 節點生命週期管理 | 功能 | 🔵 P3 | 治理 | 中 |
+| FEAT-11 | Neo4j/Cypher 匯出 | 功能 | 🔵 P3 | 生態 | 小 |
+| FEAT-14 | 使用率 CSV 匯出 | 功能 | 🔵 P3 | 分析 | 小 |
 
 ---
 
 ## 執行時程建議
 
 ```
-2026-04  v0.1.1 Hotfix Release  ✅ 完成
-         ├── ✅ BUG-01, BUG-02, BUG-05 (P0 修復, 完成 2026-04-03)
-         ├── ✅ BUG-03, BUG-04, BUG-06, BUG-07, BUG-08 (P1 BUG, 完成 2026-04-03)
-         ├── ✅ DEF-01, DEF-02, DEF-05 (缺陷修復, 完成 2026-04-03)
-         └── ✅ OPT-01, OPT-04 (CJK N-gram + Decay 排名, 完成 2026-04-03)
+2026-04 Week 2  v1.0.1 Critical Fixes
+         ├── DEF-03 (engine.py 延遲初始化執行緒鎖)
+         ├── BUG-09 (雙 FTS5 索引統一)
+         └── BUG-12 (Scope 過濾實作)
 
-2026-04  v0.2.0 Stability & Observability  ✅ 完成
-         ├── ✅ DEF-04 (版本化 Schema 遷移, 完成 2026-04-03)
-         ├── ✅ DEF-06 (Session LRU 上限, 完成 2026-04-03)
-         ├── ✅ OPT-02 (自適應搜尋權重, 完成 2026-04-03)
-         ├── ✅ OPT-03 (Embedding LRU 快取, 完成 2026-04-03)
-         ├── ✅ FEAT-01 (知識健康度儀表板, 完成 2026-04-03)
-         ├── ✅ FEAT-02 (智慧衝突偵測, 完成 2026-04-03)
-         ├── ✅ FEAT-03 (使用率分析報告, 完成 2026-04-03)
-         ├── ✅ FEAT-04 (自動 Scope 推斷, 完成 2026-04-03)
-         └── ✅ FEAT-05 (知識匯入/匯出, 完成 2026-04-03)
+2026-04 Week 3  v1.0.2 Stability
+         ├── DEF-07 (CJK 查詢路徑 n-gram)
+         ├── DEF-09 (SessionStore 跨進程鎖)
+         ├── DEF-08 (FTS5 遷移冪等性)
+         ├── BUG-10 (Session 過期修復)
+         └── BUG-11 (emotional_weight 加入排名)
 
-2026-06  v0.3.0 UX & Ecosystem
-         ├── FEAT-06 (版本歷史)
-         └── OPT-05 (讀寫分離)
+2026-05  v1.1.0 Polish & Completions
+         ├── OPT-07 ~ OPT-10 (4 項優化)
+         ├── DEF-10 (SR 競態)
+         ├── DEEP-02 補完 (貝葉斯傳播)
+         ├── DEEP-04 補完 (主動學習回饋)
+         └── DEEP-05 (時序邊自動建立)
 
-2026-Q3  v0.4.0 Integration
-         ├── FEAT-07 ~ FEAT-10
-
-2027-Q1  v1.0.0 Intelligence
-         └── DEEP-01 ~ DEEP-04
+2026-06  v1.2.0 Ecosystem
+         ├── FEAT-11 (Neo4j 匯出)
+         ├── FEAT-12 (匯入衝突解決)
+         ├── FEAT-13 (節點生命週期)
+         └── FEAT-14 (CSV 匯出)
 ```
+
+---
+
+## 附錄：P3 補完進度追蹤
+
+| P3 功能 | 骨架 | 核心邏輯 | 整合 | 測試 |
+|---------|------|---------|------|------|
+| DEEP-01 推理鏈條 | ✅ | ✅ | 🟡 部分路徑 | ❌ |
+| DEEP-02 貝葉斯傳播 | ✅ | ❌ 骨架 | ❌ | ❌ |
+| DEEP-03 反事實推理 | ✅ | 🟡 簡化版 | ✅ | ❌ |
+| DEEP-04 主動學習 | ✅ | 🟡 單向 | ❌ 無回饋 | ❌ |
+| OPT-02 自適應權重 | ✅ | 🟡 線性 | ✅ | ❌ |
+| OPT-03 向量快取 | ✅ | ✅ | 🟡 無失效 | ❌ |
+| OPT-05 CQRS | ✅ | ✅ | 🟡 未使用 | ❌ |
+| OPT-06 同義詞索引 | ✅ | ✅ | 🟡 未讀取 | ❌ |
 
 ---
 
 ## 附錄：參考文件
 
+- `COMPLETED_HISTORY.md` — 已完成改善項目歸檔（P0～P3，共 34 項）
 - `PROJECT_BRAIN.md` — 核心架構說明
 - `CHANGELOG.md` — 版本歷史
 - `COMMANDS.md` — CLI 指令參考
 - `SECURITY.md` — 安全模型說明
-- `CONTRIBUTING.md` — 貢獻指南
-- `tests/` — 測試套件（76% coverage）
+- `tests/` — 測試套件
 
 ---
 
-*本計劃書由系統深度分析自動生成，最終決策由開發團隊審核。*
+*深度代碼審查於 2026-04-03 完成。發現 20 項待辦事項（2 項延續原有 + 18 項新增）。*
