@@ -801,7 +801,6 @@
     </p>
     <div class="hero-actions">
       <a class="btn-primary" href="#install" data-i18n="hero_btn_install">立即安裝</a>
-      <a class="btn-ghost" href="https://github.com/your-org/project-brain" target="_blank">GitHub →</a>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:24px;">
       <span class="hpill hp-v">v0.3.0</span>
@@ -1816,9 +1815,8 @@
 </footer>
 
 <script>
-(function () {
-  /* ── Node metadata ── */
-  const META_LANGS = {
+/* ── Node metadata (global — shared by flow diagram and i18n toggle) ── */
+const META_LANGS = {
     zh: {
       agent: {
         ico: '🤖', name: 'AI Agent', color: '#4368E4',
@@ -2043,9 +2041,10 @@
         ],
       },
     },
-  };
-  let META = META_LANGS.zh;
+};
+let META = META_LANGS.zh;
 
+(function () {
   /* ── Mode switching ── */
   const dg = document.getElementById('dg');
   const btns = document.querySelectorAll('.ifd-mbtn');
