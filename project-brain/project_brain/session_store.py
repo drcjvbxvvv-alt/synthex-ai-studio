@@ -137,6 +137,7 @@ class SessionStore:
         import threading as _thr
         self._local = _thr.local()  # per-thread connections
         self._lock  = _thr.Lock()
+        self._last_purge_ts: float = 0.0   # R-5: track periodic cleanup
         self._setup()
         if auto_expire:
             self._purge_expired()
@@ -255,7 +256,10 @@ class SessionStore:
         logger.debug("session_store_ready: %s", self._db_path)
 
     def _purge_expired(self) -> int:
-        """BUG-10 fix: also purge non-persistent entries from previous sessions."""
+        """BUG-10 fix: also purge non-persistent entries from previous sessions.
+        BUG-13 fix: use category filter instead of non-existent 'persistent' column.
+        R-5: update _last_purge_ts so periodic callers can back off."""
+        self._last_purge_ts = time.time()
         conn = self._conn_()
         now  = datetime.now(timezone.utc).isoformat()
         # Delete entries that have passed their explicit expiry time
@@ -263,11 +267,13 @@ class SessionStore:
             "DELETE FROM session_entries WHERE expires_at != '' AND expires_at < ?",
             (now,)
         )
-        # BUG-10 fix: delete non-persistent entries that belong to OTHER sessions
-        # (i.e. orphaned 'progress'/'notes' style entries from dead sessions)
+        # BUG-13 fix: derive non-persistent categories from CATEGORY_CONFIG
+        # (replaces broken 'persistent = 0' which referenced a non-existent column)
+        non_persistent = [k for k, v in CATEGORY_CONFIG.items() if not v["persistent"]]
+        placeholders   = ",".join("?" * len(non_persistent))
         cur2 = conn.execute(
-            "DELETE FROM session_entries WHERE persistent = 0 AND session_id != ?",
-            (self.session_id,)
+            f"DELETE FROM session_entries WHERE category IN ({placeholders}) AND session_id != ?",
+            non_persistent + [self.session_id],
         )
         deleted = cur1.rowcount + cur2.rowcount
         conn.commit()
@@ -315,6 +321,10 @@ class SessionStore:
             expires_at = ""  # 空字串 = 永不過期（但 clear_session 時會清除非持久化類別）
 
         meta_json = json.dumps(meta or {}, ensure_ascii=False)
+
+        # R-5: periodic expiry cleanup (at most once per hour per instance)
+        if time.time() - self._last_purge_ts > 3600:
+            self._purge_expired()
 
         conn = self._conn_()
         with self._write_guard():

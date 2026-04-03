@@ -47,14 +47,16 @@ class Nudge:
     is_pinned:    bool = False
 
     def to_dict(self) -> dict:
+        from project_brain.utils import confidence_label
         return {
-            "node_id":      self.node_id,
-            "title":        self.title,
-            "content":      self.content[:300],
-            "urgency":      self.urgency,
-            "confidence":   round(self.confidence, 3),
-            "applies_when": self.applies_when,
-            "is_pinned":    self.is_pinned,
+            "node_id":          self.node_id,
+            "title":            self.title,
+            "content":          self.content[:300],
+            "urgency":          self.urgency,
+            "confidence":       round(self.confidence, 3),
+            "confidence_label": confidence_label(self.confidence),  # H-1
+            "applies_when":     self.applies_when,
+            "is_pinned":        self.is_pinned,
         }
 
 

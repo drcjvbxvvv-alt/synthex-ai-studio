@@ -216,8 +216,11 @@ class DecayEngine:
                 # 被 Agent 查詢越多次，衰減越慢（知識被驗證 = 仍然有效）
                 access = row.get('access_count', 0)
                 if access > 0:
-                    # 每 10 次查詢，最多抵消 0.05 衰減（上限 0.15）
-                    f7 = min(0.15, access / 10 * 0.05)
+                    # P-4 fix: logarithmic scaling — frequent knowledge rises slower
+                    # but keeps rising (log1p(1)=0.69, log1p(10)=2.4, log1p(100)=4.6)
+                    # Cap raised to 0.20; saturation now at ~150 accesses vs 30 before
+                    import math as _math
+                    f7 = min(0.20, _math.log1p(access) * 0.04)
                     new_conf = min(DECAY_CEIL, new_conf + f7)
                     report.factors['F7_access_count'] = f7
 

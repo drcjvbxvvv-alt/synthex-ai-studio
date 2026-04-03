@@ -45,7 +45,7 @@ MAX_QUERY_LEN    = 500
 MAX_CONTENT_LEN  = 2_000
 MAX_TITLE_LEN    = 200
 MAX_TAGS_COUNT   = 10
-RATE_LIMIT_RPM   = 60              # 每分鐘最多 60 次呼叫
+RATE_LIMIT_RPM   = int(os.environ.get("BRAIN_RATE_LIMIT_RPM", "60"))  # A-3: env-configurable
 _call_times: list[float] = []      # Rate limiter 狀態
 _rate_lock   = threading.Lock()    # BUG-04 fix: protect concurrent access
 
@@ -186,7 +186,11 @@ def create_server(workdir: str) -> Any:
             格式化的知識注入字串，可直接加在 prompt 前面。
             若知識庫為空，回傳空字串。
         """
-        _rate_check()
+        try:
+            _rate_check()
+        except RuntimeError as _rl_err:
+            # U-2: return informative message instead of empty string
+            return f"[rate_limited] {_rl_err} — 請稍後再試"
         task_clean = _safe_str(task, MAX_QUERY_LEN, "task")
         file_clean = _safe_str(current_file, 500, "current_file") if current_file else ""
 

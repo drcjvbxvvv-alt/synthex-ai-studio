@@ -1172,6 +1172,53 @@ class BrainDB:
 
     # ── FEAT-01: knowledge health dashboard ──────────────────────
 
+    def optimize(self) -> dict:
+        """C-1/C-3: Reclaim disk space and rebuild search indexes.
+
+        Steps:
+          1. VACUUM — reclaim space from deleted nodes (SQLite never shrinks otherwise)
+          2. ANALYZE — update query planner statistics for better index use
+          3. FTS5 rebuild — remove orphaned FTS5 entries from deleted nodes
+          4. FTS5 integrity check — verify index consistency
+
+        Returns dict with size_before_bytes, size_after_bytes, fts5_status.
+        """
+        db_path = self.brain_dir / "brain.db"
+        size_before = db_path.stat().st_size if db_path.exists() else 0
+
+        # Step 1–2: VACUUM + ANALYZE
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.conn.execute("VACUUM")
+        self.conn.execute("ANALYZE")
+        logger.info("optimize: VACUUM + ANALYZE complete")
+
+        # Step 3: FTS5 rebuild — removes orphaned entries (C-3)
+        try:
+            self.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+            self.conn.commit()
+            fts5_status = "rebuilt"
+            logger.info("optimize: FTS5 rebuild complete")
+        except Exception as e:
+            fts5_status = f"rebuild_skipped: {e}"
+            logger.warning("optimize: FTS5 rebuild failed: %s", e)
+
+        # Step 4: FTS5 integrity check
+        try:
+            self.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('integrity-check')")
+            fts5_status += "+ok"
+        except Exception:
+            fts5_status += "+integrity_warn"
+
+        size_after = db_path.stat().st_size if db_path.exists() else 0
+        saved = size_before - size_after
+        logger.info("optimize: done — saved %d bytes (%.1f KB)", saved, saved / 1024)
+        return {
+            "size_before_bytes": size_before,
+            "size_after_bytes":  size_after,
+            "saved_bytes":       saved,
+            "fts5_status":       fts5_status,
+        }
+
     def health_report(self) -> dict:
         """FEAT-01: Summarise knowledge-base health as a structured dict.
 

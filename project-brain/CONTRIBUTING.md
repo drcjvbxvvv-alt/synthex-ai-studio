@@ -47,7 +47,10 @@ project-brain/
 │   ├── test_core.py          ← 核心功能測試
 │   ├── test_session_store.py ← L1a 測試
 │   ├── test_chaos_and_load.py← Chaos + Load 測試
-│   └── test_web_ui.py        ← Web UI 端點測試
+│   ├── test_web_ui.py        ← Web UI 端點測試
+│   ├── test_cli.py           ← CLI 命令測試（E-5）
+│   ├── test_api.py           ← REST API 端點測試（E-5）
+│   └── test_mcp.py           ← MCP Server 測試（E-5）
 └── docs/                     ← 技術文件
 ```
 
@@ -159,6 +162,10 @@ export BRAIN_LLM_MODEL=llama3.1:8b
 
 # Brain 設定
 export BRAIN_WORKDIR=/your/project    # 省略 --workdir
+export BRAIN_MAX_TOKENS=6000          # Context 最大 token 預算
+export BRAIN_EXPAND_LIMIT=15          # 查詢展開詞彙上限
+export BRAIN_DEDUP_THRESHOLD=0.85     # 語意去重閾值（0.70 更積極）
+export BRAIN_RATE_LIMIT_RPM=60        # MCP 每分鐘呼叫上限
 
 # 測試用（跳過昂貴的 LLM 呼叫）
 export BRAIN_SKIP_LLM=1

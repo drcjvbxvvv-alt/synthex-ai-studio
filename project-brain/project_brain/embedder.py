@@ -19,14 +19,16 @@ from __future__ import annotations
 import os
 import hashlib
 import logging
+from collections import OrderedDict
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# OPT-03: module-level LRU cache for LocalTFIDFEmbedder (keyed by text hash).
+# OPT-03/BUG-14 fix: True LRU cache for LocalTFIDFEmbedder (keyed by text hash).
+# Uses OrderedDict so move_to_end() promotes hits; popitem(last=False) evicts LRU.
 # Pure-Python TF-IDF is deterministic — same text always produces same vector.
 # Max 1 024 entries (~4 MB assuming 256-dim float vectors).
-_TFIDF_CACHE: dict = {}
+_TFIDF_CACHE: OrderedDict = OrderedDict()
 _TFIDF_CACHE_MAX = 1024
 
 # Standard dimensions
@@ -157,6 +159,7 @@ class LocalTFIDFEmbedder:
         # OPT-03: check module-level LRU cache first
         cache_key = hashlib.md5((text or "").encode()).hexdigest()
         if cache_key in _TFIDF_CACHE:
+            _TFIDF_CACHE.move_to_end(cache_key)   # BUG-14: promote to MRU position
             return _TFIDF_CACHE[cache_key]
 
         import math, struct, re
@@ -187,10 +190,9 @@ class LocalTFIDFEmbedder:
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
         result = [v / norm for v in vec]
 
-        # OPT-03: store in cache (evict oldest entry when full)
+        # BUG-14 fix: evict true LRU entry (first = least recently used)
         if len(_TFIDF_CACHE) >= _TFIDF_CACHE_MAX:
-            oldest_key = next(iter(_TFIDF_CACHE))
-            del _TFIDF_CACHE[oldest_key]
+            _TFIDF_CACHE.popitem(last=False)
         _TFIDF_CACHE[cache_key] = result
 
         return result

@@ -5,11 +5,14 @@ KnowledgeGraph — 輕量知識圖譜
 節點類型：Component / Decision / Pitfall / Rule / ADR / Commit / Person
 關係類型：DEPENDS_ON / CAUSED_BY / SOLVED_BY / APPLIES_TO / CONTRIBUTED_BY / SUPERSEDES
 """
+import logging
 import sqlite3
 import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeGraph:
@@ -316,8 +319,9 @@ class KnowledgeGraph:
                 'VALUES ((SELECT rowid FROM nodes WHERE id=?), ?, ?, ?, ?)',
                 (node_id, node_id, fts_title, fts_content, tags_json)
             )
-        except Exception:
-            pass  # FTS5 INSERT 失敗不影響主流程
+        except Exception as _fts_err:
+            # R-2: log instead of silently swallowing — node is saved but unsearchable
+            logger.warning("fts5_insert_failed node=%s: %s", node_id, _fts_err)
         self._conn.commit()
         return node_id
 
@@ -571,6 +575,15 @@ class KnowledgeGraph:
                           causal_direction="BECAUSE",
                           note="多服務需要非對稱金鑰才能跨服務驗證")
         """
+        # R-4 fix: validate both nodes exist before inserting to prevent orphaned edges
+        ids_found = {r[0] for r in self._conn.execute(
+            "SELECT id FROM nodes WHERE id IN (?, ?)", (source_id, target_id)
+        ).fetchall()}
+        missing = {source_id, target_id} - ids_found
+        if missing:
+            raise ValueError(
+                f"add_edge: referenced node(s) not found: {', '.join(sorted(missing))}"
+            )
         cur = self._conn.execute("""
             INSERT INTO edges
                 (source_id, relation, target_id, weight, note,

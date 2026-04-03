@@ -18,7 +18,10 @@ L1a Session Store 端點：
   app = create_app(workdir=..., api_key=...)
 """
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(workdir: str, api_key: str = ""):
@@ -127,7 +130,8 @@ def create_app(workdir: str, api_key: str = ""):
                 ).fetchall()
                 return jsonify([dict(n) for n in nodes]), 200
             except Exception as e:
-                return jsonify({"error": str(e), "nodes": []}), 200
+                logger.warning("knowledge list error: %s", e, exc_info=True)
+                return jsonify({"error": "無法取得知識列表，請稍後再試", "nodes": []}), 200
         return distill_path.read_text('utf-8'), 200, {'Content-Type': 'text/plain; charset=utf-8'}
     
     @app.route('/v1/context', methods=['GET', 'POST'])
@@ -299,7 +303,8 @@ def create_app(workdir: str, api_key: str = ""):
                 out.append(d)
             return jsonify({'traces': out, 'total': total})
         except Exception as e:
-            return jsonify({'traces': [], 'total': 0, 'error': str(e)}), 500
+            logger.warning("traces fetch error: %s", e, exc_info=True)
+            return jsonify({'traces': [], 'total': 0, 'error': '無法取得追蹤記錄'}), 500
     
     @app.route('/v1/traces/clear', methods=['POST'])
     def v1_traces_clear():
@@ -307,7 +312,8 @@ def create_app(workdir: str, api_key: str = ""):
             c = _tdb(); c.execute("DELETE FROM query_traces"); c.commit()
             return jsonify({'ok': True})
         except Exception as e:
-            return jsonify({'ok': False, 'error': str(e)}), 500
+            logger.warning("traces clear error: %s", e, exc_info=True)
+            return jsonify({'ok': False, 'error': '清除追蹤記錄時發生錯誤'}), 500
     
     @app.route('/v1/traces/stats', methods=['GET'])
     def v1_traces_stats():
@@ -319,8 +325,9 @@ def create_app(workdir: str, api_key: str = ""):
             return jsonify({'count': len(ms), 'avg_ms': round(sum(ms)/len(ms),1),
                             'p95_ms': ms[int(len(ms)*.95)], 'max_ms': max(ms)})
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
-    
+            logger.warning("traces stats error: %s", e, exc_info=True)
+            return jsonify({'error': '無法取得統計資料'}), 500
+
     # ── /v1/nudges — 主動提醒端點（v8.0 NudgeEngine）────────────────
     @app.route('/v1/nudges', methods=['GET'])
     def v1_nudges():
@@ -350,8 +357,9 @@ def create_app(workdir: str, api_key: str = ""):
                 'nudges': [n.to_dict() for n in nudges],
             })
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
-    
+            logger.warning("nudges error: %s", e, exc_info=True)
+            return jsonify({'error': '無法取得提醒，請稍後再試'}), 500
+
     # ── /v1/nudges/stream — SSE 主動推送（v8.1）─────────────────────────────
     @app.route('/v1/nudges/stream')
     def v1_nudges_stream():
@@ -393,7 +401,8 @@ def create_app(workdir: str, api_key: str = ""):
                                         'nudges': [n.to_dict() for n in nudges]},
                                        ensure_ascii=False)
                 except Exception as e:
-                    return json.dumps({'error': str(e)[:60], 'trigger': trigger})
+                    logger.warning("nudge push error: %s", e, exc_info=True)
+                    return json.dumps({'error': '推送失敗，請稍後重試', 'trigger': trigger})
             yield f'data: {_push_nudges("init")}\n\n'
             # 事件驅動循環（有事件立即推送，否則每 60s 心跳）
             while True:
@@ -405,7 +414,8 @@ def create_app(workdir: str, api_key: str = ""):
                 except GeneratorExit:
                     break
                 except Exception as e:
-                    yield f'data: {{"error": "{str(e)[:40]}"}}\n\n'
+                    logger.warning("nudge stream error: %s", e, exc_info=True)
+                    yield 'data: {"error": "串流發生錯誤"}\n\n'
     
         return app.response_class(
             _stream(),
@@ -430,7 +440,8 @@ def create_app(workdir: str, api_key: str = ""):
                            for e in events],
             })
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            logger.warning("events fetch error: %s", e, exc_info=True)
+            return jsonify({'error': '無法取得事件記錄'}), 500
 
     # ── FEAT-10: Webhook 端點 ─────────────────────────────────────────
 

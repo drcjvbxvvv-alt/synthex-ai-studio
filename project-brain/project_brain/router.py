@@ -228,12 +228,9 @@ class BrainRouter:
                     pass
                 return False
 
-        # 寫入 L1b Anthropic Memory Tool（選填橋接，非原子性）
-        try:
-            path = f"{dir_path}/{entry_name}.md"
-            self.l1a.handle_create({"path": path, "content": content})
-        except Exception as e:
-            logger.debug("l1b_write_failed (non-critical): %s", str(e)[:100])
+        # A-4 fix: L1b (Anthropic Memory Tool) bridge removed — dir_path was
+        # undefined in this scope, causing a NameError caught silently on every call.
+        # L1b is not implemented; all writes go through L1a (SessionStore) only.
 
         if ok:
             logger.debug("l1_write_ok: category=%s chars=%d persistent=%s", category, len(content), persistent)

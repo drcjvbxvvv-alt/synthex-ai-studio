@@ -12,6 +12,7 @@ ContextEngineer — 動態 Context 組裝引擎
 不只是「找到知識」，而是「把正確的知識，在正確的時機，
 以正確的密度注入 Context」。
 """
+import logging
 import os
 import re
 import json
@@ -20,8 +21,19 @@ from .graph import KnowledgeGraph
 if TYPE_CHECKING:
     from .vector_memory import VectorMemory
 
+logger = logging.getLogger(__name__)
 
-MAX_CONTEXT_TOKENS = 6000   # 為任務本身留 2K
+# A-3/E-6: env-configurable — set BRAIN_MAX_TOKENS to override per deployment
+MAX_CONTEXT_TOKENS = int(os.environ.get("BRAIN_MAX_TOKENS", "6000"))
+
+# P-1: synonym expansion cap — set BRAIN_EXPAND_LIMIT to reduce noise
+# Default 15 (was 30). Lower = less synonym noise, higher = better recall.
+EXPAND_LIMIT = int(os.environ.get("BRAIN_EXPAND_LIMIT", "15"))
+
+# RQ-1: semantic dedup threshold — set BRAIN_DEDUP_THRESHOLD to tune
+# 0.85 = only deduplicate near-identical sections (default, conservative).
+# Lower (e.g. 0.70) = more aggressive dedup, fewer redundant sections.
+DEDUP_THRESHOLD = float(os.environ.get("BRAIN_DEDUP_THRESHOLD", "0.85"))
 
 
 def _count_tokens(text: str) -> int:
@@ -85,6 +97,7 @@ class ContextEngineer:
         """
         sections = []
         budget   = MAX_CONTEXT_TOKENS
+        logger.debug("context.build start: task=%r file=%r budget=%d", task[:60], current_file, budget)
 
         # 1. 找出和任務/檔案相關的組件
         components = self._identify_components(task, current_file)
@@ -313,7 +326,9 @@ class ContextEngineer:
                 result = (result or "") + _rc
         except Exception:
             pass
-        return result or ""  # BUG-05 fix: guarantee str return, never None
+        result = result or ""
+        logger.debug("context.build done: sections=%d chars=%d", len(sections), len(result))
+        return result  # BUG-05 fix: guarantee str return, never None
 
     def build_reasoning_chain(self, task: str) -> str:
         """DEEP-01: 從任務關鍵字出發，遍歷圖譜邊，產生推理鏈輸出。
@@ -354,7 +369,12 @@ class ContextEngineer:
                 for edge in edges:
                     rel, note, tgt_title, tgt_type, tgt_conf = edge
                     icon = rel_icons.get(rel, "→")
-                    tgt_conf_str = f"conf={tgt_conf:.2f}" if tgt_conf is not None else ""
+                    # H-3: label edge with semantic confidence tier
+                    from project_brain.utils import confidence_label as _clabel
+                    if tgt_conf is not None:
+                        tgt_conf_str = f"conf={tgt_conf:.2f} {_clabel(tgt_conf)}"
+                    else:
+                        tgt_conf_str = "~ 推斷"   # H-3: unknown conf = inferred
                     lines.append(
                         f"    {icon} {rel} → \"{tgt_title[:50]}\"  ({tgt_type}, {tgt_conf_str})"
                         + (f"  — {note}" if note else "")
@@ -471,7 +491,7 @@ class ContextEngineer:
                 keep.append(s)
                 # 標記和這個 section 高度相似的後續 sections 為 dropped
                 for j in range(i + 1, len(sections)):
-                    if j not in dropped and sims[i][j] > 0.85:
+                    if j not in dropped and sims[i][j] > DEDUP_THRESHOLD:  # RQ-1: env-configurable
                         dropped.add(j)
             return keep
         except ImportError:
@@ -541,12 +561,14 @@ class ContextEngineer:
                 expanded.append(w)
 
         # 層次 2：查同義詞字典
+        # P-1: 原始詞彙優先加入，每個詞最多取 3 個同義詞，避免無關擴展雜訊
         for w in all_words:
             _add(w)
-            for syn in self._SYNONYM_MAP.get(w, []):
+        for w in all_words:
+            for syn in self._SYNONYM_MAP.get(w, [])[:3]:  # P-1: cap 3 synonyms/term
                 _add(syn)
 
-        return expanded[:30]  # 上限 30 個詞
+        return expanded[:EXPAND_LIMIT]  # P-1: env-configurable (was hardcoded 30)
 
     def _extract_keywords(self, task: str) -> str:
         """提取 FTS 搜尋關鍵字（含同義詞擴展）"""
@@ -563,19 +585,23 @@ class ContextEngineer:
         return " ".join(keywords[:8]) if keywords else ""
 
     def _fmt_node(self, label: str, node: dict, max_chars: int = 400) -> str:
+        from project_brain.utils import confidence_label
         title   = node.get("title", "")
         content = node.get("content", "")
         if len(content) > max_chars:
             content = content[:max_chars] + "..."
         tags = node.get("tags", [])
         tag_str = " ".join(f"`{t}`" for t in tags[:3]) if tags else ""
-        # v7.0 Meta-Knowledge
+        # H-1: attach semantic confidence tier so agents know how much to trust this node
+        conf   = float(node.get("effective_confidence") or node.get("confidence") or 0.8)
+        clabel = confidence_label(conf)
+        # v7.0 Meta-Knowledge (H-4 fix: meta was built but never included in output)
         ac = node.get("applicability_condition", "") or ""
         ic = node.get("invalidation_condition",  "") or ""
         meta = ""
         if ac: meta += f"\n  ⚠ 適用條件：{ac[:120]}"
         if ic: meta += f"\n  🚫 失效條件：{ic[:120]}"
-        return f"### {label}：{title}\n{content}\n{tag_str}"
+        return f"### {label}：{title} [{clabel}]\n{content}\n{tag_str}{meta}"
 
     def _format_pitfalls(self, pitfalls: list) -> str:
         lines = ["## ⚠ 已知陷阱（務必先看）"]

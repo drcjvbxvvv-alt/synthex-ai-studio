@@ -4,6 +4,69 @@
 
 ---
 
+## v0.2.0（2026-04-03）— 品質強化版
+
+### 可靠度
+- **BUG-13**：修復 `_purge_expired()` 引用不存在的 `persistent` 欄位 → session 清理恢復正常
+- **R-4**：`add_edge()` 加入 source/target 節點存在驗證，拒絕孤立邊
+- **R-2**：FTS5 INSERT 失敗從 `except: pass` 改為 `logger.warning`，不再靜默遺失
+- **R-5**：Session Store 過期清理改為定期執行（每 60 分鐘自動觸發）
+
+### 誠實性
+- **H-1**：信心值四層語意標注 — `⚠ 推測 [0–0.3)` / `~ 推斷 [0.3–0.6)` / `✓ 已驗證 [0.6–0.8)` / `✓✓ 權威 [0.8–1.0]`
+- **H-3**：推理鏈條邊輸出加入信心標記（原本只有 conf=0.80 浮點數）
+- **H-4（部分）**：`applicability_condition` 和 `invalidation_condition` 現在正確輸出至 Context
+
+### 可用性
+- **U-1**：API 錯誤訊息遮蔽 SQL — 8 處 `str(e)` 洩漏改為中文友善訊息 + 後端日誌
+- **U-2**：Rate limit 觸發時返回 `[rate_limited] ... — 請稍後再試`（原本靜默返回空字串）
+- **U-4**：`brain index` 改用進度條（`_Spinner`），顯示每個節點即時進度
+- **U-5**：新增 `brain clear` 指令，安全清除工作記憶；`--all --yes` 才清除 L3
+
+### 維護
+- **C-1/C-3**：新增 `brain optimize` — 執行 VACUUM + ANALYZE + FTS5 rebuild + 完整性驗證
+- **C-6/BUG-14**：TFIDF Cache 從 FIFO dict 修正為真正 LRU（`collections.OrderedDict`）
+
+### 架構
+- **A-4**：移除 `router.py` L1b 死程式碼（`dir_path` 未定義靜默失敗）
+- **A-3/E-6**：`MAX_CONTEXT_TOKENS`、`RATE_LIMIT_RPM`、`EXPAND_LIMIT`、`DEDUP_THRESHOLD` 改為環境變數覆寫
+
+### 實用性
+- **P-1**：查詢展開每詞限 3 個同義詞，總上限降至 15（`BRAIN_EXPAND_LIMIT`），大幅減少雜訊
+- **P-4**：F7 頻率加成改為對數曲線 `log1p(access) * 0.04`，飽和點從 30 次移至 150 次
+
+### 檢索
+- **RQ-1**：語意去重閾值改為 `BRAIN_DEDUP_THRESHOLD` 環境變數（預設 0.85）
+
+### 工程
+- **E-4**：`context.py` 加入完整日誌（build 開始/結束，節點數/token 數）
+- **E-5**：新增 `tests/test_cli.py`、`tests/test_api.py`、`tests/test_mcp.py`，共 31 個新測試
+
+### 新增 CLI 命令（v0.2.0）
+
+| 命令 | 說明 |
+|------|------|
+| `brain optimize` | VACUUM + ANALYZE + FTS5 rebuild，回收磁碟空間 |
+| `brain clear` | 安全清除 session 工作記憶（`--all --yes` 清除 L3） |
+| `brain export` | 匯出知識庫（`--format json/neo4j`，Cypher 格式） |
+| `brain import` | 匯入知識庫（`--merge-strategy interactive/overwrite/skip`）|
+| `brain analytics` | 使用率分析（`--export csv`） |
+| `brain deprecate` | 廢棄節點並建立 REPLACED_BY 邊 |
+| `brain lifecycle` | 查看節點生命週期（版本歷史、取代鏈）|
+| `brain counterfactual` | 反事實影響分析（「如果我們換掉 X？」）|
+| `brain health-report` | 健康報告（Markdown 格式輸出）|
+
+### 新環境變數
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `BRAIN_MAX_TOKENS` | `6000` | Context 最大 token 預算 |
+| `BRAIN_EXPAND_LIMIT` | `15` | 查詢展開詞彙上限 |
+| `BRAIN_DEDUP_THRESHOLD` | `0.85` | 語意去重 cosine 閾值 |
+| `BRAIN_RATE_LIMIT_RPM` | `60` | MCP rate limit（次/分鐘）|
+
+---
+
 ## v0.1.0（2026-04-01）— 首次公開發布
 
 ### 核心功能

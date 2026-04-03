@@ -10,14 +10,18 @@
 
 Project Brain 讓 AI Agent 擁有長期記憶，能夠記住你的專案踩坑、架構決策、工程規則，並在每次對話中自動提供給 Agent。
 
-**核心能力（v11.0）：**
+**核心能力（v0.2.0）：**
 - 📝 **知識加入**：`brain add "JWT 必須用 RS256"` — 即時加入，即時可查
-- 🔍 **語意搜尋**：FTS5 關鍵字 + 向量語意混合搜尋（Phase 1）
+- 🔍 **語意搜尋**：FTS5 關鍵字 + 向量語意混合搜尋
 - 🗂 **空間隔離**：scope 自動從目錄推導，payment_service 的規則不污染 auth
 - ⏳ **時光機**：`temporal_query(git_branch="v1-legacy")` 查詢任意時間點的知識
 - 🔗 **因果鏈**：`brain ask "JWT"` 輸出 `🛡 [JWT RS256] PREVENTS [Token 過期漏洞]`
 - 🤖 **MCP 整合**：Claude Code / Cursor 直接讀寫知識庫
 - 📡 **CLAUDE.md**：`brain setup` 自動生成，讓 Claude Code 每次對話帶上 Brain context
+- 🔒 **信心語意標注**：`⚠ 推測` / `~ 推斷` / `✓ 已驗證` / `✓✓ 權威` 四層標注
+- 🛠 **資料庫維護**：`brain optimize` 執行 VACUUM + ANALYZE + FTS5 rebuild
+- 📤 **知識匯出入**：`brain export/import` 支援 JSON / Neo4j Cypher 格式
+- 📊 **使用率分析**：`brain analytics` 顯示節點存取統計，可匯出 CSV
 
 ## 三層記憶架構
 

@@ -95,7 +95,18 @@ brain serve --mcp --workdir /your/specific/project
 
 ---
 
-## 已知限制（v0.1.0）
+## 錯誤訊息安全（v0.2.0）
+
+API 錯誤回應不洩漏內部實作細節：
+
+- 所有 `str(e)` 原始 SQL 異常已改為中文友善訊息（U-1）
+- 後端完整錯誤仍記錄至 `logger.error()`，便於除錯
+- MCP Rate limit 觸發時回傳 `[rate_limited] ... — 請稍後再試` 而非空字串（U-2）
+- `BRAIN_RATE_LIMIT_RPM` 環境變數控制每分鐘呼叫上限（預設 60）
+
+---
+
+## 已知限制（v0.2.0）
 
 企業安全功能目前不在優先範圍，個人開發者與小型團隊場景不需要：
 

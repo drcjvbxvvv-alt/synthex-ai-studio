@@ -1250,17 +1250,17 @@ def cmd_index(args):
             _info("使用本地 TF-IDF（零依賴）。更高品質：ollama pull nomic-embed-text")
 
     ok = 0
-    for node in pending:
-        text = f"{node['title']} {node['content']}"[:2000]
-        vec  = emb.embed(text)
-        if vec:
-            db.add_vector(node['id'], vec, model=model_name)
-            ok += 1
-            if not quiet and ok % 10 == 0:
-                print(f"  {ok}/{len(pending)}...", end='\r')
+    # U-4: show progress via _Spinner so terminal isn't silent during large batches
+    with _Spinner("建立向量索引", total=len(pending)) as sp:
+        for node in pending:
+            text = f"{node['title']} {node['content']}"[:2000]
+            vec  = emb.embed(text)
+            if vec:
+                db.add_vector(node['id'], vec, model=model_name)
+                ok += 1
+            sp.update(node.get('title', '')[:45])
 
     if not quiet:
-        print()
         _ok(f"完成：{ok}/{len(pending)} 個節點已建立向量索引")
         _info("brain ask 現在使用混合搜尋（FTS5 × 0.4 + 向量 × 0.6）")
 
@@ -1348,6 +1348,61 @@ def _verify_sqlite_vec():
                 print(f"  {G}✓{R}  Embedding  {G}{type(emb).__name__}{R}  {D}({model}，{dim_} dim){R}")
     except Exception as e:
         print(f"  {Y}⚠{R}  Embedding 後端偵測失敗：{e}")
+
+
+def cmd_optimize(args):
+    """C-1/C-3: 資料庫維護 — VACUUM + ANALYZE + FTS5 rebuild（brain optimize）"""
+    from project_brain.brain_db import BrainDB
+    wd    = args.workdir or os.environ.get("BRAIN_WORKDIR") or os.getcwd()
+    brain_dir = Path(wd) / ".brain"
+    if not brain_dir.exists():
+        print(f"  {RE}✗ 找不到 .brain/，請先執行 brain init{R}")
+        return
+    print(f"  {C}⚙ brain optimize — 正在最佳化知識庫...{R}")
+    db  = BrainDB(brain_dir)
+    res = db.optimize()
+    before_kb = res["size_before_bytes"] / 1024
+    after_kb  = res["size_after_bytes"]  / 1024
+    saved_kb  = res["saved_bytes"]       / 1024
+    print(f"  {G}✓ VACUUM + ANALYZE 完成{R}")
+    print(f"  {G}✓ FTS5 索引重建：{res['fts5_status']}{R}")
+    print(f"  {B}磁碟使用：{before_kb:.1f} KB → {after_kb:.1f} KB  節省 {saved_kb:.1f} KB{R}")
+
+
+def cmd_clear(args):
+    """U-5: 安全清除工作記憶（brain clear）"""
+    from project_brain.session_store import SessionStore
+    wd    = args.workdir or os.environ.get("BRAIN_WORKDIR") or os.getcwd()
+    brain_dir = Path(wd) / ".brain"
+    if not brain_dir.exists():
+        print(f"  {RE}✗ 找不到 .brain/，請先執行 brain init{R}")
+        return
+
+    target = getattr(args, 'target', 'session')
+    if target == 'all':
+        # 需要明確確認才能清除所有知識
+        if not getattr(args, 'yes', False):
+            print(f"  {Y}⚠ 警告：這將清除所有 L3 知識節點！{R}")
+            ans = input("  輸入 'yes' 確認，或按 Enter 取消：").strip().lower()
+            if ans != 'yes':
+                print(f"  {D}已取消{R}")
+                return
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(brain_dir)
+        n  = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        db.conn.execute("DELETE FROM nodes")
+        db.conn.execute("DELETE FROM edges")
+        db.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+        db.conn.commit()
+        print(f"  {G}✓ 已清除 {n} 個知識節點與所有邊{R}")
+    else:
+        # 預設只清除 session（L1a 工作記憶，非持久化條目）
+        store   = SessionStore(brain_dir=brain_dir)
+        deleted = store.clear_session()
+        # 也清除過期條目
+        purged  = store._purge_expired()
+        print(f"  {G}✓ 已清除 {deleted} 個工作記憶條目，{purged} 個過期條目{R}")
+        print(f"  {D}提示：使用 brain clear --all 可清除所有 L3 知識（危險操作）{R}")
 
 
 def cmd_doctor(args):
@@ -2025,6 +2080,13 @@ def main():
     p = mkp('doctor', '系統健康檢查與自動修復')
     p.add_argument('--fix', action='store_true', help='嘗試自動修復發現的問題')
 
+    mkp('optimize', 'C-1: 資料庫維護 — VACUUM + FTS5 rebuild（節省磁碟）')
+
+    p = mkp('clear', 'U-5: 安全清除工作記憶（session 條目）')
+    p.add_argument('--all', dest='target', action='store_const', const='all',
+                   default='session', help='清除所有 L3 知識節點（危險）')
+    p.add_argument('--yes', '-y', action='store_true', help='跳過確認（--all 時有效）')
+
     p = mkp('scan', '舊專案考古掃描，重建 L3 知識')
     mode = p.add_mutually_exclusive_group()
     mode.add_argument('--local', action='store_true',
@@ -2174,6 +2236,8 @@ def main():
         'context':       cmd_context,
         'meta':          cmd_meta_knowledge,
         'doctor':        cmd_doctor,
+        'optimize':      cmd_optimize,
+        'clear':         cmd_clear,
         'review':        cmd_review,
         'scan':          cmd_scan,
         'serve':         cmd_serve,

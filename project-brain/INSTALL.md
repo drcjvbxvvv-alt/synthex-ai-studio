@@ -211,6 +211,10 @@ brain setup
 | `BRAIN_EMBED_PROVIDER` | 自動偵測 | `none` = 停用向量，純 FTS5 |
 | `BRAIN_SYNTHESIZE` | `0` | `1` = 啟用記憶融合（opt-in）|
 | `BRAIN_API_KEY` | — | `brain serve` REST API 認證 |
+| `BRAIN_MAX_TOKENS` | `6000` | Context 最大 token 預算 |
+| `BRAIN_EXPAND_LIMIT` | `15` | 查詢展開詞彙上限（減少同義詞雜訊）|
+| `BRAIN_DEDUP_THRESHOLD` | `0.85` | 語意去重 cosine 閾值（0.70 更積極去重）|
+| `BRAIN_RATE_LIMIT_RPM` | `60` | MCP 每分鐘呼叫上限 |
 
 ---
 

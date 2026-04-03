@@ -5,7 +5,7 @@
 > **Engineering memory infrastructure for AI Agents.**
 > Every conversation picks up where the last one left off — decisions, rules, and hard-won lessons included.
 
-[![Version](https://img.shields.io/badge/version-v0.1.0-blue.svg)](https://github.com/your-org/project-brain/releases)
+[![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/your-org/project-brain/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
@@ -465,9 +465,22 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 | `brain ask`         | Query knowledge              | `brain ask "how to configure JWT"` |
 | `brain status`      | Memory store status          | `brain status`                     |
 | `brain sync`        | Learn from the latest commit | `brain sync --quiet`               |
+| `brain scan`        | Scan git history for knowledge | `brain scan --all`               |
+| `brain review`      | Review KRB staging area      | `brain review list`                |
 | `brain serve`       | Start REST API               | `brain serve --port 7891`          |
 | `brain serve --mcp` | Start MCP Server             | `brain serve --mcp`                |
 | `brain webui`       | D3.js visualization          | `brain webui --port 7890`          |
+| `brain index`       | Build vector index (with progress bar) | `brain index`          |
+| `brain optimize`    | VACUUM + ANALYZE + FTS5 rebuild | `brain optimize`              |
+| `brain clear`       | Clear session working memory | `brain clear`                      |
+| `brain export`      | Export knowledge store       | `brain export --format json`       |
+| `brain import`      | Import knowledge store       | `brain import backup.json`         |
+| `brain analytics`   | Usage analytics              | `brain analytics --export csv`     |
+| `brain deprecate`   | Deprecate a knowledge node   | `brain deprecate <id>`             |
+| `brain lifecycle`   | Node lifecycle history       | `brain lifecycle <id>`             |
+| `brain counterfactual` | Counterfactual impact analysis | `brain counterfactual "replace PostgreSQL"` |
+| `brain health-report` | Health report (Markdown)  | `brain health-report`              |
+| `brain doctor`      | Environment diagnostics & fix | `brain doctor --fix`              |
 
 ### Knowledge Types (--kind)
 
@@ -551,6 +564,17 @@ git commit -m "fix: validate JWT exp field to prevent token hijacking"
 - Manual `brain add` → confidence 0.8 (default)
 - Manual KRB review approval → confidence 0.9
 
+**Confidence semantic labels (v0.2.0):**
+
+Output confidence values carry semantic markers so Agents can immediately judge reliability:
+
+| Label | Range | Meaning |
+|-------|-------|---------|
+| `⚠ speculative` | 0.0–0.3 | Low-quality commit origin; use with caution |
+| `~ inferred` | 0.3–0.6 | Auto-extracted; probably correct |
+| `✓ verified` | 0.6–0.8 | Manually added or confirmed by repeated queries |
+| `✓✓ authoritative` | 0.8–1.0 | KRB-approved or high-confidence manual entry |
+
 ---
 
 ## Memory Synthesizer (Advanced)
@@ -594,6 +618,11 @@ Cost: approximately one LLM call per `get_context` invocation (haiku ~$0.0002, O
 | `BRAIN_LLM_MODEL`    | `claude-haiku-4-5-20251001` | Model name                                 |
 | `BRAIN_SYNTHESIZE`   | `0`                         | Set to `1` to enable Memory Synthesizer    |
 | `BRAIN_API_KEY`      | —                           | API authentication for `brain serve`       |
+| `BRAIN_MAX_TOKENS`   | `6000`                      | Maximum context token budget               |
+| `BRAIN_EXPAND_LIMIT` | `15`                        | Query expansion term limit (reduces noise) |
+| `BRAIN_DEDUP_THRESHOLD` | `0.85`                   | Semantic dedup cosine threshold            |
+| `BRAIN_RATE_LIMIT_RPM` | `60`                      | MCP calls per minute limit                 |
+| `BRAIN_EMBED_PROVIDER` | auto-detected             | `none` = disable vectors, FTS5 only        |
 
 ### Local LLM (Ollama)
 
