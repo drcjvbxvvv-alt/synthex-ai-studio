@@ -115,12 +115,18 @@ class ProjectBrain:
 
     @property
     def context_engineer(self) -> ContextEngineer:
-        if self._context is None:                     # DEF-03 fix
+        if self._context is None:
+            # Resolve dependencies BEFORE acquiring the lock to prevent
+            # deadlock: threading.Lock is not reentrant, so calling self.graph
+            # or self.db while holding _init_lock would deadlock if they are
+            # not yet initialised (they also acquire _init_lock).
+            _graph = self.graph
+            _db    = self.db
             with self._init_lock:
                 if self._context is None:
                     # A-11: pass BrainDB so ContextEngineer uses brain.db as primary read
                     self._context = ContextEngineer(
-                        self.graph, self.brain_dir, brain_db=self.db
+                        _graph, self.brain_dir, brain_db=_db
                     )
         return self._context
 
@@ -132,12 +138,13 @@ class ProjectBrain:
         預設 strict_mode=False：手動 brain add 直接進 L3，
         scan/learn 的知識進 Staging 等待審查。
         """
-        if self._krb is None:                         # DEF-03 fix
+        if self._krb is None:
+            _graph = self.graph  # resolve before acquiring lock (deadlock prevention)
             with self._init_lock:
                 if self._krb is None:
                     self._krb = KnowledgeReviewBoard(
                         brain_dir   = self.brain_dir,
-                        graph       = self.graph,
+                        graph       = _graph,
                         strict_mode = False,
                     )
         return self._krb
