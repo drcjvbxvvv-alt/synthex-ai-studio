@@ -84,7 +84,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | PH0-01 | P1 | `pyproject.toml` 修正 | version → 0.2.0，URLs 改為真實 GitHub 連結（對應 TD-06） | ✅ 2026-04-03 |
 | PH0-02 | P1 | `core/` 目錄重組 | 移除業務邏輯，改為從 `project_brain/` 導入（對應 F3/TD-05） | ✅ 2026-04-03（已是 shim，更新 docstring 與邊界規則） |
 | PH0-03 | P1 | `CONTRIBUTING.md` 更新 | 說明 `core/` vs `project_brain/` 的邊界，防止貢獻者寫錯地方 | ✅ 2026-04-03 |
-| PH0-04 | P1 | 測試覆蓋補全 | 至少為 CLI 核心命令（init、add、ask）補充整合測試 | 🚧 待執行 |
+| PH0-04 | P1 | 測試覆蓋補全 | 至少為 CLI 核心命令（init、add、ask）補充整合測試 | ✅ 2026-04-03（`tests/integration/test_cli.py`，13 個無 Mock 端對端測試，全數通過） |
 | PH0-05 | P1 | `status_renderer.py` 修正 | 修復 `db` 未定義問題（TD-07），讓 v10 區塊正確顯示 | ✅ 2026-04-03 |
 
 ### Phase 1（4-6 週）：修復知識生產迴路（對應 F1）
@@ -189,7 +189,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | TD-07 / PH0-05 | P1 | `status_renderer.py` 修復 `db` 未定義 | ✅ 已完成 |
 | BUG-02 | P1 | v10 區塊節點/邊數量不顯示 | ✅ 已完成 |
 | PH0-03 | P1 | `CONTRIBUTING.md` 更新邊界說明 | ✅ 已完成 |
-| PH0-04 | P1 | 整合測試補全（init / add / ask） | 🚧 待執行 |
+| PH0-04 | P1 | 整合測試補全（init / add / ask） | ✅ 已完成 |
 
 ### Q2 — 計劃執行（高影響 × 可排期）
 
@@ -229,11 +229,11 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 ### 現況摘要
 
 ```
-Q1 完成率：9/10（90%）— 剩 PH0-04 測試覆蓋
+Q1 完成率：10/10（100%）— Phase 0 全部清零 ✅
 Q2 進行中：5 項（Phase 1-2 核心功能）
 Q3 排隊中：7 項（技術債 + P2 功能）
 Q4 暫緩：11 項（長期願景）
-下一步行動：PH0-04 — 補充 init / add / ask 整合測試，完成 Phase 0 清零
+下一步行動：PH1-04 — 強化 extractor.py（session-aware 提取）
 ```
 
 ---

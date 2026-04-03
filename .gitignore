@@ -13,7 +13,6 @@ __pycache__
 .coverage
 
 .brain
-/project-brain/tests
 .claude
 .cursor
 *.egg-info/
