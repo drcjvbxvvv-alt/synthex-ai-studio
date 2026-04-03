@@ -22,6 +22,7 @@
 | ID | 等級 | 描述 | 狀態 |
 |----|------|------|------|
 | BUG-01 | P0 | `engine.py` `context_engineer`/`review_board` 屬性在 `_init_lock` 內部再次嘗試獲取同一鎖，造成死鎖，`brain status` 完全無回應 | ✅ 已修復（2026-04-03） |
+| BUG-02 | P1 | `status_renderer.py` v10 區塊引用未定義的 `db` 變數（被 try/except 靜默吞掉），節點/邊數量不顯示 | ✅ 已修復（2026-04-03） |
 
 ---
 
@@ -80,11 +81,11 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 | ID | 等級 | 功能 | 說明 |
 |----|------|------|------|
-| PH0-01 | P1 | `pyproject.toml` 修正 | version → 0.2.0，URLs 改為真實 GitHub 連結（對應 TD-06） |
-| PH0-02 | P1 | `core/` 目錄重組 | 移除業務邏輯，改為從 `project_brain/` 導入（對應 F3/TD-05） |
-| PH0-03 | P1 | `CONTRIBUTING.md` 更新 | 說明 `core/` vs `project_brain/` 的邊界，防止貢獻者寫錯地方 |
-| PH0-04 | P1 | 測試覆蓋補全 | 至少為 CLI 核心命令（init、add、ask）補充整合測試 |
-| PH0-05 | P1 | `status_renderer.py` 修正 | 修復 `db` 未定義問題（TD-07），讓 v10 區塊正確顯示 |
+| PH0-01 | P1 | `pyproject.toml` 修正 | version → 0.2.0，URLs 改為真實 GitHub 連結（對應 TD-06） | ✅ 2026-04-03 |
+| PH0-02 | P1 | `core/` 目錄重組 | 移除業務邏輯，改為從 `project_brain/` 導入（對應 F3/TD-05） | ✅ 2026-04-03（已是 shim，更新 docstring 與邊界規則） |
+| PH0-03 | P1 | `CONTRIBUTING.md` 更新 | 說明 `core/` vs `project_brain/` 的邊界，防止貢獻者寫錯地方 | ✅ 2026-04-03 |
+| PH0-04 | P1 | 測試覆蓋補全 | 至少為 CLI 核心命令（init、add、ask）補充整合測試 | 🚧 待執行 |
+| PH0-05 | P1 | `status_renderer.py` 修正 | 修復 `db` 未定義問題（TD-07），讓 v10 區塊正確顯示 | ✅ 2026-04-03 |
 
 ### Phase 1（4-6 週）：修復知識生產迴路（對應 F1）
 
@@ -92,9 +93,9 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 
 | ID | 等級 | 功能 | 說明 |
 |----|------|------|------|
-| PH1-01 | P0 | 重寫 CLAUDE.md 生成模板 | `engine.py init_claude_md` 加入完整 Brain 行為協議：任務開始查詢、任務結束總結、知識回饋三段協議 |
-| PH1-02 | P0 | MCP 工具：`complete_task` | 參數：`task_description, decisions[], lessons[], pitfalls[]`；任務結束後批次寫入本次學習 |
-| PH1-03 | P0 | MCP 工具：`report_knowledge_outcome` | 參數：`node_id, was_useful, notes`；閉合知識有效性的回饋迴路，驅動 confidence 動態更新 |
+| PH1-01 | P0 | 重寫 CLAUDE.md 生成模板 | `setup_wizard.generate_claude_md()` 含完整 Brain 行為協議：Task Start / Task Complete / Knowledge Feedback，全英文 | ✅ 2026-04-03 |
+| PH1-02 | P0 | MCP 工具：`complete_task` | 參數：`task_description, decisions[], lessons[], pitfalls[]`；任務結束後批次寫入本次學習 | ✅ 2026-04-03 |
+| PH1-03 | P0 | MCP 工具：`report_knowledge_outcome` | 參數：`node_id, was_useful, notes`；閉合知識有效性的回饋迴路，驅動 confidence 動態更新 | ✅ 2026-04-03 |
 | PH1-04 | P1 | 強化 `extractor.py` | Session-aware 提取：從 git diff + session log 中提取「過程知識」，不只依賴 commit message |
 | PH1-05 | P1 | `analytics_engine.py` 基礎版 | 記錄所有查詢事件、命中率、使用者回饋（explicit + implicit） |
 | PH1-06 | P1 | `brain report` 指令 | 生成週期性使用統計，顯示知識庫健康度基本指標 |
