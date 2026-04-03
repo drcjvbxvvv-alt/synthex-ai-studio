@@ -216,7 +216,7 @@ CLAUDE.md 只有 8 行通用指令，沒有任何 Brain 行為協議，導致：
 | ~~TD-04~~    | P3   | ~~`decay_engine.py` 版本落差規則可自訂~~（✅ 已完成）|
 | ~~PH3-01~~   | P2   | ~~`federation.py` 跨專案知識分享~~（✅ 已完成）|
 | ~~PH3-02~~   | P2   | ~~`knowledge_distiller.py` LoRA fine-tuning~~（✅ 已完成）|
-| PH3-03       | P2   | AI 輔助 KRB 審核                           |
+| ~~PH3-03~~   | P2   | ~~AI 輔助 KRB 審核~~（✅ 已完成）          |
 | ~~PH3-07~~   | P2   | ~~KRB 審核 Ollama 本地後端~~（✅ 已完成）  |
 | PH3-04       | P3   | Cloud 版本 / 計費系統                      |
 | ~~PH3-05~~   | P3   | ~~ANN 向量索引~~（✅ 已完成）               |
