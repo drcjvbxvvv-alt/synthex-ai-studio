@@ -525,16 +525,94 @@ def db(self) -> 'BrainDB':
 
 ---
 
+## v1.1.0 Polish & Completions (P2)
+
+> **完成日期**: 2026-04-03 | **包含**: DEF-10、OPT-07~10、DEEP-02/04/05 補完
+
+---
+
+#### DEF-10：SR 背景執行緒競態 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `context.py` — SR batch update |
+| **修復** | 移除 daemon thread，改為同步寫入：優先使用 `self._brain_db._write_guard()` 保護的 BrainDB conn，fallback 至 `self.graph._conn` |
+
+---
+
+#### OPT-07：統一 `_ngram()` 實作 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | 新建 `utils.py` + `brain_db.py` + `graph.py` |
+| **修復** | 建立 `project_brain/utils.py`，提供 `ngram_cjk()`（unigram + bigram）；`BrainDB._ngram()` 和 `KnowledgeGraph._ngram_text()` 均 delegate 至此，消除行為差異 |
+
+---
+
+#### OPT-08：FTS5 查詢字串轉義 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` + `graph.py` |
+| **修復** | 新增 `BrainDB._sanitize_fts()` 靜態方法，去除 `"()* -^` 等 FTS5 特殊字元；`search_nodes()` 和 `search_nodes_multi()` 均套用 |
+
+---
+
+#### OPT-09：排名使用 effective_confidence ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `context.py` — `_node_priority()` |
+| **修復** | 優先讀取 `node.get("effective_confidence")`（含時間衰減），fallback 至原始 `confidence` |
+
+---
+
+#### OPT-10：向量快取失效修復 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` — `update_node()` |
+| **修復** | `content` 更新後，以舊 content MD5 為 key 主動從 `_TFIDF_CACHE` 驅逐舊項目，避免記憶體浪費 |
+
+---
+
+#### DEEP-02 補完：BFS 貝葉斯信念傳播 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `brain_db.py` — `propagate_confidence()` |
+| **修復** | 原 1-hop 實作改為完整 BFS 多跳遍歷（預設 `max_hops=3`），公式：`conf_eff = conf_base * (1 - dampening * (1 - upstream_conf))`，含起始節點在結果中 |
+
+---
+
+#### DEEP-04 補完：主動學習回饋迴路 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `mcp_server.py` — `answer_question()` 新工具 |
+| **修復** | 新增 `answer_question(node_id, answer, new_confidence)` MCP 工具：更新節點 confidence + content，並建立 L2 episode 記錄，形成 generate_questions → answer_question 閉環 |
+
+---
+
+#### DEEP-05：時序邊自動建立 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `archaeologist.py` + `brain_db.py` |
+| **修復** | `ProjectArchaeologist` 接受可選 `brain_db` 參數；`_scan_git_history()` 每次建立知識節點後自動呼叫 `brain_db.add_temporal_edge(commit_node → knowledge_node, INTRODUCES)`，填充 `temporal_edges` 表 |
+
+---
+
 ## 統計摘要
 
 | 類別 | 數量 | 說明 |
 |------|------|------|
-| 系統缺陷修復 | 10 | DEF-01~09 + DEF-08 |
+| 系統缺陷修復 | 11 | DEF-01~10 |
 | BUG 修復 | 12 | BUG-01~12 |
-| 性能優化 | 6 | OPT-01~06 |
+| 性能優化 | 10 | OPT-01~10 |
 | 新增功能 | 10 | FEAT-01~10 |
-| 深度 AI 功能 | 4 | DEEP-01~04 |
-| **合計** | **42** | |
+| 深度 AI 功能 | 7 | DEEP-01~05 + DEEP-02/04 補完 |
+| **合計** | **50** | |
 
 ---
 

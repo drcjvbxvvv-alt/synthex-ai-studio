@@ -570,6 +570,56 @@ def create_server(workdir: str) -> Any:
             logger.error("generate_questions error: %s", e)
             return []
 
+    @mcp.tool()
+    def answer_question(
+        node_id: str,
+        answer: str,
+        new_confidence: float = 0.9,
+        workdir: str = "",
+    ) -> dict:
+        """DEEP-04 補完: 回饋主動學習答案，更新節點信心值並記錄學習事件。
+
+        配合 generate_questions() 使用：Brain 提問後，使用者回答，
+        此工具將答案回寫進知識庫，形成主動學習閉環。
+
+        Args:
+            node_id:        目標節點 ID（來自 generate_questions 返回值）
+            answer:         使用者回答內容
+            new_confidence: 更新後信心值（預設 0.9，已確認事實）
+            workdir:        工作目錄（選填）
+
+        Returns:
+            {"ok": True, "node_id": ..., "new_confidence": ...} or {"ok": False, "error": ...}
+        """
+        _rate_check()
+        b = _resolve_brain(workdir)
+        try:
+            node_id_clean  = _safe_str(node_id, 128, "node_id")
+            answer_clean   = _safe_str(answer, MAX_QUERY_LEN, "answer")
+            conf           = float(max(0.0, min(1.0, new_confidence)))
+            # Update node confidence and append answer to content
+            node = b.db.get_node(node_id_clean)
+            if not node:
+                return {"ok": False, "error": f"node {node_id_clean!r} not found"}
+            new_content = (node.get("content") or "") + f"\n[學習迴路] {answer_clean}"
+            b.db.update_node(
+                node_id_clean,
+                content=new_content,
+                confidence=conf,
+                changed_by="answer_question",
+                change_note=f"Active learning answer: {answer_clean[:80]}",
+            )
+            # Record as episode for L2 memory
+            b.db.add_episode(
+                content=f"[主動學習確認] {node.get('title','')}: {answer_clean}",
+                source=f"answer_question:{node_id_clean}",
+                confidence=conf,
+            )
+            return {"ok": True, "node_id": node_id_clean, "new_confidence": conf}
+        except Exception as e:
+            logger.error("answer_question error: %s", e)
+            return {"ok": False, "error": str(e)}
+
     return mcp
 
 

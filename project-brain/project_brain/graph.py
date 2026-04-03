@@ -191,20 +191,9 @@ class KnowledgeGraph:
 
     @staticmethod
     def _ngram_text(text: str) -> str:
-        """
-        A-5：中文 N-gram 預處理，讓 FTS5 能搜尋中文子詞。
-
-        FTS5 對中文的預設分詞是「整個字串當一個 token」，
-        因此搜尋「連線」無法匹配「資料庫連線池設定」。
-
-        解法：在每個中文字元前後插入空格，讓 FTS5 把每個字元視為獨立 token。
-        「連線池」→「連 線 池」→ FTS5 可搜到「線」「連線」等子詞。
-
-        英文詞不受影響（已有空格分詞）。
-        """
-        import re
-        # 在中文字元之間插入空格
-        return re.sub(r'([一-鿿])', r' \1 ', text)
+        """OPT-07: delegates to shared utils.ngram_cjk()."""
+        from .utils import ngram_cjk
+        return ngram_cjk(text)
 
     def search_nodes_multi(
         self,
@@ -250,7 +239,11 @@ class KnowledgeGraph:
                 _seen_terms.add(_term)
         safe_terms = _deduped if _deduped else safe_terms
 
-        fts_query = " OR ".join(f'"{t}"' for t in safe_terms)
+        # OPT-08 fix: sanitize terms before FTS5 query
+        import re as _re
+        _sanitized = [_re.sub(r'["()*\-^ ]', '', t) for t in safe_terms]
+        _sanitized = [t for t in _sanitized if len(t) >= 1]
+        fts_query = " OR ".join(f'"{t}"' for t in _sanitized) if _sanitized else '""'
 
         try:
             if node_type:

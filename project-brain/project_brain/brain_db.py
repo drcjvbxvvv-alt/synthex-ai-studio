@@ -254,25 +254,22 @@ class BrainDB:
 
     @staticmethod
     def _ngram(text: str) -> str:
-        """OPT-01 fix: CJK bigram-enhanced n-gram for improved FTS5 recall.
+        """OPT-07: delegates to shared utils.ngram_cjk()."""
+        from .utils import ngram_cjk
+        return ngram_cjk(text)
 
-        Strategy:
-          1. Space-separate each CJK character for single-char term matching.
-          2. Generate bigrams from CJK sequences for multi-char phrase matching.
-             (e.g. "中文搜尋" → "中 文 搜 尋 中文 文搜 搜尋")
-        Estimated CJK recall improvement: ~40% → ~70%.
+    @staticmethod
+    def _sanitize_fts(q: str) -> str:
+        """OPT-08: Strip FTS5 special characters to prevent syntax errors.
+
+        FTS5 special chars: " ( ) * - ^ are legal in complex queries but
+        cause silent parse errors when user input contains them unescaped.
+        Strategy: replace all special chars with space, collapse whitespace.
         """
-        import re
-        if not text:
-            return ""
-        spaced  = re.sub(r"([\u4e00-\u9fff])", r" \1 ", text)
-        cjk_segs = re.findall(r"[\u4e00-\u9fff]+", text)
-        bigrams  = []
-        for seg in cjk_segs:
-            bigrams.extend(seg[i:i+2] for i in range(len(seg) - 1))
-        if bigrams:
-            return spaced + " " + " ".join(bigrams)
-        return spaced
+        import re as _re
+        sanitized = _re.sub(r'["()*\-^]', ' ', q)
+        sanitized = _re.sub(r'\s+', ' ', sanitized).strip()
+        return sanitized or '""'
 
     @staticmethod
     def _effective_confidence(node: dict) -> float:
@@ -502,6 +499,16 @@ class BrainDB:
                 except Exception:
                     pass
             self.conn.commit()
+        # OPT-10 fix: evict stale embedder cache entries when content changes
+        if content is not None:
+            try:
+                from .embedder import _TFIDF_CACHE
+                old_key = __import__('hashlib').md5(
+                    (ex.get("content") or "").encode()
+                ).hexdigest()
+                _TFIDF_CACHE.pop(old_key, None)
+            except Exception:
+                pass
         return True
 
     def get_node(self, node_id: str):
@@ -523,7 +530,9 @@ class BrainDB:
             if _tok not in _seen_set:
                 _unique.append(_tok)
                 _seen_set.add(_tok)
-        fts_q = " OR ".join(f'"{tok}"' for tok in _unique) if _unique else f'"{terms[0]}"'
+        # OPT-08 fix: sanitize each token before putting in FTS5 query
+        _safe_unique = [BrainDB._sanitize_fts(tok) for tok in _unique if BrainDB._sanitize_fts(tok) != '""']
+        fts_q = " OR ".join(f'"{tok}"' for tok in _safe_unique) if _safe_unique else '""'
         try:
             # P1-A: scope-aware search
             # matching scope first (0), global second (1), other scopes excluded
@@ -691,34 +700,53 @@ class BrainDB:
 
     # ── DEEP-02: Bayesian Confidence Propagation ──────────────────
 
-    def propagate_confidence(self, node_id: str, dampening: float = 0.5) -> dict:
-        """DEEP-02: 透過圖譜邊傳播信心值（貝葉斯信念傳播）。
+    def propagate_confidence(self, node_id: str, dampening: float = 0.5,
+                             max_hops: int = 3) -> dict[str, float]:
+        """DEEP-02 補完: BFS 貝葉斯信念傳播（多跳圖遍歷）。
 
-        若節點 A REQUIRES 節點 B，且 A 的信心下降，
-        B 的有效信心調整為: conf_B * (1 - dampening * (1 - conf_A))
+        從 node_id 出發，沿 REQUIRES 邊 BFS 傳播信心衰減。
 
-        回傳 {node_id: adjusted_effective_confidence} 含所有受影響節點。
+        傳播公式: conf_eff = conf_base * (1 - dampening * (1 - upstream_conf))
+
+        Args:
+            node_id:   起始節點 ID
+            dampening: 衰減係數（0~1，預設 0.5）
+            max_hops:  最大傳播跳數（預設 3）
+
+        Returns:
+            {node_id: effective_confidence} 含所有受影響節點（含起始點）
         """
-        node = self.get_node(node_id)
-        if not node:
+        root = self.get_node(node_id)
+        if not root:
             return {}
-        conf_a = float(node.get("confidence", 0.8))
-        affected: dict = {}
-        try:
-            rows = self.conn.execute(
-                "SELECT target_id FROM edges WHERE source_id=? AND relation='REQUIRES'",
-                (node_id,)
-            ).fetchall()
-            for r in rows:
-                target = self.get_node(r[0])
-                if not target:
-                    continue
-                conf_b = float(target.get("confidence", 0.8))
-                adjusted = conf_b * (1 - dampening * (1 - conf_a))
-                affected[r[0]] = round(max(0.05, min(1.0, adjusted)), 4)
-        except Exception as exc:
-            logger.debug("propagate_confidence error: %s", exc)
-        return affected
+        visited: dict[str, float] = {}
+        # queue entries: (nid, upstream_effective_conf, depth)
+        queue: list[tuple[str, float, int]] = [
+            (node_id, float(root.get("confidence", 0.8)), 0)
+        ]
+        while queue:
+            nid, upstream_conf, depth = queue.pop(0)
+            if nid in visited or depth > max_hops:
+                continue
+            node = self.get_node(nid)
+            if not node:
+                continue
+            base      = float(node.get("confidence", 0.8))
+            effective = base * (1 - dampening * (1 - upstream_conf))
+            effective = round(max(0.05, min(1.0, effective)), 4)
+            visited[nid] = effective
+            try:
+                rows = self.conn.execute(
+                    "SELECT target_id FROM edges"
+                    " WHERE source_id=? AND relation='REQUIRES'",
+                    (nid,)
+                ).fetchall()
+                for r in rows:
+                    if r[0] not in visited:
+                        queue.append((r[0], effective, depth + 1))
+            except Exception as exc:
+                logger.debug("propagate_confidence BFS error: %s", exc)
+        return visited
 
     def all_nodes(self, node_type=None, limit: int = 500) -> list:
         if node_type:

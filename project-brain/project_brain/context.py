@@ -186,7 +186,8 @@ class ContextEngineer:
                   - importance 0.15（人工設定，輔助參考）
                 """
                 pinned      = 2.5 if (node.get("is_pinned") or 0) else 0.0
-                confidence  = float(node.get("confidence") or 0.8)
+                # OPT-09 fix: prefer pre-computed decay-adjusted effective_confidence
+                confidence  = float(node.get("effective_confidence") or node.get("confidence") or 0.8)
                 importance  = float(node.get("importance") or 0.5)
                 access_cnt  = int(node.get("access_count") or 0)
                 # 正規化：50 次以上視為飽和（避免極端值主導）
@@ -266,22 +267,25 @@ class ContextEngineer:
                 if n.get("id") and any((n.get("title","") or "") in s for s in sections)
             ]
             if _node_ids:
-                import threading
-                def _sr_batch(node_ids):
-                    try:
-                        # 在單一事務中批次更新，避免多執行緒競爭
-                        self.graph._conn.executemany("""
-                            UPDATE nodes
-                            SET access_count = access_count + 1,
-                                last_accessed = datetime('now')
-                            WHERE id = ?
-                        """, [(nid,) for nid in node_ids])
+                # DEF-10 fix: synchronous SR update via BrainDB._write_guard() (no daemon thread race)
+                try:
+                    if self._brain_db is not None:
+                        with self._brain_db._write_guard():
+                            self._brain_db.conn.executemany(
+                                "UPDATE nodes SET access_count=access_count+1,"
+                                " last_accessed=datetime('now') WHERE id=?",
+                                [(nid,) for nid in _node_ids]
+                            )
+                            self._brain_db.conn.commit()
+                    else:
+                        self.graph._conn.executemany(
+                            "UPDATE nodes SET access_count=access_count+1,"
+                            " last_accessed=datetime('now') WHERE id=?",
+                            [(nid,) for nid in _node_ids]
+                        )
                         self.graph._conn.commit()
-                    except Exception:
-                        pass  # SR 失敗不影響主流程
-                threading.Thread(
-                    target=_sr_batch, args=(_node_ids,), daemon=True
-                ).start()
+                except Exception:
+                    pass  # SR 失敗不影響主流程
         except Exception:
             pass
         # P1-B: prepend causal chain conclusions to result

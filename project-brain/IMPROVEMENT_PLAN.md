@@ -468,7 +468,7 @@ def search_nodes(self, ..., scope: str = "") -> list[dict]:
 
 ---
 
-### DEF-10：Spaced Repetition 背景執行緒競態 🟡
+### DEF-10：Spaced Repetition 背景執行緒競態 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -482,7 +482,7 @@ def search_nodes(self, ..., scope: str = "") -> list[dict]:
 
 ## 新優化方向
 
-### OPT-07：消除重複 `_ngram()` 實作 🟢
+### OPT-07：消除重複 `_ngram()` 實作 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -492,7 +492,7 @@ def search_nodes(self, ..., scope: str = "") -> list[dict]:
 
 ---
 
-### OPT-08：FTS5 查詢字串未轉義 🟡
+### OPT-08：FTS5 查詢字串未轉義 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -508,7 +508,7 @@ def _sanitize_fts_query(q: str) -> str:
 
 ---
 
-### OPT-09：排名過程中重複計算 Confidence 🟢
+### OPT-09：排名過程中重複計算 Confidence ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -518,7 +518,7 @@ def _sanitize_fts_query(q: str) -> str:
 
 ---
 
-### OPT-10：向量快取在節點更新時不失效 🟡
+### OPT-10：向量快取在節點更新時不失效 ✅
 
 | 項目 | 內容 |
 |------|------|
@@ -585,7 +585,7 @@ brain analytics --period 30d --export csv > report.csv
 
 > 以下三項在 P3 已有骨架，需補完核心邏輯。
 
-### DEEP-02 補完：真實貝葉斯信念傳播
+### DEEP-02 補完：真實貝葉斯信念傳播 ✅
 
 **現狀**: `brain_db.py` `propagate_confidence()` 骨架方法，無實際圖遍歷計算。
 
@@ -626,7 +626,7 @@ def propagate_confidence(self, node_id: str, dampening: float = 0.5,
 
 ---
 
-### DEEP-04 補完：主動學習回饋迴路
+### DEEP-04 補完：主動學習回饋迴路 ✅
 
 **現狀**: `NudgeEngine.generate_questions()` 可生成問題，但答案無法回饋更新信心值。
 
@@ -649,7 +649,7 @@ answer_question(node_id="n42", answer="30 分鐘", new_confidence=0.9)
 
 ---
 
-### DEEP-05：時序邊自動建立
+### DEEP-05：時序邊自動建立 ✅
 
 **現狀**: `temporal_edges` 表存在，`temporal_query` MCP 工具存在，但沒有任何代碼自動填充此表。
 
@@ -687,14 +687,14 @@ for file_path in files_changed:
 | BUG-10 | Session 非持久條目不過期 | Bug | ✅ 已完成 | 記憶體洩漏 | 小 |
 | BUG-11 | emotional_weight 未用於排名 | Bug | ✅ 已完成 | 排名失準 | 小 |
 | DEF-08 | FTS5 遷移非冪等 | 缺陷 | ✅ 已完成 | 索引損壞 | 中 |
-| DEF-10 | SR 執行緒競態 | 缺陷 | 🟡 P2 | 計數不準 | 小 |
-| OPT-07 | 消除重複 _ngram() | 優化 | 🟡 P2 | 維護性 | 小 |
-| OPT-08 | FTS5 查詢字串轉義 | 優化 | 🟡 P2 | 穩定性 | 小 |
-| OPT-09 | 排名重複計算 confidence | 優化 | 🟡 P2 | 性能 | 小 |
-| OPT-10 | 向量快取不失效 | 優化 | 🟡 P2 | 正確性 | 小 |
-| DEEP-02 補完 | 貝葉斯傳播實作 | 深度 | 🟡 P2 | 差異化 | 中 |
-| DEEP-04 補完 | 主動學習回饋迴路 | 深度 | 🟡 P2 | 差異化 | 小 |
-| DEEP-05 | 時序邊自動建立 | 深度 | 🟡 P2 | 時序查詢 | 中 |
+| DEF-10 | SR 執行緒競態 | 缺陷 | ✅ 已完成 | 計數不準 | 小 |
+| OPT-07 | 消除重複 _ngram() | 優化 | ✅ 已完成 | 維護性 | 小 |
+| OPT-08 | FTS5 查詢字串轉義 | 優化 | ✅ 已完成 | 穩定性 | 小 |
+| OPT-09 | 排名重複計算 confidence | 優化 | ✅ 已完成 | 性能 | 小 |
+| OPT-10 | 向量快取不失效 | 優化 | ✅ 已完成 | 正確性 | 小 |
+| DEEP-02 補完 | 貝葉斯傳播實作 | 深度 | ✅ 已完成 | 差異化 | 中 |
+| DEEP-04 補完 | 主動學習回饋迴路 | 深度 | ✅ 已完成 | 差異化 | 小 |
+| DEEP-05 | 時序邊自動建立 | 深度 | ✅ 已完成 | 時序查詢 | 中 |
 | FEAT-12 | 匯入衝突互動式解決 | 功能 | 🔵 P3 | UX | 中 |
 | FEAT-13 | 節點生命週期管理 | 功能 | 🔵 P3 | 治理 | 中 |
 | FEAT-11 | Neo4j/Cypher 匯出 | 功能 | 🔵 P3 | 生態 | 小 |

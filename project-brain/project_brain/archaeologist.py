@@ -44,12 +44,15 @@ class ProjectArchaeologist:
     }
 
     def __init__(self, workdir: str, graph: KnowledgeGraph,
-                 extractor: KnowledgeExtractor, verbose: bool = True):
+                 extractor: KnowledgeExtractor, verbose: bool = True,
+                 brain_db=None):
         self.workdir   = Path(workdir)
         self.graph     = graph
         self.extractor = extractor
         self.verbose   = verbose
         self._progress = []
+        # DEEP-05: optional BrainDB reference for temporal edge auto-creation
+        self._brain_db = brain_db
 
     def _log(self, msg: str):
         if self.verbose:
@@ -154,6 +157,12 @@ class ProjectArchaeologist:
             results = self.extractor.from_git_history(limit=limit)
             for result in results:
                 meta = result.get("_meta", {})
+                commit_hash   = meta.get("commit", "")
+                commit_date   = meta.get("date", "")
+                commit_node_id = (
+                    self.extractor.make_id("commit", commit_hash)
+                    if commit_hash else None
+                )
                 for chunk in result.get("knowledge_chunks", []):
                     node_id = self.extractor.make_id(
                         chunk["type"], chunk["title"] + chunk["content"]
@@ -164,12 +173,24 @@ class ProjectArchaeologist:
                         title     = chunk["title"],
                         content   = chunk["content"],
                         tags      = chunk.get("tags", []),
-                        source_url= meta.get("commit", ""),
+                        source_url= commit_hash,
                         author    = meta.get("author", ""),
                         meta      = {"confidence": chunk.get("confidence", 0.8)},
                     )
                     if chunk["type"] == "Decision": stats["decisions"] += 1
                     if chunk["type"] == "Pitfall":  stats["pitfalls"]  += 1
+                    # DEEP-05: create temporal edge from commit node to knowledge node
+                    if self._brain_db is not None and commit_node_id:
+                        try:
+                            self._brain_db.add_temporal_edge(
+                                source_id  = commit_node_id,
+                                relation   = "INTRODUCES",
+                                target_id  = node_id,
+                                valid_from = commit_date or None,
+                                content    = f"commit {commit_hash[:8]} introduced {chunk['type']}: {chunk['title'][:60]}",
+                            )
+                        except Exception:
+                            pass
 
                 # 記錄依賴關係
                 for dep in result.get("dependencies_detected", []):
