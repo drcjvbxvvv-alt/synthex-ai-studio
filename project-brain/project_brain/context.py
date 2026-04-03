@@ -126,9 +126,11 @@ class ContextEngineer:
                 # 優先用擴展詞搜尋；若無結果則 fallback 到原始關鍵字
                 # A-4：單一 OR 查詢取代多次逐詞搜尋，速度 60ms → <10ms
                 def _search_batch(terms, node_type, limit):
-                    # A-11: try BrainDB first, fallback to KnowledgeGraph if empty
+                    # BUG-09 fix: merge BrainDB + KnowledgeGraph results (no early return)
+                    # BUG-12 fix: always pass scope to search_nodes()
+                    _scope = getattr(self, "_scope", None)
+                    db_results: list = []
                     if self._brain_db is not None:
-                        # Phase 1: try hybrid search (vector + FTS5)
                         _q_vec = None
                         try:
                             from .embedder import get_embedder
@@ -138,19 +140,28 @@ class ContextEngineer:
                         except Exception:
                             pass
                         if _q_vec:
-                            results = self._brain_db.hybrid_search(
+                            db_results = self._brain_db.hybrid_search(
                                 " ".join(terms[:8]), query_vector=_q_vec,
-                                scope=getattr(self, "_scope", None), limit=limit
+                                scope=_scope, limit=limit
                             )
-                            results = [r for r in results if r.get("type") == node_type]
+                            db_results = [r for r in db_results if r.get("type") == node_type]
                         else:
-                            results = self._brain_db.search_nodes(
-                                " ".join(terms[:8]), node_type=node_type, limit=limit
+                            db_results = self._brain_db.search_nodes(
+                                " ".join(terms[:8]), node_type=node_type,
+                                scope=_scope, limit=limit  # BUG-12 fix
                             )
-                        if results:
-                            return results
-                    # Fallback: KnowledgeGraph (for tests / pre-migration projects)
-                    return self.graph.search_nodes_multi(terms, node_type=node_type, limit=limit)
+                    # Always query KnowledgeGraph and merge (BUG-09 fix)
+                    graph_results = self.graph.search_nodes_multi(
+                        terms, node_type=node_type, limit=limit
+                    )
+                    # Deduplicate by id: BrainDB results take precedence
+                    seen_ids: set = {r["id"] for r in db_results if "id" in r}
+                    merged = list(db_results)
+                    for r in graph_results:
+                        if r.get("id") not in seen_ids:
+                            merged.append(r)
+                            seen_ids.add(r.get("id"))
+                    return merged[:limit]
                 pitfalls  = _search_batch(expanded_terms, node_type="Pitfall",  limit=3)
                 decisions = _search_batch(expanded_terms, node_type="Decision", limit=2)
                 rules     = _search_batch(expanded_terms, node_type="Rule",     limit=2)

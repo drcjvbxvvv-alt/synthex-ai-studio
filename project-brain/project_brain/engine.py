@@ -16,6 +16,7 @@ import time
 import hashlib
 import logging
 import subprocess
+import threading
 from pathlib import Path
 from datetime import datetime
 
@@ -79,37 +80,48 @@ class ProjectBrain:
         # v4.0（KRB, distiller, validator）
         self._validator:  None = None
         self._distiller:  None = None
+        self._krb:        None = None
+        # DEF-03 fix: single lock serialises all lazy-init paths
+        self._init_lock = threading.Lock()
 
     # ── 屬性懶初始化 ──────────────────────────────────────────────
 
     @property
     def db(self) -> 'BrainDB':
         """A-10: Unified BrainDB — single source of truth."""
-        if self._db is None:
-            self.brain_dir.mkdir(parents=True, exist_ok=True)
-            self._db = BrainDB(self.brain_dir)
+        if self._db is None:                          # DEF-03 fix: double-checked locking
+            with self._init_lock:
+                if self._db is None:
+                    self.brain_dir.mkdir(parents=True, exist_ok=True)
+                    self._db = BrainDB(self.brain_dir)
         return self._db
 
     @property
     def graph(self) -> KnowledgeGraph:
-        if self._graph is None:
-            self.brain_dir.mkdir(parents=True, exist_ok=True)
-            self._graph = KnowledgeGraph(self.brain_dir)
+        if self._graph is None:                       # DEF-03 fix
+            with self._init_lock:
+                if self._graph is None:
+                    self.brain_dir.mkdir(parents=True, exist_ok=True)
+                    self._graph = KnowledgeGraph(self.brain_dir)
         return self._graph
 
     @property
     def extractor(self) -> KnowledgeExtractor:
-        if self._extractor is None:
-            self._extractor = KnowledgeExtractor(str(self.workdir))
+        if self._extractor is None:                   # DEF-03 fix
+            with self._init_lock:
+                if self._extractor is None:
+                    self._extractor = KnowledgeExtractor(str(self.workdir))
         return self._extractor
 
     @property
     def context_engineer(self) -> ContextEngineer:
-        if self._context is None:
-            # A-11: pass BrainDB so ContextEngineer uses brain.db as primary read
-            self._context = ContextEngineer(
-                self.graph, self.brain_dir, brain_db=self.db
-            )
+        if self._context is None:                     # DEF-03 fix
+            with self._init_lock:
+                if self._context is None:
+                    # A-11: pass BrainDB so ContextEngineer uses brain.db as primary read
+                    self._context = ContextEngineer(
+                        self.graph, self.brain_dir, brain_db=self.db
+                    )
         return self._context
 
     @property
@@ -120,17 +132,15 @@ class ProjectBrain:
         預設 strict_mode=False：手動 brain add 直接進 L3，
         scan/learn 的知識進 Staging 等待審查。
         """
-        if not hasattr(self, '_krb') or self._krb is None:
-            self._krb = KnowledgeReviewBoard(
-                brain_dir   = self.brain_dir,
-                graph       = self.graph,
-                strict_mode = False,
-            )
+        if self._krb is None:                         # DEF-03 fix
+            with self._init_lock:
+                if self._krb is None:
+                    self._krb = KnowledgeReviewBoard(
+                        brain_dir   = self.brain_dir,
+                        graph       = self.graph,
+                        strict_mode = False,
+                    )
         return self._krb
-
-    @property
-
-
 
     @property
     def router(self) -> "BrainRouter":
@@ -138,38 +148,44 @@ class ProjectBrain:
         v3.0 三層認知路由器。
         懶初始化：第一次呼叫時建立 L1 + L2 + L3 連線。
         """
-        if self._router is None:
-            from project_brain.router import BrainRouter
-            self._router = BrainRouter(
-                brain_dir    = self.brain_dir,
-                l3_brain     = self,       # 自身作為 L3
-                graphiti_url = self._graphiti_url,
-                agent_name   = self._config.get("project_name", "project-brain"),
-            )
+        if self._router is None:                      # DEF-03 fix
+            with self._init_lock:
+                if self._router is None:
+                    from project_brain.router import BrainRouter
+                    self._router = BrainRouter(
+                        brain_dir    = self.brain_dir,
+                        l3_brain     = self,
+                        graphiti_url = self._graphiti_url,
+                        agent_name   = self._config.get("project_name", "project-brain"),
+                    )
         return self._router
 
     @property
     def validator(self) -> "KnowledgeValidator":
         """v4.0 自主知識驗證器（懶初始化）"""
-        if self._validator is None:
-            from project_brain.knowledge_validator import KnowledgeValidator
-            self._validator = KnowledgeValidator(
-                graph     = self.graph,
-                workdir   = self.workdir,
-                brain_dir = self.brain_dir,
-            )
+        if self._validator is None:                   # DEF-03 fix
+            with self._init_lock:
+                if self._validator is None:
+                    from project_brain.knowledge_validator import KnowledgeValidator
+                    self._validator = KnowledgeValidator(
+                        graph     = self.graph,
+                        workdir   = self.workdir,
+                        brain_dir = self.brain_dir,
+                    )
         return self._validator
 
     @property
     def distiller(self) -> "KnowledgeDistiller":
         """v4.0 知識蒸餾器（懶初始化）"""
-        if self._distiller is None:
-            from project_brain.knowledge_distiller import KnowledgeDistiller
-            self._distiller = KnowledgeDistiller(
-                graph     = self.graph,
-                brain_dir = self.brain_dir,
-                workdir   = self.workdir,
-            )
+        if self._distiller is None:                   # DEF-03 fix
+            with self._init_lock:
+                if self._distiller is None:
+                    from project_brain.knowledge_distiller import KnowledgeDistiller
+                    self._distiller = KnowledgeDistiller(
+                        graph     = self.graph,
+                        brain_dir = self.brain_dir,
+                        workdir   = self.workdir,
+                    )
         return self._distiller
 
     # ── 公開 API ──────────────────────────────────────────────────

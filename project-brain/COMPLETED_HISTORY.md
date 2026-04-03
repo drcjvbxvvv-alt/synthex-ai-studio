@@ -422,16 +422,63 @@ brain counterfactual "如果我們用 NoSQL 代替 PostgreSQL"
 
 ---
 
+## v1.0.1 Critical Fixes (P0)
+
+> **完成日期**: 2026-04-03 | **包含**: DEF-03、BUG-09、BUG-12
+
+---
+
+#### DEF-03：延遲初始化執行緒安全問題 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `engine.py` — 所有 `@property` 延遲初始化 |
+| **症狀** | 多執行緒同時通過 `if self._db is None` 判斷，各自初始化，多個 BrainDB 實例競爭同一資料庫鎖 |
+| **修復** | 加入 `self._init_lock = threading.Lock()`；所有 8 個延遲初始化屬性（`db`, `graph`, `extractor`, `context_engineer`, `review_board`, `krb`, `router`, `validator`, `distiller`）改用 double-checked locking 模式 |
+
+```python
+@property
+def db(self) -> 'BrainDB':
+    if self._db is None:
+        with self._init_lock:
+            if self._db is None:
+                self.brain_dir.mkdir(parents=True, exist_ok=True)
+                self._db = BrainDB(self.brain_dir)
+    return self._db
+```
+
+---
+
+#### BUG-09：雙 FTS5 索引不同步 ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `context.py` — `_search_batch()` |
+| **症狀** | BrainDB 有結果時 early-return，KnowledgeGraph 獨有節點永遠被跳過 |
+| **修復** | 移除 early return；同時查詢 BrainDB 和 KnowledgeGraph，以 node id 去重合併結果（BrainDB 優先），回傳 `merged[:limit]` |
+
+---
+
+#### BUG-12：Scope 過濾從未傳遞至 search_nodes() ✅
+
+| 項目 | 內容 |
+|------|------|
+| **位置** | `context.py` — `_search_batch()` |
+| **症狀** | `hybrid_search` 呼叫有傳 scope，但 `search_nodes()` fallback 路徑未傳，多專案共用 `.brain/` 時查詢結果跨污染 |
+| **修復** | `_scope = getattr(self, "_scope", None)` 提取一次，`search_nodes()` 和 `hybrid_search()` 統一傳入 `scope=_scope` |
+
+---
+
 ## 統計摘要
 
 | 類別 | 數量 | 說明 |
 |------|------|------|
-| 系統缺陷修復 | 6 | DEF-01~06 |
-| BUG 修復 | 8 | BUG-01~08 |
+| 系統缺陷修復 | 7 | DEF-01~06, DEF-03 |
+| BUG 修復 | 10 | BUG-01~08, BUG-09, BUG-12 |
 | 性能優化 | 6 | OPT-01~06 |
 | 新增功能 | 10 | FEAT-01~10 |
 | 深度 AI 功能 | 4 | DEEP-01~04 |
-| **合計** | **34** | |
+| **合計** | **37** | |
 
 ---
 
