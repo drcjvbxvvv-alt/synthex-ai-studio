@@ -35,6 +35,145 @@ Agent writes the code with that knowledge, avoiding the mistake
 
 ---
 
+## The Honest Case: Why Project Brain When LLMs Keep Getting Stronger?
+
+> This is not a sales pitch. It's a direct answer to a fair question.
+
+### The Real Question: LLMs are increasingly capable — do I still need this?
+
+**Yes. But not for the reason you might expect.**
+
+Claude Opus 4, GPT-4o, Gemini Ultra — their reasoning, comprehension, and code generation are genuinely remarkable. The problem has never been that LLMs aren't smart enough.
+
+The problem is: **they know nothing about your project.**
+
+```
+You say: "Help me fix this refund bug"
+LLM: "Sure, let me look at this code..."
+
+What it doesn't know:
+  × Your team already hit this exact issue six months ago
+  × Your Stripe integration has a non-standard idempotency_key convention
+  × payment_service has different transaction boundaries than other services
+  × The last engineer who touched this left an implicit assumption in place
+
+None of this is in any training data. It lives in your git history and your colleagues' heads.
+```
+
+### 5W1H: Let's be specific
+
+---
+
+**Who — Who should use this?**
+
+A good fit:
+- **Teams using AI Coding Agents (Claude Code, Cursor, Copilot) for real development work**
+- Codebases 6+ months old with accumulated architectural decisions and hard-won lessons
+- Multi-person teams where knowledge is scattered across individual heads
+- Engineers who find themselves re-explaining context every time they open a new AI conversation
+
+Not a good fit:
+- Brand-new projects with no history yet (cold-start period has low value)
+- Purely exploratory, one-off AI conversations
+- Anyone expecting "install and it works" without being willing to do `brain add`
+
+---
+
+**What — What problem does it actually solve?**
+
+**Problem 1: LLM context is ephemeral.**
+
+Even with a 200k-token context window, you can't fit six months of decision history. The deeper problem: you don't know which 3 rules are relevant to today's task. Brain's job is to compress 6 months into "the 2,000 tokens relevant to what you're doing right now."
+
+**Problem 2: Project-specific knowledge isn't in any LLM's training data.**
+
+An LLM knows general Stripe best practices. It does not know that your team uses `X-Idempotency-Key` instead of `Idempotency-Key` because a specific version of your SDK had a bug. That knowledge lives only in commit e3f2a19.
+
+**Problem 3: AI Agents make decisions — and then forget them.**
+
+An Agent helps you refactor your database access layer, explains the rationale in the PR — then the conversation ends. Next month you open a new session, it faces the same decision, and may make a completely different call. Brain records those decisions automatically every time an Agent commits.
+
+**What Brain does NOT solve (honestly):**
+- It doesn't make the LLM smarter
+- It doesn't replace your own architectural thinking
+- It cannot capture tacit knowledge — if you never wrote it down, Brain can't know it
+- Cold-start period (first 2–4 weeks) delivers limited value while the knowledge base is being built
+
+---
+
+**When — When is the benefit most visible?**
+
+The payoff grows **non-linearly** over time:
+
+```
+Week 1:    Almost no benefit (knowledge base is empty)
+Month 1:   Relevant rules start appearing in context
+Month 3:   Agent automatically avoids pitfalls your team has already hit
+Month 6:   New Agents (and new team members) can understand project context quickly
+```
+
+Scenarios where it makes a clear difference:
+- "How did we do this last time?" type queries
+- Knowledge continuity across LLM conversation boundaries
+- Onboarding (letting Agent play the role of the "senior engineer who knows everything")
+- Technical debt review (which decisions were intentional vs. historical accidents)
+
+---
+
+**Where — Where in the workflow does it have an effect?**
+
+```
+You describe the task → Agent queries Brain first → Agent responds with project context
+                                                          ↑
+                                                  These 2 seconds are the difference
+```
+
+Not inside LLM reasoning — but in **context injection before reasoning begins**. Brain doesn't reason; it provides material so the LLM can reason more accurately.
+
+---
+
+**Why — Why not use other approaches?**
+
+| Approach | Problem |
+|----------|---------|
+| Dump all docs into context | Doesn't fit; you don't know what's relevant; requires manual curation every time |
+| Notion / Confluence | Agent won't query it proactively; requires manual maintenance |
+| Rely on git log | Unstructured; LLM re-parses it from scratch each time, expensive |
+| General memory tools (Mem0 etc.) | No engineering-specialized schema; no version-based decay; external service dependency |
+| Do nothing | Depends on individual memory; knowledge walks out the door with people |
+
+Brain's position: **structured long-term memory for engineering codebases, zero external dependencies, natively integrated with git workflows.**
+
+---
+
+**How — How does it actually work? How do you measure it?**
+
+Workflow:
+```
+1. brain setup        (5 minutes, one time)
+2. Every git commit   automatically recorded (zero friction)
+3. Important decision brain add              (30 seconds)
+4. Every Agent task   automatically queried  (transparent to Agent)
+```
+
+Honest ways to measure whether it's working:
+- How often does "Agent referenced a decision I made before" happen?
+- How many times does "we already hit this — Agent avoided it this time" occur?
+- When a new team member asks "why is it done this way?", what fraction can `brain ask` answer?
+
+**What it cannot guarantee:**
+- Recall ceiling is approximately 75% — 25% of relevant knowledge may not be retrieved
+- Quality depends entirely on how well the knowledge base is maintained
+- Auto-extracted knowledge needs human review to reach high-confidence status
+
+---
+
+### One-sentence summary
+
+**LLMs solve "how to do it." Project Brain solves "in this project, how did we decide to do it." They don't compete — Brain gives the LLM the project context it needs to reason accurately.**
+
+---
+
 ## Why the AI Era Needs This
 
 ### AI Agent commits are better raw material than human commits
