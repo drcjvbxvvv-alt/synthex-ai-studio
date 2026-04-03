@@ -1,268 +1,83 @@
 """
-core/brain/api_server.py — Project Brain API Server（Flask routes）
+project_brain/api_server.py — Project Brain REST API Server
 
-OpenAI 相容端點：
-  POST /v1/context         ← 查詢知識（LLM 在生成前呼叫）
-  POST /v1/messages        ← OpenAI Chat Completions 格式
-  POST /v1/add             ← 加入知識
-  GET  /v1/knowledge       ← 列出所有知識
-  GET  /v1/stats           ← 統計
-  GET  /health             ← 健康檢查
+純 Python http.server 實作，無 Flask 依賴。
 
-L1a Session Store 端點：
-  GET/POST /v1/session     ← 讀寫工作記憶
-  ...
-
-匯入方式：
-  from project_brain.api_server import create_app
-  app = create_app(workdir=..., api_key=...)
+端點：
+  GET  /health
+  GET  /v1/stats
+  GET  /v1/knowledge
+  GET,POST /v1/context
+  POST /v1/messages
+  POST /v1/add
+  GET  /v1/session
+  POST /v1/session
+  GET  /v1/session/<key>
+  PUT  /v1/session/<key>
+  DELETE /v1/session/<key>
+  GET,POST /v1/session/search
+  POST /v1/session/clear
+  GET  /v1/traces
+  POST /v1/traces/clear
+  GET  /v1/traces/stats
+  GET  /v1/nudges
+  GET  /v1/nudges/stream    ← SSE
+  GET  /v1/events
+  POST /webhook/slack
+  POST /webhook/github
 """
+from __future__ import annotations
 
+import json
 import logging
+import os
+import re
+import sqlite3
+import time
+import threading
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
+_VERSION = "5.0.0"
 
 
-def create_app(workdir: str, api_key: str = ""):
-    """
-    建立 Flask app。
-    把所有 route 定義集中在這裡，和 brain.py CLI 分離。
-    """
-    import os, time, json, re, uuid, threading
-    import sqlite3 as _sqlite3
-    from datetime import datetime, timezone
-    from flask import Flask, request, jsonify, Response, abort
-    from flask_cors import CORS
+# ─────────────────────────────────────────────────────────────
+# Lazy singletons (per-workdir)
+# ─────────────────────────────────────────────────────────────
+_graph_cache: dict[str, Any] = {}
+_store_cache: dict[str, Any] = {}
+_tdb_cache:   dict[str, Any] = {}
+_cache_lock = threading.Lock()
 
-    wd = workdir
-    app = Flask(__name__)
 
-    # ── 初始化 Brain 組件 ──────────────────────────────────────────────
-    from project_brain.graph import KnowledgeGraph
-    from project_brain.session_store import SessionStore
-    from project_brain.context import ContextEngineer
-    from project_brain.session_store import CATEGORY_CONFIG
+def _graph(workdir: str):
+    with _cache_lock:
+        if workdir not in _graph_cache:
+            from project_brain.graph import KnowledgeGraph
+            _graph_cache[workdir] = KnowledgeGraph(Path(workdir) / ".brain")
+    return _graph_cache[workdir]
 
-    brain_dir = Path(wd) / '.brain'
-    brain_dir.mkdir(parents=True, exist_ok=True)
 
-    # 懶初始化（避免 import 時間過長）
-    _graph_cache  = {}
-    _store_cache  = {}
-
-    def _get_graph():
-        if 'graph' not in _graph_cache:
-            _graph_cache['graph'] = KnowledgeGraph(brain_dir)
-        return _graph_cache['graph']
-
-    def _get_store():
-        if 'store' not in _store_cache:
-            _store_cache['store'] = SessionStore(
-                brain_dir=brain_dir, session_id="api-server"
+def _store(workdir: str):
+    with _cache_lock:
+        if workdir not in _store_cache:
+            from project_brain.session_store import SessionStore
+            _store_cache[workdir] = SessionStore(
+                brain_dir=Path(workdir) / ".brain", session_id="api-server"
             )
-        return _store_cache['store']
+    return _store_cache[workdir]
 
-    # 向後相容別名
-    def _graph():  return _get_graph()
-    def _store():  return _get_store()
-    
-    # 3c: 讀寫分離 — GET 請求用唯讀連線，不受 scan 寫入鎖影響
-    _db_path   = Path(wd) / '.brain' / 'knowledge_graph.db'
-    _read_uri  = f"file:{_db_path}?mode=ro"
-    
-    def _read_conn():
-        """唯讀 SQLite 連線（WAL snapshot read，不阻塞寫入）"""
-        if not _db_path.exists():
-            return None
-        try:
-            import sqlite3 as _sl
-            c = _sl.connect(_read_uri, uri=True, check_same_thread=False)
-            c.row_factory = _sl.Row
-            return c
-        except Exception:
-            return None
-    CORS(app)
-    
-    # ── 認證中間件（v7.0.x 修補）────────────────────────────────
-    _api_key = os.environ.get("BRAIN_API_KEY", "").strip()
-    
-    @app.before_request
-    def _check_auth():
-        """API Key 認證（若 BRAIN_API_KEY 已設定）"""
-        if not _api_key:
-            return  # 未設定 → 不做認證（向後相容）
-        if request.path in ("/health",) or request.method == "OPTIONS":
-            return  # 健康檢查和 CORS preflight 不需認證
-        auth = request.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return jsonify({"error": "未授權：需要 Authorization: Bearer <key>"}), 401
-        if auth[7:].strip() != _api_key:
-            return jsonify({"error": "未授權：API Key 不正確"}), 401
-    
-    
-    # ── L3 端點 ───────────────────────────────────────────────
-    
-    @app.route('/health')
-    def health():
-        ss = _get_store().stats()
-        return jsonify({"status": "ok", "version": "5.0.0",
-                        "workdir": Path(wd).name,
-                        "l3_nodes": _get_graph().stats().get('nodes', 0),
-                        "l1a_entries": ss.get('total', 0),
-                        "l1a_session_id": ss.get('session_id', '')})
-    
-    @app.route('/v1/stats')
-    def stats():
-        s = _get_graph().stats()
-        return jsonify({"l3": {"nodes": s.get('nodes', 0), "edges": s.get('edges', 0),
-                               "by_type": s.get('by_type', {})},
-                        "l1a": _get_store().stats()})
-    
-    @app.route('/v1/knowledge')
-    def knowledge():
-        distill_path = brain_dir / 'distilled' / 'BRAIN_KNOWLEDGE.md'
-        if not distill_path.exists():
-            # 未蒸餾時返回 JSON 形式的知識列表
-            try:
-                nodes = _get_graph()._conn.execute(
-                    "SELECT id, type, title, content, confidence FROM nodes ORDER BY confidence DESC LIMIT 50"
-                ).fetchall()
-                return jsonify([dict(n) for n in nodes]), 200
-            except Exception as e:
-                logger.warning("knowledge list error: %s", e, exc_info=True)
-                return jsonify({"error": "無法取得知識列表，請稍後再試", "nodes": []}), 200
-        return distill_path.read_text('utf-8'), 200, {'Content-Type': 'text/plain; charset=utf-8'}
-    
-    @app.route('/v1/context', methods=['GET', 'POST'])
-    def context():
-        task = (request.args.get('q', '')
-                or (request.json or {}).get('task', ''))
-        if not task:
-            return jsonify({"error": "請提供 q 參數或 task 欄位"}), 400
-        ctx = ContextEngineer(_get_graph(), brain_dir=brain_dir).build(task) or ''
-        l1a = _get_store().search(task, limit=3)
-        if l1a:
-            l1a_sec = "## ⚡ L1 工作記憶\n" + "\n".join(
-                f"- [{e.category}] {e.value[:150]}" for e in l1a) + "\n\n"
-            ctx = l1a_sec + ctx
-        return jsonify({"task": task, "context": ctx, "found": bool(ctx)})
-    
-    @app.route('/v1/messages', methods=['POST'])
-    def messages_compat():
-        data     = request.json or {}
-        messages = data.get('messages', [])
-        task     = next((m['content'] for m in messages if m.get('role') == 'user'), '')
-        ctx      = ContextEngineer(_get_graph(), brain_dir=brain_dir).build(task) or '' if task else ''
-        if task:
-            l1a = _get_store().search(task, limit=3)
-            if l1a:
-                l1a_block = "## ⚡ L1 工作記憶\n" + "\n".join(
-                    f"- [{e.category}] {e.value[:120]}" for e in l1a)
-                ctx = l1a_block + "\n\n" + ctx
-        if ctx:
-            has_sys = any(m.get('role') == 'system' for m in messages)
-            if has_sys:
-                enriched = [{"role": "system",
-                             "content": ctx + "\n\n---\n\n" + m['content']}
-                            if m.get('role') == 'system' else m
-                            for m in messages]
-            else:
-                enriched = [{"role": "system", "content": ctx}] + messages
-        else:
-            enriched = messages
-        return jsonify({"messages": enriched, "knowledge_injected": bool(ctx),
-                        "knowledge_chars": len(ctx)})
-    
-    @app.route('/v1/add', methods=['POST'])
-    def add_knowledge():
-        data = request.json or {}
-        title   = data.get('title', '')
-        content = data.get('content', '')
-        kind    = data.get('kind', 'Pitfall')
-        tags    = data.get('tags', [])
-        if not title:
-            return jsonify({"error": "title 必填"}), 400
-        node_id = _get_graph().add_node(f"api-{os.urandom(4).hex()}", title, content, kind, tags)
-        return jsonify({"node_id": node_id, "kind": kind, "title": title})
-    
-    # ── L1a Session Store 端點（任何 LLM 都能讀寫）───────────
-    
-    @app.route('/v1/session', methods=['GET'])
-    def session_list():
-        cat   = request.args.get('category', None)
-        limit = min(int(request.args.get('limit', 50)), 200)
-        ents  = _get_store().list(category=cat, limit=limit)
-        return jsonify({"entries": [e.to_dict() for e in ents], "count": len(ents),
-                        "session_id": _get_store().session_id,
-                        "categories": list(CATEGORY_CONFIG.keys())})
-    
-    @app.route('/v1/session', methods=['POST'])
-    def session_set():
-        data = request.json or {}
-        key  = data.get('key', '').strip()
-        val  = data.get('value', data.get('content', '')).strip()
-        cat  = data.get('category', 'notes')
-        ttl  = data.get('ttl_days', None)
-        if not key:
-            return jsonify({"error": "key 必填"}), 400
-        if not val:
-            return jsonify({"error": "value 必填"}), 400
-        entry = _get_store().set(key=key, value=val, category=cat, ttl_days=ttl)
-        return jsonify(entry.to_dict()), 201
-    
-    @app.route('/v1/session/<path:key>', methods=['GET'])
-    def session_get(key):
-        entry = _get_store().get(key)
-        if not entry:
-            return jsonify({"error": "條目不存在或已過期"}), 404
-        return jsonify(entry.to_dict())
-    
-    @app.route('/v1/session/<path:key>', methods=['PUT'])
-    def session_update(key):
-        data  = request.json or {}
-        entry = _get_store().get(key)
-        if not entry:
-            return jsonify({"error": "條目不存在"}), 404
-        updated = _get_store().set(key=key,
-                            value=data.get('value', data.get('content', entry.value)),
-                            category=data.get('category', entry.category),
-                            ttl_days=data.get('ttl_days', None))
-        return jsonify(updated.to_dict())
-    
-    @app.route('/v1/session/<path:key>', methods=['DELETE'])
-    def session_delete(key):
-        deleted = _get_store().delete(key)
-        return jsonify({"key": key, "deleted": deleted})
-    
-    @app.route('/v1/session/search', methods=['POST', 'GET'])
-    def session_search():
-        q = request.args.get('q', '') or (request.json or {}).get('q', '')
-        limit = min(int(request.args.get('limit', 10)), 50)
-        if not q:
-            return jsonify({"error": "請提供 q 參數"}), 400
-        hits = _get_store().search(q, limit=limit)
-        return jsonify({"query": q, "results": [e.to_dict() for e in hits],
-                        "count": len(hits)})
-    
-    @app.route('/v1/session/clear', methods=['POST'])
-    def session_clear():
-        count = _get_store().clear_session()
-        return jsonify({"deleted": count, "session_id": _get_store().session_id})
-    
-    # ── 啟動輸出 ─────────────────────────────────────────────
-    
-    # ── Observability 端點（修補：持久化 SQLite）──────────────
-    import sqlite3 as _sq, json as _j
-    _tdb_path = Path(wd) / '.brain' / 'traces.db'
-    
-    _tdb_conn = [None]  # singleton holder
-    
-    def _tdb():
-        """Thread-safe SQLite singleton（WAL 模式）"""
-        if _tdb_conn[0] is None:
-            c = _sq.connect(str(_tdb_path), check_same_thread=False)
-            c.row_factory = _sq.Row
+
+def _tdb(workdir: str):
+    """Traces SQLite connection (WAL, thread-safe)."""
+    with _cache_lock:
+        if workdir not in _tdb_cache:
+            p = Path(workdir) / ".brain" / "traces.db"
+            c = sqlite3.connect(str(p), check_same_thread=False)
+            c.row_factory = sqlite3.Row
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA busy_timeout=3000")
             c.executescript("""
@@ -277,223 +92,528 @@ def create_app(workdir: str, api_key: str = ""):
                 CREATE INDEX IF NOT EXISTS idx_qt_ts ON query_traces(ts DESC);
             """)
             c.commit()
-            _tdb_conn[0] = c
-        return _tdb_conn[0]
-    
-    try: _tdb()
-    except Exception: pass
-    
-    @app.route('/v1/traces', methods=['GET'])
-    def v1_traces():
-        """最近查詢的 traces（修補：持久化版，重啟後仍保留）"""
-        limit = min(int(request.args.get('limit', 20)), 200)
-        since = request.args.get('since', '')
+            _tdb_cache[workdir] = c
+    return _tdb_cache[workdir]
+
+
+# ─────────────────────────────────────────────────────────────
+# HTTP Handler
+# ─────────────────────────────────────────────────────────────
+
+class _Handler(BaseHTTPRequestHandler):
+    workdir: str = ""
+    api_key: str = ""
+
+    def log_message(self, fmt, *args):
+        pass  # suppress per-request noise
+
+    # ── Response helpers ───────────────────────────────────
+    def _json(self, data, status: int = 200):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _text(self, text: str, status: int = 200):
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0))
+        if not length:
+            return {}
+        raw = self.rfile.read(length)
         try:
-            c = _tdb()
-            if since:
-                rows = c.execute("SELECT * FROM query_traces WHERE ts > ? ORDER BY ts DESC LIMIT ?", (since, limit)).fetchall()
+            return json.loads(raw)
+        except Exception:
+            return {}
+
+    # ── Auth ───────────────────────────────────────────────
+    def _authorized(self, path: str) -> bool:
+        key = self.__class__.api_key
+        if not key:
+            return True
+        if path in ("/health",):
+            return True
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            self._json({"error": "未授權：需要 Authorization: Bearer <key>"}, 401)
+            return False
+        if auth[7:].strip() != key:
+            self._json({"error": "未授權：API Key 不正確"}, 401)
+            return False
+        return True
+
+    # ── CORS preflight ─────────────────────────────────────
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    # ── Routing ────────────────────────────────────────────
+    def do_GET(self):
+        self._dispatch("GET")
+
+    def do_POST(self):
+        self._dispatch("POST")
+
+    def do_PUT(self):
+        self._dispatch("PUT")
+
+    def do_DELETE(self):
+        self._dispatch("DELETE")
+
+    def _dispatch(self, method: str):
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            path   = parsed.path
+            qs     = urllib.parse.parse_qs(parsed.query)
+            body   = self._read_body() if method in ("POST", "PUT") else {}
+
+            if not self._authorized(path):
+                return
+
+            wd = self.__class__.workdir
+
+            # Static routes
+            if path == "/health" and method == "GET":
+                return self._health(wd)
+            if path == "/v1/stats" and method == "GET":
+                return self._stats(wd)
+            if path == "/v1/knowledge" and method == "GET":
+                return self._knowledge(wd)
+            if path == "/v1/context" and method in ("GET", "POST"):
+                return self._context(wd, qs, body)
+            if path == "/v1/messages" and method == "POST":
+                return self._messages(wd, body)
+            if path == "/v1/add" and method == "POST":
+                return self._add(wd, body)
+            # Traces
+            if path == "/v1/traces" and method == "GET":
+                return self._traces(wd, qs)
+            if path == "/v1/traces/clear" and method == "POST":
+                return self._traces_clear(wd)
+            if path == "/v1/traces/stats" and method == "GET":
+                return self._traces_stats(wd)
+            # Nudges
+            if path == "/v1/nudges" and method == "GET":
+                return self._nudges(wd, qs)
+            if path == "/v1/nudges/stream" and method == "GET":
+                return self._nudges_stream(wd, qs)
+            # Events
+            if path == "/v1/events" and method == "GET":
+                return self._events(wd, qs)
+            # Webhooks
+            if path == "/webhook/slack" and method == "POST":
+                return self._webhook_slack(wd, body)
+            if path == "/webhook/github" and method == "POST":
+                return self._webhook_github(wd, body)
+
+            # Session routes (with path params)
+            if path == "/v1/session/search" and method in ("GET", "POST"):
+                return self._session_search(wd, qs, body)
+            if path == "/v1/session/clear" and method == "POST":
+                return self._session_clear(wd)
+            if path == "/v1/session" and method == "GET":
+                return self._session_list(wd, qs)
+            if path == "/v1/session" and method == "POST":
+                return self._session_set(wd, body)
+            m = re.fullmatch(r"/v1/session/(.+)", path)
+            if m:
+                key = urllib.parse.unquote(m.group(1))
+                if method == "GET":    return self._session_get(wd, key)
+                if method == "PUT":    return self._session_update(wd, key, body)
+                if method == "DELETE": return self._session_delete(wd, key)
+
+            self._json({"error": "not found"}, 404)
+        except Exception as exc:
+            logger.exception("%s %s", method, self.path)
+            self._json({"error": "內部錯誤，請稍後再試"}, 500)
+
+    # ── /health ────────────────────────────────────────────
+    def _health(self, wd: str):
+        try:
+            ss = _store(wd).stats()
+            l3 = _graph(wd).stats().get("nodes", 0)
+        except Exception:
+            ss = {}; l3 = 0
+        self._json({
+            "status": "ok", "version": _VERSION,
+            "workdir": Path(wd).name,
+            "l3_nodes": l3,
+            "l1a_entries": ss.get("total", 0),
+            "l1a_session_id": ss.get("session_id", ""),
+        })
+
+    # ── /v1/stats ──────────────────────────────────────────
+    def _stats(self, wd: str):
+        s = _graph(wd).stats()
+        self._json({
+            "l3":  {"nodes": s.get("nodes", 0), "edges": s.get("edges", 0),
+                    "by_type": s.get("by_type", {})},
+            "l1a": _store(wd).stats(),
+        })
+
+    # ── /v1/knowledge ──────────────────────────────────────
+    def _knowledge(self, wd: str):
+        distill = Path(wd) / ".brain" / "distilled" / "BRAIN_KNOWLEDGE.md"
+        if distill.exists():
+            return self._text(distill.read_text("utf-8"))
+        try:
+            g  = _graph(wd)
+            rows = g._conn.execute(
+                "SELECT id, type, title, content, confidence "
+                "FROM nodes ORDER BY confidence DESC LIMIT 50"
+            ).fetchall()
+            self._json([dict(r) for r in rows])
+        except Exception as exc:
+            logger.warning("knowledge list: %s", exc)
+            self._json({"error": "無法取得知識列表，請稍後再試", "nodes": []})
+
+    # ── /v1/context ────────────────────────────────────────
+    def _context(self, wd: str, qs: dict, body: dict):
+        task = (qs.get("q", [""])[0] or body.get("task", "")).strip()
+        if not task:
+            self._json({"error": "請提供 q 參數或 task 欄位"}, 400); return
+        from project_brain.context import ContextEngineer
+        ctx = ContextEngineer(_graph(wd), brain_dir=Path(wd) / ".brain").build(task) or ""
+        l1a = _store(wd).search(task, limit=3)
+        if l1a:
+            ctx = "## ⚡ L1 工作記憶\n" + "\n".join(
+                f"- [{e.category}] {e.value[:150]}" for e in l1a
+            ) + "\n\n" + ctx
+        self._json({"task": task, "context": ctx, "found": bool(ctx)})
+
+    # ── /v1/messages ───────────────────────────────────────
+    def _messages(self, wd: str, body: dict):
+        messages = body.get("messages", [])
+        task = next((m["content"] for m in messages if m.get("role") == "user"), "")
+        ctx  = ""
+        if task:
+            from project_brain.context import ContextEngineer
+            ctx = ContextEngineer(_graph(wd), brain_dir=Path(wd) / ".brain").build(task) or ""
+            l1a = _store(wd).search(task, limit=3)
+            if l1a:
+                ctx = "## ⚡ L1 工作記憶\n" + "\n".join(
+                    f"- [{e.category}] {e.value[:120]}" for e in l1a
+                ) + "\n\n" + ctx
+        if ctx:
+            has_sys = any(m.get("role") == "system" for m in messages)
+            if has_sys:
+                enriched = [
+                    {"role": "system", "content": ctx + "\n\n---\n\n" + m["content"]}
+                    if m.get("role") == "system" else m
+                    for m in messages
+                ]
             else:
-                rows = c.execute("SELECT * FROM query_traces ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
-            total = c.execute("SELECT COUNT(*) FROM query_traces").fetchone()[0]
+                enriched = [{"role": "system", "content": ctx}] + messages
+        else:
+            enriched = messages
+        self._json({"messages": enriched, "knowledge_injected": bool(ctx),
+                    "knowledge_chars": len(ctx)})
+
+    # ── /v1/add ────────────────────────────────────────────
+    def _add(self, wd: str, body: dict):
+        title   = body.get("title", "").strip()
+        content = body.get("content", "")
+        kind    = body.get("kind", "Pitfall")
+        tags    = body.get("tags", [])
+        if not title:
+            self._json({"error": "title 必填"}, 400); return
+        node_id = _graph(wd).add_node(
+            f"api-{os.urandom(4).hex()}", title, content, kind, tags
+        )
+        self._json({"node_id": node_id, "kind": kind, "title": title})
+
+    # ── /v1/session ────────────────────────────────────────
+    def _session_list(self, wd: str, qs: dict):
+        from project_brain.session_store import CATEGORY_CONFIG
+        cat   = qs.get("category", [None])[0]
+        limit = min(int(qs.get("limit", ["50"])[0]), 200)
+        ents  = _store(wd).list(category=cat, limit=limit)
+        self._json({
+            "entries":    [e.to_dict() for e in ents],
+            "count":      len(ents),
+            "session_id": _store(wd).session_id,
+            "categories": list(CATEGORY_CONFIG.keys()),
+        })
+
+    def _session_set(self, wd: str, body: dict):
+        key = body.get("key", "").strip()
+        val = body.get("value", body.get("content", "")).strip()
+        cat = body.get("category", "notes")
+        ttl = body.get("ttl_days", None)
+        if not key:
+            self._json({"error": "key 必填"}, 400); return
+        if not val:
+            self._json({"error": "value 必填"}, 400); return
+        entry = _store(wd).set(key=key, value=val, category=cat, ttl_days=ttl)
+        self._json(entry.to_dict(), 201)
+
+    def _session_get(self, wd: str, key: str):
+        entry = _store(wd).get(key)
+        if not entry:
+            self._json({"error": "條目不存在或已過期"}, 404); return
+        self._json(entry.to_dict())
+
+    def _session_update(self, wd: str, key: str, body: dict):
+        entry = _store(wd).get(key)
+        if not entry:
+            self._json({"error": "條目不存在"}, 404); return
+        updated = _store(wd).set(
+            key=key,
+            value=body.get("value", body.get("content", entry.value)),
+            category=body.get("category", entry.category),
+            ttl_days=body.get("ttl_days", None),
+        )
+        self._json(updated.to_dict())
+
+    def _session_delete(self, wd: str, key: str):
+        deleted = _store(wd).delete(key)
+        self._json({"key": key, "deleted": deleted})
+
+    def _session_search(self, wd: str, qs: dict, body: dict):
+        q     = (qs.get("q", [""])[0] or body.get("q", "")).strip()
+        limit = min(int(qs.get("limit", ["10"])[0]), 50)
+        if not q:
+            self._json({"error": "請提供 q 參數"}, 400); return
+        hits = _store(wd).search(q, limit=limit)
+        self._json({"query": q, "results": [e.to_dict() for e in hits],
+                    "count": len(hits)})
+
+    def _session_clear(self, wd: str):
+        count = _store(wd).clear_session()
+        self._json({"deleted": count, "session_id": _store(wd).session_id})
+
+    # ── /v1/traces ─────────────────────────────────────────
+    def _traces(self, wd: str, qs: dict):
+        limit = min(int(qs.get("limit", ["20"])[0]), 200)
+        since = qs.get("since", [""])[0]
+        try:
+            db = _tdb(wd)
+            if since:
+                rows = db.execute(
+                    "SELECT * FROM query_traces WHERE ts > ? ORDER BY ts DESC LIMIT ?",
+                    (since, limit)
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM query_traces ORDER BY ts DESC LIMIT ?", (limit,)
+                ).fetchall()
+            total = db.execute("SELECT COUNT(*) FROM query_traces").fetchone()[0]
             out = []
             for r in rows:
                 d = dict(r)
-                try: d['traces'] = _j.loads(d.pop('traces_json', '[]'))
-                except: d['traces'] = []
+                try:    d["traces"] = json.loads(d.pop("traces_json", "[]"))
+                except: d["traces"] = []
                 out.append(d)
-            return jsonify({'traces': out, 'total': total})
-        except Exception as e:
-            logger.warning("traces fetch error: %s", e, exc_info=True)
-            return jsonify({'traces': [], 'total': 0, 'error': '無法取得追蹤記錄'}), 500
-    
-    @app.route('/v1/traces/clear', methods=['POST'])
-    def v1_traces_clear():
-        try:
-            c = _tdb(); c.execute("DELETE FROM query_traces"); c.commit()
-            return jsonify({'ok': True})
-        except Exception as e:
-            logger.warning("traces clear error: %s", e, exc_info=True)
-            return jsonify({'ok': False, 'error': '清除追蹤記錄時發生錯誤'}), 500
-    
-    @app.route('/v1/traces/stats', methods=['GET'])
-    def v1_traces_stats():
-        """p50/p95/max 延遲統計"""
-        try:
-            rows = _tdb().execute("SELECT total_ms FROM query_traces ORDER BY ts DESC LIMIT 200").fetchall()
-            if not rows: return jsonify({'count': 0})
-            ms = sorted([r[0] for r in rows])
-            return jsonify({'count': len(ms), 'avg_ms': round(sum(ms)/len(ms),1),
-                            'p95_ms': ms[int(len(ms)*.95)], 'max_ms': max(ms)})
-        except Exception as e:
-            logger.warning("traces stats error: %s", e, exc_info=True)
-            return jsonify({'error': '無法取得統計資料'}), 500
+            self._json({"traces": out, "total": total})
+        except Exception as exc:
+            logger.warning("traces: %s", exc)
+            self._json({"traces": [], "total": 0, "error": "無法取得追蹤記錄"}, 500)
 
-    # ── /v1/nudges — 主動提醒端點（v8.0 NudgeEngine）────────────────
-    @app.route('/v1/nudges', methods=['GET'])
-    def v1_nudges():
-        """
-        主動提醒：根據當前任務查詢相關踩坑（v8.0）。
-    
-        Query params:
-          task     任務描述（關鍵字）
-          top_k    最多回傳幾條（預設 5）
-    
-        用法：
-          curl "http://localhost:7891/v1/nudges?task=實作+Stripe+退款"
-        """
-        task  = request.args.get('task', '').strip()
-        top_k = min(int(request.args.get('top_k', 5)), 20)
+    def _traces_clear(self, wd: str):
+        try:
+            db = _tdb(wd)
+            db.execute("DELETE FROM query_traces")
+            db.commit()
+            self._json({"ok": True})
+        except Exception as exc:
+            logger.warning("traces clear: %s", exc)
+            self._json({"ok": False, "error": "清除追蹤記錄時發生錯誤"}, 500)
+
+    def _traces_stats(self, wd: str):
+        try:
+            rows = _tdb(wd).execute(
+                "SELECT total_ms FROM query_traces ORDER BY ts DESC LIMIT 200"
+            ).fetchall()
+            if not rows:
+                self._json({"count": 0}); return
+            ms = sorted(r[0] for r in rows)
+            self._json({
+                "count":   len(ms),
+                "avg_ms":  round(sum(ms) / len(ms), 1),
+                "p95_ms":  ms[int(len(ms) * 0.95)],
+                "max_ms":  max(ms),
+            })
+        except Exception as exc:
+            logger.warning("traces stats: %s", exc)
+            self._json({"error": "無法取得統計資料"}, 500)
+
+    # ── /v1/nudges ─────────────────────────────────────────
+    def _nudges(self, wd: str, qs: dict):
+        task  = qs.get("task", [""])[0].strip()
+        top_k = min(int(qs.get("top_k", ["5"])[0]), 20)
         if not task:
-            return jsonify({'error': 'task 參數必填'}), 400
+            self._json({"error": "task 參數必填"}, 400); return
         try:
             from project_brain.nudge_engine import NudgeEngine
-            from project_brain.graph import KnowledgeGraph
-            g      = KnowledgeGraph(Path(wd) / '.brain')
-            engine = NudgeEngine(g)
-            nudges = engine.check(task, top_k=top_k)
-            return jsonify({
-                'task':  task,
-                'count': len(nudges),
-                'nudges': [n.to_dict() for n in nudges],
-            })
-        except Exception as e:
-            logger.warning("nudges error: %s", e, exc_info=True)
-            return jsonify({'error': '無法取得提醒，請稍後再試'}), 500
+            nudges = NudgeEngine(_graph(wd)).check(task, top_k=top_k)
+            self._json({"task": task, "count": len(nudges),
+                        "nudges": [n.to_dict() for n in nudges]})
+        except Exception as exc:
+            logger.warning("nudges: %s", exc)
+            self._json({"error": "無法取得提醒，請稍後再試"}, 500)
 
-    # ── /v1/nudges/stream — SSE 主動推送（v8.1）─────────────────────────────
-    @app.route('/v1/nudges/stream')
-    def v1_nudges_stream():
-        """Server-Sent Events 推送：Brain 主動推送相關踩坑（v8.1）。
-    
-        用法：curl -N 'http://localhost:7891/v1/nudges/stream?task=實作支付'
-        """
-        import time
-        task  = request.args.get('task', '').strip()
-        top_k = min(int(request.args.get('top_k', 5)), 10)
-    
-        def _stream():
-            """事件驅動 SSE：訂閱 BrainEventBus，有新事件才推送（v9.0）"""
-            import json as _json, queue as _q
-            evt_q = _q.Queue(maxsize=20)
-            # 訂閱 L1a 寫入 + git commit 事件
+    # ── /v1/nudges/stream (SSE) ────────────────────────────
+    def _nudges_stream(self, wd: str, qs: dict):
+        task  = qs.get("task", [""])[0].strip()
+        top_k = min(int(qs.get("top_k", ["5"])[0]), 10)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def _push(trigger: str):
+            try:
+                from project_brain.nudge_engine import NudgeEngine
+                nudges = NudgeEngine(_graph(wd)).check(task or "general", top_k=top_k)
+                data = json.dumps({
+                    "task": task, "count": len(nudges), "trigger": trigger,
+                    "nudges": [n.to_dict() for n in nudges],
+                }, ensure_ascii=False)
+            except Exception as exc:
+                data = json.dumps({"error": str(exc)[:100], "trigger": trigger})
+            self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            import queue as _q
+            evt_q: _q.Queue = _q.Queue(maxsize=20)
             try:
                 from project_brain.event_bus import BrainEventBus
-                bus = BrainEventBus(Path(wd) / '.brain')
-                @bus.on('brain.session')
+                bus = BrainEventBus(Path(wd) / ".brain")
+                @bus.on("brain.session")
                 def _on_s(p):
                     try: evt_q.put_nowait(p)
                     except _q.Full: pass
-                @bus.on('git.commit')
+                @bus.on("git.commit")
                 def _on_c(p):
                     try: evt_q.put_nowait(p)
                     except _q.Full: pass
             except Exception:
                 pass
-            # 初始推送
-            def _push_nudges(trigger):
-                try:
-                    from project_brain.nudge_engine import NudgeEngine
-                    from project_brain.graph import KnowledgeGraph
-                    g = KnowledgeGraph(Path(wd) / '.brain')
-                    nudges = NudgeEngine(g).check(task or 'general', top_k=top_k)
-                    return json.dumps({'task': task, 'count': len(nudges),
-                                        'trigger': trigger,
-                                        'nudges': [n.to_dict() for n in nudges]},
-                                       ensure_ascii=False)
-                except Exception as e:
-                    logger.warning("nudge push error: %s", e, exc_info=True)
-                    return json.dumps({'error': '推送失敗，請稍後重試', 'trigger': trigger})
-            yield f'data: {_push_nudges("init")}\n\n'
-            # 事件驅動循環（有事件立即推送，否則每 60s 心跳）
+            _push("init")
             while True:
                 try:
                     evt_q.get(timeout=60)
-                    yield f'data: {_push_nudges("event")}\n\n'
+                    _push("event")
                 except _q.Empty:
-                    yield ': keepalive\n\n'
-                except GeneratorExit:
-                    break
-                except Exception as e:
-                    logger.warning("nudge stream error: %s", e, exc_info=True)
-                    yield 'data: {"error": "串流發生錯誤"}\n\n'
-    
-        return app.response_class(
-            _stream(),
-            mimetype='text/event-stream',
-            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
-        )
-    
-    # ── /v1/events — EventBus 查詢（v8.0）───────────────────────────
-    @app.route('/v1/events', methods=['GET'])
-    def v1_events():
-        """查詢最近事件記錄（v8.0 BrainEventBus）"""
-        event_type = request.args.get('type', '')
-        limit      = min(int(request.args.get('limit', 20)), 100)
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    # ── /v1/events ─────────────────────────────────────────
+    def _events(self, wd: str, qs: dict):
+        event_type = qs.get("type", [""])[0]
+        limit      = min(int(qs.get("limit", ["20"])[0]), 100)
         try:
             from project_brain.event_bus import BrainEventBus
-            bus    = BrainEventBus(Path(wd) / '.brain')
+            bus    = BrainEventBus(Path(wd) / ".brain")
             events = bus.recent(event_type=event_type, limit=limit)
-            return jsonify({
-                'count':  len(events),
-                'events': [{'id': e.id, 'ts': e.ts, 'type': e.event_type,
-                            'payload': e.payload, 'processed': e.processed}
-                           for e in events],
+            self._json({
+                "count": len(events),
+                "events": [
+                    {"id": e.id, "ts": e.ts, "type": e.event_type,
+                     "payload": e.payload, "processed": e.processed}
+                    for e in events
+                ],
             })
-        except Exception as e:
-            logger.warning("events fetch error: %s", e, exc_info=True)
-            return jsonify({'error': '無法取得事件記錄'}), 500
+        except Exception as exc:
+            logger.warning("events: %s", exc)
+            self._json({"error": "無法取得事件記錄"}, 500)
 
-    # ── FEAT-10: Webhook 端點 ─────────────────────────────────────────
-
-    @app.route('/webhook/slack', methods=['POST'])
-    def webhook_slack():
-        """FEAT-10: 接收 nudge 並推送到 Slack Incoming Webhook。
-
-        設定環境變數：BRAIN_SLACK_WEBHOOK_URL=https://hooks.slack.com/...
-        請求體：{"task": "...", "message": "..."}  （可選）
-        """
-        import urllib.request
-        slack_url = os.environ.get('BRAIN_SLACK_WEBHOOK_URL', '')
+    # ── /webhook/slack ─────────────────────────────────────
+    def _webhook_slack(self, wd: str, body: dict):
+        import urllib.request as _ur
+        slack_url = os.environ.get("BRAIN_SLACK_WEBHOOK_URL", "")
         if not slack_url:
-            return jsonify({'error': 'BRAIN_SLACK_WEBHOOK_URL 未設定'}), 400
-        data = request.get_json(silent=True) or {}
-        task = str(data.get('task', ''))[:200]
-        msg  = str(data.get('message', task or 'Brain nudge'))[:500]
-        payload = json.dumps({'text': f'🧠 *Project Brain*: {msg}'}).encode()
+            self._json({"error": "BRAIN_SLACK_WEBHOOK_URL 未設定"}, 400); return
+        task = str(body.get("task", ""))[:200]
+        msg  = str(body.get("message", task or "Brain nudge"))[:500]
+        payload = json.dumps({"text": f"🧠 *Project Brain*: {msg}"}).encode()
         try:
-            req = urllib.request.Request(
+            req = _ur.Request(
                 slack_url, data=payload,
-                headers={'Content-Type': 'application/json'}, method='POST'
+                headers={"Content-Type": "application/json"}, method="POST"
             )
-            with urllib.request.urlopen(req, timeout=5) as r:
+            with _ur.urlopen(req, timeout=5) as r:
                 ok = r.status == 200
         except Exception as exc:
-            return jsonify({'error': str(exc)[:100]}), 500
-        return jsonify({'sent': ok})
+            self._json({"error": str(exc)[:100]}, 500); return
+        self._json({"sent": ok})
 
-    @app.route('/webhook/github', methods=['POST'])
-    def webhook_github():
-        """FEAT-10: 接收 GitHub push 事件，觸發 brain sync。
-
-        GitHub Webhook 設定：Content-Type: application/json, Event: push
-        """
+    # ── /webhook/github ────────────────────────────────────
+    def _webhook_github(self, wd: str, body: dict):
         import subprocess
-        event = request.headers.get('X-GitHub-Event', '')
-        if event not in ('push', 'ping'):
-            return jsonify({'skipped': True, 'reason': 'not push/ping'}), 200
-        if event == 'ping':
-            return jsonify({'pong': True}), 200
+        event = self.headers.get("X-GitHub-Event", "")
+        if event == "ping":
+            self._json({"pong": True}); return
+        if event != "push":
+            self._json({"skipped": True, "reason": "not push/ping"}); return
         try:
             result = subprocess.run(
-                ['brain', 'sync', '--workdir', wd, '--quiet'],
+                ["brain", "sync", "--workdir", wd, "--quiet"],
                 capture_output=True, text=True, timeout=30
             )
-            return jsonify({
-                'synced': result.returncode == 0,
-                'stdout': result.stdout[:200],
-                'stderr': result.stderr[:200],
+            self._json({
+                "synced": result.returncode == 0,
+                "stdout": result.stdout[:200],
+                "stderr": result.stderr[:200],
             })
         except Exception as exc:
-            return jsonify({'error': str(exc)[:100]}), 500
+            self._json({"error": str(exc)[:100]}, 500)
 
-    return app
+
+# ─────────────────────────────────────────────────────────────
+# Public API
+# ─────────────────────────────────────────────────────────────
+
+def run_server(workdir: str, port: int = 7891, host: str = "0.0.0.0",
+               api_key: str = "") -> None:
+    """Start the REST API server (blocking). Ctrl+C to stop."""
+    _Handler.workdir = str(workdir)
+    _Handler.api_key = api_key
+    server = HTTPServer((host, port), _Handler)
+    # Pre-warm connections
+    try:
+        _tdb(str(workdir))
+    except Exception:
+        pass
+    logger.info("Project Brain API server started on %s:%s", host, port)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def create_app(workdir: str, api_key: str = ""):
+    """
+    Backwards-compatible shim — returns an object with a .run() method.
+    New code should call run_server() directly.
+    """
+    class _Compat:
+        def __init__(self, wd, key):
+            self._wd  = wd
+            self._key = key
+
+        def run(self, host: str = "0.0.0.0", port: int = 7891, **_):
+            run_server(self._wd, port, host, self._key)
+
+    return _Compat(workdir, api_key)

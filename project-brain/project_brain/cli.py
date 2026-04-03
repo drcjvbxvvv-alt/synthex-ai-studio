@@ -849,35 +849,16 @@ def cmd_serve(args):
         os.environ['BRAIN_SLACK_WEBHOOK_URL'] = slack_wh
         _info(f"Slack Webhook 已設定")
 
-    try:
-        from flask import Flask, request, jsonify
-        from flask_cors import CORS
-    except ImportError:
-        _err("請安裝依賴：pip install flask flask-cors")
-        return
+    from project_brain.api_server import run_server as _api_run
 
-    from project_brain.engine import ProjectBrain
-    from project_brain.session_store import SessionStore, CATEGORY_CONFIG
-
-    brain = ProjectBrain(wd)
-    store = SessionStore(brain_dir=brain_dir)
-
-    # ── Flask App（routes 定義在 core/brain/api_server.py）────────────
-
-    from project_brain.api_server import create_app
-
-    _api_key = os.environ.get('BRAIN_API_KEY','') or os.environ.get('ANTHROPIC_API_KEY','')
-    app = create_app(workdir=wd, api_key=_api_key)
-
-    # ── 啟動模式（3b + 3c：生產/開發二選一）────────────────────────
+    _api_key  = os.environ.get('BRAIN_API_KEY', '') or os.environ.get('ANTHROPIC_API_KEY', '')
+    bind_host = getattr(args, 'host', '0.0.0.0')
     production = getattr(args, 'production', False)
     workers    = getattr(args, 'workers', 4)
-    bind_host  = getattr(args, 'host', '0.0.0.0')
 
     if production:
         # 生產模式：Gunicorn multi-worker
         print(f"\n  {G}⚡ Production 模式：Gunicorn {workers} workers{R}")
-        print(f"  {D}  比 Flask dev server 高 {workers}x 吞吐量{R}")
         try:
             import subprocess
             cmd = [
@@ -895,11 +876,10 @@ def cmd_serve(args):
             subprocess.execvp("gunicorn", cmd)
         except FileNotFoundError:
             _err("Gunicorn 未安裝：pip install gunicorn")
-            _info("退回開發模式...")
-            app.run(host=bind_host, port=port, debug=False, use_reloader=False, threaded=True)
+            _info("退回標準模式...")
+            _api_run(workdir=wd, port=port, host=bind_host, api_key=_api_key)
     else:
-        # 開發模式（預設）：Flask dev server with threaded=True
-        app.run(host=bind_host, port=port, debug=False, use_reloader=False, threaded=True)
+        _api_run(workdir=wd, port=port, host=bind_host, api_key=_api_key)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1700,8 +1680,6 @@ def cmd_doctor(args):
             else:
                 _err2(f"{pkg} 未安裝", f"pip install {pkg}{extra}")
 
-    _check_pkg("flask")
-    _check_pkg("flask-cors",  "flask_cors")
     _check_pkg("anthropic",   optional=True)
     _check_pkg("mcp",         optional=True)
     _check_pkg("openai",      optional=True, extra="  （Ollama / LM Studio）")

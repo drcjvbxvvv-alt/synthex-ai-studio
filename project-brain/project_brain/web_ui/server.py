@@ -1,5 +1,5 @@
 """
-project_brain/web_ui/server.py — 知識圖譜視覺化 Web UI（v5.0）
+project_brain/web_ui/server.py — 知識圖譜視覺化 Web UI（v1.0）
 
 純 Python http.server + 純 JavaScript（無 Flask、無 D3.js CDN）。
 離線可用，零外部框架依賴。
@@ -16,10 +16,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MAX_QUERY_LEN  = 200
+MAX_QUERY_LEN = 200
 MAX_NODES_RETURN = 500
-HOST           = "127.0.0.1"
-_VERSION       = "5.0"
+HOST = "127.0.0.1"
+_VERSION = "1.0"
 
 KIND_COLOR = {
     "Pitfall":      "#f87171",
@@ -39,17 +39,24 @@ NODE_SIZE = {
 
 
 def _conf_color(c: float) -> str:
-    if c >= 0.75: return "#34d399"
-    if c >= 0.50: return "#86efac"
-    if c >= 0.30: return "#fbbf24"
-    if c >= 0.15: return "#f97316"
+    if c >= 0.75:
+        return "#34d399"
+    if c >= 0.50:
+        return "#86efac"
+    if c >= 0.30:
+        return "#fbbf24"
+    if c >= 0.15:
+        return "#f97316"
     return "#f87171"
 
 
 def _conf_label(c: float) -> str:
-    if c >= 0.80: return "✓✓ 權威"
-    if c >= 0.60: return "✓ 已驗證"
-    if c >= 0.30: return "~ 推斷"
+    if c >= 0.80:
+        return "✓✓ 權威"
+    if c >= 0.60:
+        return "✓ 已驗證"
+    if c >= 0.30:
+        return "~ 推斷"
     return "⚠ 推測"
 
 
@@ -110,8 +117,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             parsed = urllib.parse.urlparse(self.path)
-            path   = parsed.path
-            qs     = urllib.parse.parse_qs(parsed.query)
+            path = parsed.path
+            qs = urllib.parse.parse_qs(parsed.query)
             if path == "/":
                 wd = self.__class__.workdir
                 self._html(_generate_html(str(wd)))
@@ -135,9 +142,10 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             parsed = urllib.parse.urlparse(self.path)
-            path   = parsed.path
+            path = parsed.path
             length = int(self.headers.get("Content-Length", 0))
-            body   = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            body = json.loads(self.rfile.read(length)
+                              or b"{}") if length else {}
             if path.startswith("/api/node/") and path.endswith("/pin"):
                 nid = path[len("/api/node/"):-len("/pin")]
                 self._route_pin(nid, body)
@@ -150,15 +158,16 @@ class _Handler(BaseHTTPRequestHandler):
     # ── API: /api/graph ──────────────────────
     def _route_graph(self, qs):
         limit = min(MAX_NODES_RETURN, int(qs.get("limit", ["300"])[0]))
-        kind  = qs.get("kind", [None])[0]
-        conn  = self._db()
+        kind = qs.get("kind", [None])[0]
+        conn = self._db()
         try:
             cols = "id, kind, title, content, tags, created_at, confidence, is_pinned, scope"
             try:
                 if kind:
                     sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
                     rows = conn.execute(
-                        f"SELECT {cols} FROM nodes WHERE kind=? LIMIT ?", (sk, limit)
+                        f"SELECT {cols} FROM nodes WHERE kind=? LIMIT ?", (
+                            sk, limit)
                     ).fetchall()
                 else:
                     rows = conn.execute(
@@ -170,7 +179,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if kind:
                     sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
                     rows = conn.execute(
-                        f"SELECT {cols2} FROM nodes WHERE type=? LIMIT ?", (sk, limit)
+                        f"SELECT {cols2} FROM nodes WHERE type=? LIMIT ?", (
+                            sk, limit)
                     ).fetchall()
                 else:
                     rows = conn.execute(
@@ -179,7 +189,7 @@ class _Handler(BaseHTTPRequestHandler):
 
             nodes, node_ids = [], set()
             for r in rows:
-                k    = self._col(r, "kind") or "Note"
+                k = self._col(r, "kind") or "Note"
                 conf = float(self._col(r, "confidence") or 0.7)
                 nodes.append({
                     "id":        r["id"],
@@ -200,8 +210,8 @@ class _Handler(BaseHTTPRequestHandler):
 
             links = []
             if node_ids:
-                ph   = ",".join("?" * len(node_ids))
-                ids  = list(node_ids)
+                ph = ",".join("?" * len(node_ids))
+                ids = list(node_ids)
                 try:
                     erows = conn.execute(
                         f"SELECT source_id, target_id, relation_type FROM edges "
@@ -225,7 +235,8 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             total = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
             try:
-                edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+                edges = conn.execute(
+                    "SELECT COUNT(*) FROM edges").fetchone()[0]
             except Exception:
                 edges = 0
             try:
@@ -265,7 +276,8 @@ class _Handler(BaseHTTPRequestHandler):
     def _route_search(self, qs):
         q = (qs.get("q", [""])[0] or "")[:MAX_QUERY_LEN].strip()
         if not q:
-            self._json({"results": []}); return
+            self._json({"results": []})
+            return
         conn = self._db()
         try:
             try:
@@ -303,7 +315,8 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 row = conn.execute(
                     "SELECT id, kind, title, content, tags, created_at, "
-                    "confidence, is_pinned, scope FROM nodes WHERE id=?", (safe,)
+                    "confidence, is_pinned, scope FROM nodes WHERE id=?", (
+                        safe,)
                 ).fetchone()
             except sqlite3.OperationalError:
                 row = conn.execute(
@@ -311,7 +324,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "FROM nodes WHERE id=?", (safe,)
                 ).fetchone()
             if not row:
-                self._json({"error": "節點不存在"}, 404); return
+                self._json({"error": "節點不存在"}, 404)
+                return
             try:
                 nbrs = conn.execute(
                     "SELECT n.id, n.kind, n.title, e.relation_type "
@@ -327,7 +341,7 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
         conf = float(self._col(row, "confidence") or 0.7)
-        k    = row["kind"] or "Note"
+        k = row["kind"] or "Note"
         self._json({
             "id":          row["id"],
             "kind":        k,
@@ -355,16 +369,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── API: POST /api/node/<id>/pin ─────────
     def _route_pin(self, node_id: str, body: dict):
-        safe   = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
         pinned = bool(body.get("pinned", True))
-        conn   = self._db()
+        conn = self._db()
         try:
             cur = conn.execute(
-                "UPDATE nodes SET is_pinned=? WHERE id=?", (1 if pinned else 0, safe)
+                "UPDATE nodes SET is_pinned=? WHERE id=?", (
+                    1 if pinned else 0, safe)
             )
             conn.commit()
             if cur.rowcount == 0:
-                self._json({"error": "節點不存在"}, 404); return
+                self._json({"error": "節點不存在"}, 404)
+                return
             self._json({"ok": True, "id": safe, "pinned": pinned})
         finally:
             conn.close()

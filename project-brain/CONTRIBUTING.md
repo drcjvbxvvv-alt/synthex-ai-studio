@@ -11,7 +11,7 @@ git clone https://github.com/your-org/project-brain
 cd project-brain
 
 # 安裝開發依賴
-pip install flask flask-cors pytest pytest-cov
+pip install pytest pytest-cov
 
 # 執行測試
 python -m pytest tests/ -v

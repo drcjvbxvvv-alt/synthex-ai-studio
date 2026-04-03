@@ -96,7 +96,7 @@ print("✓ SQLite 擴充支援已開啟")
 pip install "project-brain[mcp]"
 ```
 
-這會安裝：`flask`、`flask-cors`、`sqlite-vec`、`mcp`
+這會安裝：`sqlite-vec`、`mcp`
 
 ---
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "project-brain"
-version         = "0.1.0"
+version         = "0.2.0"
 description     = "AI Memory System — stores, retrieves and decays project knowledge for LLM-assisted development"
 readme          = "README.md"
 license         = { text = "MIT" }
@@ -28,8 +28,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "flask>=3.0.0",
-    "flask-cors>=4.0.0",
     "sqlite-vec>=0.1.0",
 ]
 
@@ -68,7 +66,7 @@ omit     = [
     "tests/*",
     "brain.py",
     "project_brain/cli.py",       # CLI layer，由 test_brain.py 整合測試覆蓋
-    "project_brain/api_server.py", # Flask routes，需要 client 環境測試
+    "project_brain/api_server.py", # HTTP routes，需要真實伺服器環境測試
     "project_brain/mcp_server.py", # MCP，需要 mcp 套件
     "project_brain/web_ui/*",      # 前端靜態檔案
 ]
