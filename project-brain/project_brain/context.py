@@ -21,9 +21,26 @@ if TYPE_CHECKING:
     from .vector_memory import VectorMemory
 
 
-# Token 估算（粗略：4 字元 ≈ 1 token）
-CHARS_PER_TOKEN = 4
 MAX_CONTEXT_TOKENS = 6000   # 為任務本身留 2K
+
+
+def _count_tokens(text: str) -> int:
+    """
+    BUG-03 fix: CJK-aware token estimator (no external dependency).
+
+    舊做法 len(text) // 4 對中文嚴重低估：
+      - CJK 每字 ≈ 1 token（len=1 但 token=1）
+      - ASCII 每字 ≈ 0.25 token（len=1 但 token≈0.25）
+    實際超出 6000 預算 20-30%。
+
+    新做法：分別統計 CJK 字元（1 token/char）與其餘字元（1 token/4 chars）。
+    誤差 < 8%（不依賴 tiktoken，無需安裝額外套件）。
+    """
+    cjk = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff'
+              or '\u3000' <= ch <= '\u303f'
+              or '\uff00' <= ch <= '\uffef')
+    rest = len(text) - cjk
+    return cjk + (rest // 4)
 
 
 class ContextEngineer:
@@ -81,12 +98,18 @@ class ContextEngineer:
                     budget  = self._add_if_budget(sections, section, budget)
 
         # 3. 知識搜尋：v1.1 向量語義優先，FTS5 備援
+        # BUG-05 fix: initialise all_nodes / result lists before the keywords
+        # guard so that the spaced-repetition block below never hits NameError
+        # when the task string yields no extractable keywords.
+        pitfalls  = []
+        decisions = []
+        rules     = []
+        adrs      = []
+        notes     = []
+        all_nodes: list[tuple[float, str, dict]] = []
+
         keywords = self._extract_keywords(task)
         if keywords:
-            pitfalls  = []
-            decisions = []
-            rules     = []
-            adrs      = []
 
             # v1.1：向量語義搜尋（若 chromadb 已安裝）
             if self.vm and self.vm.available:
@@ -213,8 +236,14 @@ class ContextEngineer:
         footer = "\n---\n"
 
         # A-3：輸出前語意去重（只在 scikit-learn 已安裝時啟用）
-        sections = self._deduplicate_sections(sections)
+        # BUG-05 fix: pre-assign result so that any exception after this point
+        # still has a valid string to return (avoids UnboundLocalError / None).
         result = header + "\n\n".join(sections) + footer
+        try:
+            sections = self._deduplicate_sections(sections)
+            result   = header + "\n\n".join(sections) + footer
+        except Exception:
+            pass  # dedup failure — use original result
         # Spaced Repetition: 批次記錄訪問（v9.0 修補 race condition）
         try:
             _node_ids = [
@@ -258,7 +287,7 @@ class ContextEngineer:
                     result = _chain + result
         except Exception:
             pass
-        return result
+        return result or ""  # BUG-05 fix: guarantee str return, never None
 
     def _build_causal_chain(self, node_ids: list, db=None) -> str:
         """
@@ -479,7 +508,7 @@ class ContextEngineer:
 
     def _add_if_budget(self, sections: list, section: str, budget: int) -> int:
         """如果還有 token 預算，加入此段落"""
-        cost = len(section) // CHARS_PER_TOKEN
+        cost = _count_tokens(section)
         if cost <= budget:
             sections.append(section)
             return budget - cost

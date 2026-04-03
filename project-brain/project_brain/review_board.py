@@ -66,6 +66,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from project_brain.brain_db import BrainDB  # BUG-07 fix: sync brain.db FTS5
+
 logger = logging.getLogger(__name__)
 
 STATUS_PENDING  = "pending"
@@ -279,6 +281,18 @@ class KnowledgeReviewBoard:
             content   = row["content"],
         )
         node_id = l3_id
+
+        # BUG-07 fix: 同步寫入 brain.db 的 nodes_fts，確保 context.py 全文搜尋可見
+        try:
+            bdb = BrainDB(self.brain_dir)
+            bdb.add_node(
+                node_id   = l3_id,
+                node_type = row["kind"],
+                title     = row["title"],
+                content   = row["content"] or "",
+            )
+        except Exception as _e:
+            logger.warning("krb_approve: brain.db FTS 同步失敗（不影響核准）: %s", _e)
 
         # 設定 Meta-Knowledge
         if row["applicability_condition"] or row["invalidation_condition"]:

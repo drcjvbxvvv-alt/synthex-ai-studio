@@ -80,7 +80,8 @@ def create_app(workdir) -> Any:
 
     @app.route("/")
     def index():
-        return _generate_graph_html(str(workdir))
+        # BUG-08 fix: pass resolved POSIX path for cross-platform consistency
+        return _generate_graph_html(workdir.resolve().as_posix())
 
     @app.route("/api/graph")
     def api_graph():

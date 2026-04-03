@@ -23,6 +23,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# OPT-03: module-level LRU cache for LocalTFIDFEmbedder (keyed by text hash).
+# Pure-Python TF-IDF is deterministic — same text always produces same vector.
+# Max 1 024 entries (~4 MB assuming 256-dim float vectors).
+_TFIDF_CACHE: dict = {}
+_TFIDF_CACHE_MAX = 1024
+
 # Standard dimensions
 DIM_OLLAMA  = 768   # nomic-embed-text
 DIM_OPENAI  = 1536  # text-embedding-3-small
@@ -148,6 +154,11 @@ class LocalTFIDFEmbedder:
         self.dim = self.DIM
 
     def embed(self, text: str) -> list[float]:
+        # OPT-03: check module-level LRU cache first
+        cache_key = hashlib.md5((text or "").encode()).hexdigest()
+        if cache_key in _TFIDF_CACHE:
+            return _TFIDF_CACHE[cache_key]
+
         import math, struct, re
         text = (text or "")[:4000].lower()
         # Tokenise: split on non-alphanumeric, keep CJK chars as unigrams
@@ -174,7 +185,15 @@ class LocalTFIDFEmbedder:
 
         # L2 normalise
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
-        return [v / norm for v in vec]
+        result = [v / norm for v in vec]
+
+        # OPT-03: store in cache (evict oldest entry when full)
+        if len(_TFIDF_CACHE) >= _TFIDF_CACHE_MAX:
+            oldest_key = next(iter(_TFIDF_CACHE))
+            del _TFIDF_CACHE[oldest_key]
+        _TFIDF_CACHE[cache_key] = result
+
+        return result
 
     @classmethod
     def is_available(cls) -> bool:

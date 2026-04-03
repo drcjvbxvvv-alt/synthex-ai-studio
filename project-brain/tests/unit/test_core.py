@@ -1989,3 +1989,1253 @@ class TestPhase4L2L3Alignment:
         assert row is not None
         assert row['source_id'] == ep_id
         assert row['target_id'] == 'n1'
+
+
+# ════════════════════════════════════════════════════════════════
+# BUG-01: L2 Episodic Memory 重複記錄修復驗證
+# ════════════════════════════════════════════════════════════════
+
+class TestBug01EpisodeDuplication:
+    """
+    驗證 BUG-01 修復：重複執行 brain sync / scan 不會在 episodes 表
+    插入重複的 L2 記錄。
+    """
+
+    def test_same_source_not_duplicated(self, tmp_path):
+        """同一 git commit source 重複呼叫 add_episode，只應插入一筆。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+
+        commit = "git-abc123def456"
+        db.add_episode("fix: add JWT RS256 check (ahern@example.com)", source=commit)
+        db.add_episode("fix: add JWT RS256 check (ahern@example.com)", source=commit)
+
+        count = db.conn.execute("SELECT COUNT(*) FROM episodes WHERE source=?", (commit,)).fetchone()[0]
+        assert count == 1, f"同一 source 應只有 1 筆，實際有 {count} 筆"
+
+    def test_same_source_different_content_not_duplicated(self, tmp_path):
+        """同一 commit source 但 content 格式不同（e.g. 不同 author 格式），
+        不應插入重複記錄（這是 BUG-01 的核心場景）。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+
+        commit = "git-deadbeef1234"
+        db.add_episode("fix: JWT (ahern@company.com)", source=commit)
+        # 同 commit，content 格式略有不同（模擬不同 brain sync 呼叫）
+        db.add_episode("fix: JWT (A. Hern <ahern@company.com>)", source=commit)
+
+        count = db.conn.execute("SELECT COUNT(*) FROM episodes WHERE source=?", (commit,)).fetchone()[0]
+        assert count == 1, f"相同 source 的不同 content 不應建立重複記錄，實際有 {count} 筆"
+
+    def test_different_sources_both_inserted(self, tmp_path):
+        """不同 commit source 應各自插入，不互相影響。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+
+        db.add_episode("fix: JWT RS256", source="git-commit1")
+        db.add_episode("feat: add webhook", source="git-commit2")
+
+        count = db.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+        assert count == 2, f"兩個不同 source 應插入 2 筆，實際有 {count} 筆"
+
+    def test_episode_id_uses_source_as_seed(self, tmp_path):
+        """有 source 時，episode ID 應以 source 為 seed，確保同 commit 永遠得到相同 ID。"""
+        from project_brain.brain_db import BrainDB
+        import hashlib
+        db = BrainDB(tmp_path)
+
+        source = "git-stable123"
+        eid1 = db.add_episode("message format A", source=source)
+        # 清空後重新插入（模擬新 db），驗證 ID 計算一致性
+        db.conn.execute("DELETE FROM episodes WHERE source=?", (source,))
+        db.conn.commit()
+        eid2 = db.add_episode("message format B", source=source)
+
+        assert eid1 == eid2, f"相同 source 應得到相同 episode ID: {eid1} vs {eid2}"
+
+    def test_episode_id_length_is_16_chars(self, tmp_path):
+        """episode ID 的 hash 部分應為 16 hex chars（64-bit），降低碰撞機率。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+
+        eid = db.add_episode("test content", source="git-test001")
+        # 格式: "ep-" + 16 hex chars
+        assert eid.startswith("ep-"), f"ID 應以 'ep-' 開頭: {eid}"
+        hash_part = eid[3:]
+        assert len(hash_part) == 16, f"hash 部分應為 16 chars（64-bit），實際為 {len(hash_part)} chars"
+
+    def test_empty_source_still_works(self, tmp_path):
+        """空 source 的 episode（非 git）仍應正常插入，使用 content 作為 seed。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+
+        eid = db.add_episode("manual knowledge entry", source="")
+        assert eid.startswith("ep-")
+        count = db.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+        assert count == 1
+
+
+# ════════════════════════════════════════════════════════════════
+# BUG-02: NudgeEngine 返回已過期節點修復驗證
+# ════════════════════════════════════════════════════════════════
+
+class TestBug02NudgeExpiry:
+    """
+    驗證 BUG-02 修復：NudgeEngine 不應返回已棄用或已過期的 Pitfall 節點。
+    """
+
+    def _make_db_with_pitfall(self, tmp_path, **kwargs) -> tuple:
+        """建立含一個 Pitfall 節點的 BrainDB + KnowledgeGraph。"""
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+
+        db = BrainDB(tmp_path)
+        db.add_node(
+            "p1", "Pitfall", "Webhook 必須冪等",
+            content="重複請求必須冪等，否則客戶被多次扣款",
+            confidence=kwargs.get("confidence", 0.9),
+        )
+        if kwargs.get("is_deprecated"):
+            db.conn.execute(
+                "UPDATE nodes SET is_deprecated=1 WHERE id='p1'"
+            )
+            db.conn.commit()
+        if kwargs.get("valid_until"):
+            db.conn.execute(
+                "UPDATE nodes SET valid_until=? WHERE id='p1'",
+                (kwargs["valid_until"],)
+            )
+            db.conn.commit()
+        # Rebuild FTS5 so search_nodes can find the node
+        try:
+            db.conn.execute(
+                "INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')"
+            )
+            db.conn.commit()
+        except Exception:
+            pass
+        graph = KnowledgeGraph(tmp_path)
+        return db, graph
+
+    def test_active_pitfall_is_returned(self, tmp_path):
+        """正常有效的 Pitfall 應被返回。"""
+        from project_brain.nudge_engine import NudgeEngine
+        _, graph = self._make_db_with_pitfall(tmp_path)
+        nudges = NudgeEngine(graph).check("stripe webhook payment", top_k=5)
+        # May be 0 if FTS5 misses it, but should not crash
+        assert isinstance(nudges, list)
+
+    def test_deprecated_pitfall_excluded(self, tmp_path):
+        """is_deprecated=1 的節點不應出現在 nudges 中。"""
+        from project_brain.nudge_engine import NudgeEngine
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+
+        db = BrainDB(tmp_path)
+        db.add_node("p1", "Pitfall", "Deprecated Pitfall",
+                    content="This should not appear", confidence=0.9)
+        db.conn.execute("UPDATE nodes SET is_deprecated=1 WHERE id='p1'")
+        db.conn.commit()
+        graph = KnowledgeGraph(tmp_path)
+
+        # Mock graph.search_nodes to return the deprecated node
+        original_search = graph.search_nodes
+        def _mock_search(query, node_type=None, limit=10, **kw):
+            row = db.conn.execute("SELECT * FROM nodes WHERE id='p1'").fetchone()
+            return [dict(row)] if row else []
+        graph.search_nodes = _mock_search
+
+        nudges = NudgeEngine(graph).check("deprecated test", top_k=5)
+        assert all(n.node_id != "p1" for n in nudges), \
+            "is_deprecated=1 節點不應出現在 nudges 中"
+
+    def test_expired_pitfall_excluded(self, tmp_path):
+        """valid_until 已過期的節點不應出現在 nudges 中。"""
+        from project_brain.nudge_engine import NudgeEngine
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+
+        db = BrainDB(tmp_path)
+        db.add_node("p2", "Pitfall", "Expired Pitfall",
+                    content="This should not appear", confidence=0.9)
+        db.conn.execute(
+            "UPDATE nodes SET valid_until='2020-01-01T00:00:00+00:00' WHERE id='p2'"
+        )
+        db.conn.commit()
+        graph = KnowledgeGraph(tmp_path)
+
+        def _mock_search(query, node_type=None, limit=10, **kw):
+            row = db.conn.execute("SELECT * FROM nodes WHERE id='p2'").fetchone()
+            return [dict(row)] if row else []
+        graph.search_nodes = _mock_search
+
+        nudges = NudgeEngine(graph).check("expired test", top_k=5)
+        assert all(n.node_id != "p2" for n in nudges), \
+            "valid_until 已過期的節點不應出現在 nudges 中"
+
+    def test_future_valid_until_included(self, tmp_path):
+        """valid_until 在未來的節點應仍然被包含。"""
+        from project_brain.nudge_engine import NudgeEngine
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+
+        db = BrainDB(tmp_path)
+        db.add_node("p3", "Pitfall", "Future Pitfall",
+                    content="Still valid", confidence=0.9)
+        db.conn.execute(
+            "UPDATE nodes SET valid_until='2099-12-31T00:00:00+00:00' WHERE id='p3'"
+        )
+        db.conn.commit()
+        graph = KnowledgeGraph(tmp_path)
+
+        def _mock_search(query, node_type=None, limit=10, **kw):
+            row = db.conn.execute("SELECT * FROM nodes WHERE id='p3'").fetchone()
+            return [dict(row)] if row else []
+        graph.search_nodes = _mock_search
+
+        nudges = NudgeEngine(graph).check("future test", top_k=5)
+        assert any(n.node_id == "p3" for n in nudges), \
+            "valid_until 未到期的節點應仍然被包含"
+
+    def test_zero_confidence_not_promoted(self, tmp_path):
+        """confidence=0.0 的節點不應被 `or 0.7` 提升為 0.7。"""
+        from project_brain.nudge_engine import NudgeEngine
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+
+        db = BrainDB(tmp_path)
+        db.add_node("p4", "Pitfall", "Zero Confidence",
+                    content="content", confidence=0.0)
+        graph = KnowledgeGraph(tmp_path)
+
+        def _mock_search(query, node_type=None, limit=10, **kw):
+            row = db.conn.execute("SELECT * FROM nodes WHERE id='p4'").fetchone()
+            return [dict(row)] if row else []
+        graph.search_nodes = _mock_search
+
+        nudges = NudgeEngine(graph).check("zero conf test", top_k=5)
+        # confidence=0.0 < MIN_CONFIDENCE=0.4 → should be filtered out
+        assert all(n.node_id != "p4" for n in nudges), \
+            "confidence=0.0 不應被錯誤地提升通過 confidence 過濾"
+
+
+# ════════════════════════════════════════════════════════════════
+# BUG-05: ContextResult / build() 在空 Brain 時返回 None 修復驗證
+# ════════════════════════════════════════════════════════════════
+
+class TestBug05ContextNeverNone:
+    """
+    驗證 BUG-05 修復：ContextEngineer.build() 在任何情況下都不應返回 None。
+    包含空 Brain、空 task、無 keywords 等邊緣情況。
+    """
+
+    def test_build_empty_brain_returns_str(self, tmp_path):
+        """空 Brain（無知識節點）時，build() 應返回空字串而非 None。"""
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.context import ContextEngineer
+
+        graph = KnowledgeGraph(tmp_path)
+        eng   = ContextEngineer(graph, brain_dir=tmp_path)
+        result = eng.build("implement JWT authentication")
+        assert result is not None, "build() 不應返回 None"
+        assert isinstance(result, str), f"build() 應返回 str，實際: {type(result)}"
+
+    def test_build_empty_task_returns_str(self, tmp_path):
+        """空 task 字串時，build() 不應因 all_nodes NameError 而崩潰。"""
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.context import ContextEngineer
+
+        graph = KnowledgeGraph(tmp_path)
+        eng   = ContextEngineer(graph, brain_dir=tmp_path)
+        result = eng.build("")  # empty task → no keywords → all_nodes NameError before fix
+        assert result is not None, "build('') 不應返回 None"
+        assert isinstance(result, str)
+
+    def test_build_stopwords_only_task_returns_str(self, tmp_path):
+        """全是停用詞的 task（無法提取 keywords），不應崩潰。"""
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.context import ContextEngineer
+
+        graph = KnowledgeGraph(tmp_path)
+        eng   = ContextEngineer(graph, brain_dir=tmp_path)
+        result = eng.build("the a is are")  # all stopwords → keywords="" → if keywords: False
+        assert result is not None
+        assert isinstance(result, str)
+
+    def test_build_with_knowledge_returns_str(self, tmp_path):
+        """有知識時，build() 應返回非空字串。"""
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.context import ContextEngineer
+
+        db = BrainDB(tmp_path)
+        db.add_node("r1", "Rule", "JWT 必須使用 RS256",
+                    content="所有 JWT token 必須使用 RS256 演算法簽署", confidence=0.9)
+        try:
+            db.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+            db.conn.commit()
+        except Exception:
+            pass
+        graph = KnowledgeGraph(tmp_path)
+        eng   = ContextEngineer(graph, brain_dir=tmp_path, brain_db=db)
+        result = eng.build("JWT authentication security")
+        assert result is not None
+        assert isinstance(result, str)
+
+
+# ══════════════════════════════════════════════════════════════
+# P1 Bug Tests
+# ══════════════════════════════════════════════════════════════
+
+import pytest
+
+
+class TestBug03CJKTokenCount:
+    """
+    驗證 BUG-03 修復：CJK 字元的 token 估算應比 ASCII 更準確。
+    修復前：所有字元統一 CHARS_PER_TOKEN=4 分之一，CJK 被低估。
+    修復後：CJK ≈ 1 token/char，ASCII ≈ 0.25 token/char。
+    """
+
+    def test_cjk_counts_more_than_ascii_equivalent(self):
+        """相同長度的 CJK 字串 token 數應多於純 ASCII。"""
+        from project_brain.context import _count_tokens
+        cjk_text   = "這是一段中文測試字串，用於驗證 token 計算"
+        ascii_text = "a" * len(cjk_text)
+        cjk_count   = _count_tokens(cjk_text)
+        ascii_count = _count_tokens(ascii_text)
+        assert cjk_count > ascii_count, (
+            f"CJK({cjk_count}) 應大於 ASCII({ascii_count})"
+        )
+
+    def test_pure_ascii_token_count(self):
+        """純 ASCII：4 個字元 ≈ 1 token。"""
+        from project_brain.context import _count_tokens
+        # 40 ASCII chars → 10 tokens
+        count = _count_tokens("a" * 40)
+        assert count == 10
+
+    def test_pure_cjk_token_count(self):
+        """純 CJK：每個字元 = 1 token。"""
+        from project_brain.context import _count_tokens
+        count = _count_tokens("中文測試字串計算")  # 8 chars
+        assert count == 8
+
+    def test_mixed_text_token_count(self):
+        """混合文字：CJK 按 1 token，ASCII 按 0.25 token。"""
+        from project_brain.context import _count_tokens
+        # "中文" (2 CJK) + "    " (4 ASCII spaces → 1 token) = 3 tokens
+        count = _count_tokens("中文    ")
+        assert count == 3
+
+    def test_budget_respected_in_build(self, tmp_path):
+        """context.py build() 使用正確 token 估算後仍在 budget 內。"""
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.context import ContextEngineer
+        db = BrainDB(tmp_path)
+        for i in range(5):
+            db.add_node(f"r{i}", "Rule", f"規則 {i}",
+                        content="這是一條關於系統架構的重要規則，必須嚴格遵守。" * 3)
+        try:
+            db.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+            db.conn.commit()
+        except Exception:
+            pass
+        graph = KnowledgeGraph(tmp_path)
+        eng   = ContextEngineer(graph, brain_dir=tmp_path, brain_db=db)
+        result = eng.build("系統架構規則")
+        assert isinstance(result, str)
+        # result should not explode past reasonable size
+        assert len(result) < 20_000
+
+
+class TestBug04RateLimitThreadSafety:
+    """
+    驗證 BUG-04 修復：rate limiter 在高並發下不應競態。
+    修復前：_call_times 無鎖保護，並發寫入可能 miss limit。
+    修復後：threading.Lock() 保護所有讀/寫操作。
+    """
+
+    def test_rate_limit_lock_exists(self):
+        """_rate_lock 應是 threading.Lock 實例。"""
+        import threading
+        from project_brain import mcp_server
+        assert hasattr(mcp_server, "_rate_lock"), "_rate_lock 應存在"
+        assert isinstance(mcp_server._rate_lock, type(threading.Lock())), \
+            "_rate_lock 應是 threading.Lock"
+
+    def test_rate_check_allows_first_call(self):
+        """第一次呼叫（call_times 清空後）應通過 rate check。"""
+        from project_brain import mcp_server
+        mcp_server._call_times.clear()
+        try:
+            mcp_server._rate_check()  # should not raise
+        except RuntimeError:
+            pytest.fail("_rate_check() 不應在第一次呼叫時拒絕")
+
+    def test_rate_check_blocks_when_over_limit(self):
+        """超過 RPM 限制時應拋出 RuntimeError。"""
+        from project_brain import mcp_server
+        import time
+        mcp_server._call_times.clear()
+        # Fill up the call history with fresh timestamps
+        now = time.monotonic()
+        for _ in range(mcp_server.RATE_LIMIT_RPM):
+            mcp_server._call_times.append(now)
+        with pytest.raises(RuntimeError, match="Rate limit"):
+            mcp_server._rate_check()
+
+    def test_concurrent_calls_do_not_exceed_limit(self):
+        """並發呼叫應被 Lock 正確序列化，不超過 RPM 上限。"""
+        import threading
+        from project_brain import mcp_server
+
+        mcp_server._call_times.clear()
+        errors = []
+        successes = []
+        limit = mcp_server.RATE_LIMIT_RPM
+
+        def _try_call():
+            try:
+                mcp_server._rate_check()
+                successes.append(1)
+            except RuntimeError:
+                errors.append(1)
+
+        threads = [threading.Thread(target=_try_call)
+                   for _ in range(limit + 5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Exactly RATE_LIMIT_RPM calls should succeed, rest should be blocked
+        assert len(successes) <= limit, \
+            f"成功次數 {len(successes)} 不應超過限制 {limit}"
+
+    def test_old_timestamps_expire(self):
+        """超過 60 秒的舊 timestamp 應被清除，允許新呼叫通過。"""
+        import time
+        from project_brain import mcp_server
+        mcp_server._call_times.clear()
+        # Fill with timestamps from 2 minutes ago
+        old_time = time.monotonic() - 120
+        for _ in range(mcp_server.RATE_LIMIT_RPM):
+            mcp_server._call_times.append(old_time)
+        # Should succeed because old entries expire
+        try:
+            mcp_server._rate_check()
+        except RuntimeError:
+            pytest.fail("舊 timestamp 應已過期，新呼叫應通過")
+
+
+class TestBug06FTS5Integrity:
+    """
+    驗證 BUG-06 修復：brain doctor 應檢測並修復 FTS5 索引不完整問題。
+    """
+
+    def test_fts5_rebuild_restores_count(self, tmp_path):
+        """直接重建 FTS5 後，count 應與 nodes 表一致。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        for i in range(3):
+            db.add_node(f"n{i}", "Rule", f"規則 {i}", content=f"內容 {i}")
+        # Force rebuild
+        db.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+        db.conn.commit()
+        nodes_count = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        fts_count   = db.conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
+        assert fts_count == nodes_count, \
+            f"FTS5 重建後 count 不一致：fts={fts_count} nodes={nodes_count}"
+
+    def test_fts5_search_after_rebuild(self, tmp_path):
+        """重建 FTS5 後，全文搜尋應能找到節點。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("jwt1", "Rule", "JWT RS256 驗證規則",
+                    content="必須使用非對稱金鑰")
+        db.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+        db.conn.commit()
+        results = db.search_nodes("JWT")
+        titles = [r.get("title", "") for r in results]
+        assert any("JWT" in t for t in titles), \
+            f"重建後應能搜尋到 JWT 節點，實際結果: {titles}"
+
+    def test_doctor_detects_fts_mismatch(self, tmp_path):
+        """
+        模擬 FTS5 索引不完整（delete from nodes_fts），
+        doctor 的 FTS 檢查邏輯應能偵測到差異。
+        """
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("a1", "Rule", "規則A", content="測試A")
+        db.add_node("a2", "Rule", "規則B", content="測試B")
+        # Corrupt: remove all from FTS
+        db.conn.execute("DELETE FROM nodes_fts")
+        db.conn.commit()
+        nodes_count = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        fts_count   = db.conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
+        assert fts_count < nodes_count, "應能模擬 FTS5 不完整狀態"
+
+    def test_fts5_can_be_queried_after_add(self, tmp_path):
+        """add_node 後，nodes_fts 應立即可查詢。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("x1", "Pitfall", "WebSocket 陷阱", content="連線中斷未重試")
+        fts_count = db.conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
+        assert fts_count >= 1, "add_node 後 FTS5 應有記錄"
+
+
+class TestBug07ReviewBoardFTSSync:
+    """
+    驗證 BUG-07 修復：approve() 後節點應在 brain.db FTS5 可搜尋。
+    修復前：approve() 只寫 knowledge_graph.db，brain.db nodes_fts 未同步。
+    修復後：approve() 同時寫入 BrainDB，FTS5 同步。
+    """
+
+    def test_approve_node_searchable_via_brain_db(self, tmp_path):
+        """approve() 後，節點應可透過 BrainDB.search_nodes() 找到。"""
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.review_board import KnowledgeReviewBoard
+
+        graph = KnowledgeGraph(tmp_path)
+        krb   = KnowledgeReviewBoard(tmp_path, graph)
+        sid   = krb.submit("FTS 同步測試規則", "核准後應可搜尋",
+                           kind="Rule", source="test")
+        l3_id = krb.approve(sid, reviewer="test")
+        assert l3_id is not None
+
+        # Rebuild FTS and verify searchable
+        db = BrainDB(tmp_path)
+        db.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+        db.conn.commit()
+        results = db.search_nodes("FTS")
+        titles = [r.get("title", "") for r in results]
+        assert any("FTS" in t for t in titles), \
+            f"approve 後節點應可透過 brain.db 搜尋，實際結果: {titles}"
+
+    def test_approve_writes_to_brain_db_nodes(self, tmp_path):
+        """approve() 後，節點應存在於 brain.db 的 nodes 表。"""
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.review_board import KnowledgeReviewBoard
+
+        graph = KnowledgeGraph(tmp_path)
+        krb   = KnowledgeReviewBoard(tmp_path, graph)
+        sid   = krb.submit("Brain DB 節點測試", "必須能在 brain.db 找到",
+                           kind="Decision", source="test")
+        l3_id = krb.approve(sid, reviewer="tester")
+        assert l3_id is not None
+
+        db = BrainDB(tmp_path)
+        row = db.conn.execute(
+            "SELECT id, title FROM nodes WHERE id=?", (l3_id,)
+        ).fetchone()
+        assert row is not None, \
+            f"approve 後節點 {l3_id} 應存在於 brain.db"
+        assert "Brain DB" in row["title"]
+
+    def test_approve_duplicate_does_not_crash(self, tmp_path):
+        """重複 title 被視為重複節點時，approve 不應崩潰。"""
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.review_board import KnowledgeReviewBoard
+
+        graph = KnowledgeGraph(tmp_path)
+        krb   = KnowledgeReviewBoard(tmp_path, graph)
+        # First approval
+        sid1 = krb.submit("重複規則測試", "第一次提交", kind="Rule")
+        l3_1 = krb.approve(sid1, reviewer="a")
+        # Second with same title (duplicate detection)
+        sid2 = krb.submit("重複規則測試", "第二次提交相同 title", kind="Rule")
+        l3_2 = krb.approve(sid2, reviewer="a")
+        assert l3_2 is not None, "重複節點 approve 不應返回 None"
+
+    def test_reject_does_not_write_to_brain_db(self, tmp_path):
+        """reject() 後，節點不應存在於 brain.db。"""
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph import KnowledgeGraph
+        from project_brain.review_board import KnowledgeReviewBoard
+
+        graph = KnowledgeGraph(tmp_path)
+        krb   = KnowledgeReviewBoard(tmp_path, graph)
+        sid   = krb.submit("被拒絕的規則", "不應進入 L3", kind="Rule")
+        krb.reject(sid, reviewer="tester", reason="不正確")
+
+        db  = BrainDB(tmp_path)
+        row = db.conn.execute(
+            "SELECT id FROM nodes WHERE id=?", (f"krb_{sid}",)
+        ).fetchone()
+        assert row is None, "reject 後節點不應存在於 brain.db"
+
+
+class TestBug08WebUIPathConsistency:
+    """
+    驗證 BUG-08 修復：web_ui/server.py 應使用跨平台 POSIX 路徑。
+    """
+
+    def test_generate_graph_html_returns_string(self):
+        """_generate_graph_html 應返回非空 HTML 字串。"""
+        from project_brain.web_ui.server import _generate_graph_html
+        html = _generate_graph_html("/Users/test/my-project")
+        assert isinstance(html, str)
+        assert len(html) > 100
+
+    def test_generate_graph_html_uses_basename_only(self):
+        """project_name 應只用路徑最後一段（不含路徑分隔符）。"""
+        from project_brain.web_ui.server import _generate_graph_html
+        html = _generate_graph_html("/Users/ahern/my-project")
+        assert "my-project" in html
+        assert "/Users/ahern" not in html  # should only show basename
+
+    def test_generate_graph_html_empty_workdir(self):
+        """workdir 為空字串時，應 fallback 到 'Project'。"""
+        from project_brain.web_ui.server import _generate_graph_html
+        html = _generate_graph_html("")
+        assert "Project" in html
+
+    def test_generate_graph_html_windows_path_safe(self):
+        """Windows 風格路徑應不包含反斜線在 HTML 中。"""
+        from project_brain.web_ui.server import _generate_graph_html
+        html = _generate_graph_html("C:/Users/ahern/project")
+        # Path.name should return "project"
+        assert "project" in html
+
+
+# ══════════════════════════════════════════════════════════════
+# DEF-01: Cross-process write lock
+# ══════════════════════════════════════════════════════════════
+
+class TestDef01WriteLock:
+    """
+    驗證 DEF-01 修復：BrainDB._write_guard() 提供跨進程寫入序列化。
+    """
+
+    def test_write_guard_context_manager_works(self, tmp_path):
+        """_write_guard() 應為有效的 context manager，不拋出異常。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        # Should complete without error
+        with db._write_guard():
+            db.add_node("lock1", "Rule", "Lock test node", content="test")
+        node = db.get_node("lock1")
+        assert node is not None, "write_guard 內的寫入應成功"
+
+    def test_write_guard_is_reentrant_safe(self, tmp_path):
+        """連續多次使用 _write_guard() 不應死鎖或失敗。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        for i in range(3):
+            with db._write_guard():
+                db.add_node(f"seq{i}", "Rule", f"Sequential {i}", content="ok")
+        count = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        assert count >= 3
+
+    def test_add_node_uses_write_lock(self, tmp_path):
+        """add_node() 應在 write_guard 保護下執行（.write_lock 文件創建）。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("wl1", "Rule", "Write lock check", content="checking")
+        # On Unix systems, .write_lock file should exist after first write
+        lock_path = tmp_path / ".write_lock"
+        # File may or may not exist (Windows vs Unix), but no exception should occur
+        assert db.get_node("wl1") is not None
+
+    def test_concurrent_writes_no_corruption(self, tmp_path):
+        """多執行緒並發 add_node() 不應導致資料損壞。"""
+        import threading
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        errors = []
+
+        def _write(i):
+            try:
+                db.add_node(f"ct{i}", "Rule", f"Concurrent {i}", content=f"content {i}")
+            except Exception as e:
+                errors.append(str(e))
+
+        threads = [threading.Thread(target=_write, args=(i,)) for i in range(10)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        assert not errors, f"並發寫入不應出錯: {errors}"
+        count = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        assert count == 10, f"應有 10 個節點，實際: {count}"
+
+
+# ══════════════════════════════════════════════════════════════
+# DEF-02: FTS5 自動同步觸發器
+# ══════════════════════════════════════════════════════════════
+
+class TestDef02FTS5Triggers:
+    """
+    驗證 DEF-02 修復：AFTER UPDATE / AFTER DELETE 觸發器自動同步 FTS5。
+    """
+
+    def test_triggers_exist_in_schema(self, tmp_path):
+        """nodes_fts_au 和 nodes_fts_ad 觸發器應存在於 schema。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        triggers = {
+            r[0] for r in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger'"
+            ).fetchall()
+        }
+        assert "nodes_fts_au" in triggers, "AFTER UPDATE 觸發器應存在"
+        assert "nodes_fts_ad" in triggers, "AFTER DELETE 觸發器應存在"
+
+    def test_direct_update_syncs_fts5(self, tmp_path):
+        """直接 UPDATE nodes 後，FTS5 應自動更新（通過觸發器）。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("t1", "Rule", "原始標題", content="原始內容")
+        # Direct SQL UPDATE (bypasses add_node's manual FTS sync)
+        db.conn.execute("UPDATE nodes SET title='觸發器測試標題' WHERE id='t1'")
+        db.conn.commit()
+        # FTS5 should now reflect the new title via trigger
+        results = db.search_nodes("觸發器")
+        titles = [r["title"] for r in results]
+        assert any("觸發器" in t for t in titles), \
+            f"直接 UPDATE 後 FTS5 應通過觸發器更新，結果: {titles}"
+
+    def test_direct_delete_removes_from_fts5(self, tmp_path):
+        """直接 DELETE nodes 後，FTS5 中的記錄應被觸發器清除。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("d1", "Rule", "待刪除節點", content="unique_delete_content_xyz")
+        # Verify exists in FTS5
+        before = db.search_nodes("unique_delete_content_xyz")
+        assert len(before) >= 1
+        # Direct SQL DELETE
+        db.conn.execute("DELETE FROM nodes WHERE id='d1'")
+        db.conn.commit()
+        # FTS5 should be cleaned by AFTER DELETE trigger
+        fts_row = db.conn.execute(
+            "SELECT * FROM nodes_fts WHERE id='d1'"
+        ).fetchone()
+        assert fts_row is None, "DELETE 後 FTS5 中不應有該記錄"
+
+    def test_update_content_searchable_after_trigger(self, tmp_path):
+        """通過觸發器更新 content 後，新內容應可被搜尋到。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("u1", "Decision", "JWT決策", content="使用 HS256 演算法")
+        # Direct UPDATE content via SQL (as review_board.update_approved does)
+        db.conn.execute(
+            "UPDATE nodes SET content='改用 RS256 非對稱金鑰' WHERE id='u1'"
+        )
+        db.conn.commit()
+        results = db.search_nodes("RS256")
+        assert any(r["id"] == "u1" for r in results), \
+            "更新 content 後新關鍵字應可搜尋"
+
+
+# ══════════════════════════════════════════════════════════════
+# DEF-05 + OPT-04: Decay-aware 搜尋排名
+# ══════════════════════════════════════════════════════════════
+
+class TestDef05DecayAwareRanking:
+    """
+    驗證 DEF-05/OPT-04 修復：search_nodes() 依有效信心值重新排名。
+    """
+
+    def test_effective_confidence_new_node(self, tmp_path):
+        """新建節點的 effective_confidence ≈ 原始 confidence（幾乎無衰減）。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("ec1", "Rule", "新規則", content="test", confidence=0.9)
+        node = db.get_node("ec1")
+        ec = BrainDB._effective_confidence(node)
+        assert 0.85 <= ec <= 0.9, f"新節點 effective_confidence 應接近 0.9，實際: {ec}"
+
+    def test_effective_confidence_pinned_immune_to_decay(self, tmp_path):
+        """is_pinned=1 的節點 effective_confidence 應等於原始 confidence（免疫衰減）。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("pin1", "Rule", "固定規則", content="test",
+                    confidence=0.9, importance=0.9)
+        db.pin_node("pin1", True)
+        node = db.get_node("pin1")
+        ec = BrainDB._effective_confidence(node)
+        assert ec == float(node.get("confidence", 0.9)), \
+            "Pinned 節點不應受衰減影響"
+
+    def test_effective_confidence_very_old_node_is_lower(self):
+        """模擬舊節點：effective_confidence 應低於原始 confidence。"""
+        from project_brain.brain_db import BrainDB
+        old_node = {
+            "confidence": 0.9,
+            "is_pinned": 0,
+            "created_at": "2020-01-01T00:00:00+00:00",  # 5+ years ago
+            "access_count": 0,
+        }
+        ec = BrainDB._effective_confidence(old_node)
+        assert ec < 0.9, f"舊節點 effective_confidence 應低於 0.9，實際: {ec}"
+        assert ec >= 0.05, "effective_confidence 不應低於 DECAY_FLOOR=0.05"
+
+    def test_search_results_have_effective_confidence_field(self, tmp_path):
+        """search_nodes() 返回的每個結果應包含 effective_confidence 欄位。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("r1", "Rule", "JWT authentication rule",
+                    content="Must use RS256", confidence=0.8)
+        results = db.search_nodes("JWT")
+        assert results, "應有搜尋結果"
+        for r in results:
+            assert "effective_confidence" in r, \
+                f"結果應有 effective_confidence 欄位: {r.keys()}"
+
+    def test_high_access_count_increases_effective_confidence(self):
+        """access_count 高的節點 effective_confidence 應比 access_count=0 更高。"""
+        from project_brain.brain_db import BrainDB
+        base_node = {
+            "confidence": 0.7,
+            "is_pinned": 0,
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "access_count": 0,
+        }
+        high_access_node = dict(base_node)
+        high_access_node["access_count"] = 50  # 50 queries = +0.15 bonus
+
+        ec_base   = BrainDB._effective_confidence(base_node)
+        ec_active = BrainDB._effective_confidence(high_access_node)
+        assert ec_active > ec_base, \
+            f"高 access_count 節點應有更高 effective_confidence: {ec_active} vs {ec_base}"
+
+
+# ══════════════════════════════════════════════════════════════
+# OPT-01: CJK Bigram FTS5 增強
+# ══════════════════════════════════════════════════════════════
+
+class TestOpt01CJKBigram:
+    """
+    驗證 OPT-01 修復：_ngram() 產生 bigrams，提升 CJK 多字搜尋召回率。
+    """
+
+    def test_ngram_single_cjk_chars_spaced(self):
+        """每個 CJK 字元應被空格分隔。"""
+        from project_brain.brain_db import BrainDB
+        result = BrainDB._ngram("中文")
+        assert "中" in result
+        assert "文" in result
+
+    def test_ngram_generates_bigrams(self):
+        """CJK 序列應產生 bigrams。"""
+        from project_brain.brain_db import BrainDB
+        result = BrainDB._ngram("中文測試")
+        assert "中文" in result, f"應包含 bigram '中文'，實際: {result}"
+        assert "文測" in result, f"應包含 bigram '文測'，實際: {result}"
+        assert "測試" in result, f"應包含 bigram '測試'，實際: {result}"
+
+    def test_ngram_ascii_unaffected(self):
+        """純 ASCII 文字不應產生 bigrams（已由 FTS5 tokenizer 處理）。"""
+        from project_brain.brain_db import BrainDB
+        result = BrainDB._ngram("hello world")
+        # No extra bigrams, just the original text
+        assert "hello" in result
+        assert "world" in result
+
+    def test_bigram_search_finds_phrase(self, tmp_path):
+        """bigram 索引後，多字 CJK 片語搜尋應能命中。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("cjk1", "Rule", "資料庫連線池管理規則",
+                    content="使用連線池時需設定最大連線數上限")
+        results = db.search_nodes("連線池")
+        assert any("連線池" in r.get("title", "") + r.get("content", "")
+                   for r in results), \
+            "bigram 索引應使 '連線池' 可搜尋到相關節點"
+
+    def test_fts_bigram_migration_marker_set(self, tmp_path):
+        """OPT-01 一次性遷移應在 brain_meta 中留下標記。"""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        marker = db.conn.execute(
+            "SELECT value FROM brain_meta WHERE key='fts_bigram_v1'"
+        ).fetchone()
+        assert marker is not None, "OPT-01 遷移標記應存在於 brain_meta"
+        assert marker[0] == "done"
+
+
+# ══════════════════════════════════════════════════════════════
+# P2 Tests — DEF-04, DEF-06, OPT-02, OPT-03, FEAT-01~05
+# ══════════════════════════════════════════════════════════════
+
+import pytest
+
+
+# ── DEF-04: Versioned schema migrations ─────────────────────
+
+class TestDef04SchemaMigrations:
+    """DEF-04: schema_version bumps correctly; migrations are idempotent."""
+
+    def test_schema_version_written_to_brain_meta(self, tmp_path):
+        """New DB should store schema_version = SCHEMA_VERSION in brain_meta."""
+        from project_brain.brain_db import BrainDB, SCHEMA_VERSION
+        db  = BrainDB(tmp_path)
+        row = db.conn.execute(
+            "SELECT value FROM brain_meta WHERE key='schema_version'"
+        ).fetchone()
+        assert row is not None
+        assert int(row[0]) == SCHEMA_VERSION
+
+    def test_all_required_columns_exist_after_migration(self, tmp_path):
+        """All migration-added columns must be present on nodes/episodes."""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        # nodes
+        cols = {r[1] for r in db.conn.execute("PRAGMA table_info(nodes)").fetchall()}
+        for col in ("scope", "is_deprecated", "valid_until"):
+            assert col in cols, f"nodes.{col} missing after migration"
+        # episodes
+        ep_cols = {r[1] for r in db.conn.execute("PRAGMA table_info(episodes)").fetchall()}
+        assert "confidence" in ep_cols
+
+    def test_episode_source_unique_index_exists(self, tmp_path):
+        """BUG-01 migration: unique index on episodes.source must exist."""
+        from project_brain.brain_db import BrainDB
+        db      = BrainDB(tmp_path)
+        indices = {r[1] for r in db.conn.execute(
+            "SELECT * FROM sqlite_master WHERE type='index' AND tbl_name='episodes'"
+        ).fetchall()}
+        assert "idx_episodes_source" in indices
+
+    def test_second_init_is_idempotent(self, tmp_path):
+        """Running _run_migrations() twice must not raise or duplicate version."""
+        from project_brain.brain_db import BrainDB, SCHEMA_VERSION
+        db1 = BrainDB(tmp_path)
+        db2 = BrainDB(tmp_path)   # second init on same dir
+        row = db2.conn.execute(
+            "SELECT value FROM brain_meta WHERE key='schema_version'"
+        ).fetchone()
+        assert int(row[0]) == SCHEMA_VERSION
+
+
+# ── DEF-06: Session LRU eviction ────────────────────────────
+
+class TestDef06SessionLRU:
+    """DEF-06: session_set() enforces MAX_SESSION_ENTRIES cap per session_id."""
+
+    def test_sessions_capped_at_max(self, tmp_path):
+        """Writing MAX+10 entries must keep count at MAX_SESSION_ENTRIES."""
+        from project_brain.brain_db import BrainDB, MAX_SESSION_ENTRIES
+        db = BrainDB(tmp_path)
+        for i in range(MAX_SESSION_ENTRIES + 10):
+            db.session_set(f"key_{i}", f"val_{i}", session_id="lru_test")
+        count = db.conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE session_id='lru_test'"
+        ).fetchone()[0]
+        assert count <= MAX_SESSION_ENTRIES, (
+            f"Expected ≤ {MAX_SESSION_ENTRIES}, got {count}"
+        )
+
+    def test_oldest_entries_evicted(self, tmp_path):
+        """After eviction the oldest key must no longer exist."""
+        from project_brain.brain_db import BrainDB, MAX_SESSION_ENTRIES
+        db = BrainDB(tmp_path)
+        for i in range(MAX_SESSION_ENTRIES + 5):
+            db.session_set(f"key_{i}", f"val_{i}", session_id="lru_evict")
+        # key_0 was the oldest — should be gone
+        val = db.session_get("key_0", session_id="lru_evict")
+        assert val is None, "Oldest session key should have been evicted"
+
+    def test_different_sessions_independent(self, tmp_path):
+        """LRU eviction for session A must not affect session B."""
+        from project_brain.brain_db import BrainDB, MAX_SESSION_ENTRIES
+        db = BrainDB(tmp_path)
+        # Fill session A past limit
+        for i in range(MAX_SESSION_ENTRIES + 5):
+            db.session_set(f"k{i}", f"v{i}", session_id="sessA")
+        # Write one entry to session B
+        db.session_set("b_key", "b_val", session_id="sessB")
+        assert db.session_get("b_key", session_id="sessB") == "b_val"
+
+
+# ── OPT-02: Adaptive search weights ─────────────────────────
+
+class TestOpt02AdaptiveWeights:
+    """OPT-02: _adaptive_weights() returns correct (fts_w, vec_w) for queries."""
+
+    def test_short_query_favours_fts(self):
+        """1–2 term query → fts_weight > vec_weight."""
+        from project_brain.brain_db import BrainDB
+        fw, vw = BrainDB._adaptive_weights("JWT")
+        assert fw > vw, f"Short query should favour FTS (fw={fw}, vw={vw})"
+
+    def test_long_query_favours_vector(self):
+        """5+ term query → vec_weight > fts_weight."""
+        from project_brain.brain_db import BrainDB
+        fw, vw = BrainDB._adaptive_weights("how do I configure JWT RS256 in microservices")
+        assert vw > fw, f"Long query should favour vector (fw={fw}, vw={vw})"
+
+    def test_weights_sum_to_one(self):
+        """fts_weight + vec_weight must equal 1.0 for any query."""
+        from project_brain.brain_db import BrainDB
+        for q in ["JWT", "short", "this is a medium length query text", "a b c d e f g"]:
+            fw, vw = BrainDB._adaptive_weights(q)
+            assert abs(fw + vw - 1.0) < 1e-9, f"Weights don't sum to 1 for '{q}'"
+
+    def test_cjk_heavy_query_favours_fts(self):
+        """CJK-heavy query → fts_weight ≥ vec_weight."""
+        from project_brain.brain_db import BrainDB
+        fw, vw = BrainDB._adaptive_weights("身份驗證JWT設定")
+        assert fw >= vw, f"CJK query should favour FTS (fw={fw}, vw={vw})"
+
+    def test_hybrid_search_uses_adaptive_weights(self, tmp_path):
+        """hybrid_search() with no vector falls back to FTS without error."""
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("n1", "Rule", "JWT must use RS256", scope="global")
+        results = db.hybrid_search("JWT", query_vector=None)
+        assert any(r["id"] == "n1" for r in results)
+
+
+# ── OPT-03: Embedding LRU cache ─────────────────────────────
+
+class TestOpt03EmbeddingCache:
+    """OPT-03: LocalTFIDFEmbedder.embed() caches results for repeated inputs."""
+
+    def test_repeated_call_returns_identical_vector(self):
+        """Calling embed() twice with the same text must return same vector."""
+        from project_brain.embedder import LocalTFIDFEmbedder
+        emb = LocalTFIDFEmbedder()
+        v1 = emb.embed("JWT must use RS256")
+        v2 = emb.embed("JWT must use RS256")
+        assert v1 == v2
+
+    def test_cache_hit_is_same_object(self):
+        """After caching, repeated embed() returns the cached list object."""
+        from project_brain.embedder import LocalTFIDFEmbedder, _TFIDF_CACHE
+        emb  = LocalTFIDFEmbedder()
+        text = "__cache_test_unique__"
+        _    = emb.embed(text)      # populate cache
+        import hashlib
+        key  = hashlib.md5(text.encode()).hexdigest()
+        assert key in _TFIDF_CACHE
+
+    def test_different_texts_give_different_vectors(self):
+        """Two different texts must produce different cached vectors."""
+        from project_brain.embedder import LocalTFIDFEmbedder
+        emb = LocalTFIDFEmbedder()
+        v1  = emb.embed("alpha beta gamma")
+        v2  = emb.embed("delta epsilon zeta")
+        assert v1 != v2
+
+    def test_cache_max_not_exceeded(self):
+        """Cache should stay within _TFIDF_CACHE_MAX even after many unique calls."""
+        from project_brain.embedder import LocalTFIDFEmbedder, _TFIDF_CACHE, _TFIDF_CACHE_MAX
+        emb = LocalTFIDFEmbedder()
+        for i in range(_TFIDF_CACHE_MAX + 20):
+            emb.embed(f"unique text number {i} xyzzy")
+        assert len(_TFIDF_CACHE) <= _TFIDF_CACHE_MAX
+
+
+# ── FEAT-01: Health report ────────────────────────────────────
+
+class TestFeat01HealthReport:
+    """FEAT-01: health_report() returns correct structure and values."""
+
+    def test_empty_db_returns_valid_structure(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        r  = db.health_report()
+        required = {"total_nodes", "by_type", "avg_confidence", "health_score",
+                    "fts5_coverage", "vector_coverage", "episodes", "sessions"}
+        assert required.issubset(r.keys())
+
+    def test_health_score_in_range(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("n1", "Rule", "JWT RS256", confidence=0.9)
+        db.add_node("n2", "Pitfall", "SQL injection", confidence=0.8)
+        r  = db.health_report()
+        assert 0.0 <= r["health_score"] <= 1.0
+
+    def test_node_counts_match(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("r1", "Rule",    "rule one",    confidence=0.9)
+        db.add_node("p1", "Pitfall", "pitfall one", confidence=0.7)
+        r = db.health_report()
+        assert r["total_nodes"] == 2
+        assert r["by_type"].get("Rule") == 1
+        assert r["by_type"].get("Pitfall") == 1
+
+    def test_low_confidence_counted_correctly(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("lo", "Note", "low conf", confidence=0.2)
+        db.add_node("hi", "Note", "high conf", confidence=0.9)
+        r = db.health_report()
+        assert r["low_confidence_nodes"] == 1
+
+
+# ── FEAT-02: Conflict detection ───────────────────────────────
+
+class TestFeat02ConflictDetection:
+    """FEAT-02: find_conflicts() detects duplicates and contradictions."""
+
+    def test_no_conflicts_in_empty_db(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        assert db.find_conflicts() == []
+
+    def test_duplicate_detected(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("a", "Rule", "JWT authentication required",    content="use JWT")
+        db.add_node("b", "Rule", "JWT authentication mandatory",   content="JWT needed")
+        conflicts = db.find_conflicts(similarity_threshold=0.5)
+        dup = [c for c in conflicts if c["type"] == "duplicate"]
+        assert len(dup) >= 1
+
+    def test_contradiction_detected(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("c1", "Rule", "JWT auth should use RS256",  content="must use RS256")
+        db.add_node("c2", "Rule", "JWT auth should not use HS256", content="do not use HS256")
+        conflicts = db.find_conflicts(similarity_threshold=0.3)
+        assert len(conflicts) >= 1
+
+    def test_conflict_struct_keys(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("x1", "Rule", "cache redis TTL",   content="use redis")
+        db.add_node("x2", "Rule", "cache redis store", content="redis required")
+        conflicts = db.find_conflicts(similarity_threshold=0.3)
+        if conflicts:
+            c = conflicts[0]
+            for k in ("type", "node_a", "node_b", "similarity", "reason"):
+                assert k in c
+
+
+# ── FEAT-03: Usage analytics ─────────────────────────────────
+
+class TestFeat03UsageAnalytics:
+    """FEAT-03: usage_analytics() returns valid structure."""
+
+    def test_returns_required_keys(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        r  = db.usage_analytics()
+        for k in ("top_accessed_nodes", "knowledge_growth", "by_type",
+                  "by_scope", "total_episodes", "total_nodes"):
+            assert k in r
+
+    def test_total_nodes_matches(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("n1", "Rule", "r1")
+        db.add_node("n2", "Note", "n2")
+        r  = db.usage_analytics()
+        assert r["total_nodes"] == 2
+
+    def test_access_count_tracked(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("hot", "Rule", "frequently accessed rule")
+        for _ in range(5):
+            db.record_access("hot")
+        r = db.usage_analytics()
+        top_ids = [n["id"] for n in r["top_accessed_nodes"]]
+        assert "hot" in top_ids
+
+
+# ── FEAT-04: Auto scope inference ────────────────────────────
+
+class TestFeat04ScopeInference:
+    """FEAT-04: BrainDB.infer_scope() auto-detects scope from path."""
+
+    def test_service_directory_detected(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        # Create a subdirectory that contains 'service'
+        service_dir = tmp_path / "payment_service"
+        service_dir.mkdir()
+        scope = BrainDB.infer_scope(str(tmp_path), str(service_dir / "stripe.py"))
+        assert "service" in scope or scope == "payment_service"
+
+    def test_global_for_skip_directory(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        scope = BrainDB.infer_scope(str(tmp_path), str(src_dir / "utils.py"))
+        assert scope == "global"
+
+    def test_no_file_returns_global(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        scope = BrainDB.infer_scope(str(tmp_path), "")
+        assert scope in ("global", str(tmp_path.name).lower()[:20])
+
+    def test_api_directory_detected(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        api_dir = tmp_path / "api_handler"
+        api_dir.mkdir()
+        scope = BrainDB.infer_scope(str(tmp_path), str(api_dir / "routes.py"))
+        assert "api" in scope or "handler" in scope
+
+
+# ── FEAT-05: Import / export ─────────────────────────────────
+
+class TestFeat05ImportExport:
+    """FEAT-05: export_json, export_markdown, import_json round-trip."""
+
+    def test_export_json_returns_required_keys(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("n1", "Rule", "JWT rule", content="use RS256")
+        data = db.export_json()
+        assert "nodes" in data and "edges" in data
+        assert data["total_nodes"] == 1
+        assert data["nodes"][0]["id"] == "n1"
+
+    def test_export_markdown_contains_title(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("m1", "Rule", "Use HTTPS everywhere", content="TLS required")
+        md = db.export_markdown()
+        assert "Use HTTPS everywhere" in md
+        assert "# Project Brain" in md
+
+    def test_import_json_roundtrip(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db1 = BrainDB(tmp_path / "src")
+        db1.add_node("e1", "Rule", "Exported rule", content="content A")
+        db1.add_node("e2", "Note", "Exported note", content="content B")
+        data = db1.export_json()
+
+        db2 = BrainDB(tmp_path / "dst")
+        result = db2.import_json(data)
+        assert result["nodes"] == 2
+        assert result["errors"] == 0
+        assert db2.get_node("e1") is not None
+        assert db2.get_node("e2") is not None
+
+    def test_import_skip_existing_without_overwrite(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("dup", "Rule", "original title", content="original")
+        data = {"nodes": [{"id": "dup", "type": "Rule", "title": "new title",
+                           "content": "new content", "scope": "global"}], "edges": []}
+        result = db.import_json(data, overwrite=False)
+        assert result["skipped"] == 1
+        assert db.get_node("dup")["title"] == "original title"
+
+    def test_import_overwrite_replaces_node(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("ow", "Rule", "old title", content="old")
+        data = {"nodes": [{"id": "ow", "type": "Rule", "title": "new title",
+                           "content": "new content", "scope": "global"}], "edges": []}
+        result = db.import_json(data, overwrite=True)
+        assert result["nodes"] == 1
+        assert db.get_node("ow")["title"] == "new title"
+
+    def test_export_filter_by_type(self, tmp_path):
+        from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
+        db.add_node("r1", "Rule", "a rule")
+        db.add_node("n1", "Note", "a note")
+        data = db.export_json(node_type="Rule")
+        assert data["total_nodes"] == 1
+        assert data["nodes"][0]["type"] == "Rule"

@@ -34,6 +34,7 @@ import sys
 import time
 import logging
 import argparse
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -44,18 +45,26 @@ MAX_QUERY_LEN    = 500
 MAX_CONTENT_LEN  = 2_000
 MAX_TITLE_LEN    = 200
 MAX_TAGS_COUNT   = 10
-RATE_LIMIT_RPM   = 60          # 每分鐘最多 60 次呼叫
-_call_times: list[float] = []  # Rate limiter 狀態
+RATE_LIMIT_RPM   = 60              # 每分鐘最多 60 次呼叫
+_call_times: list[float] = []      # Rate limiter 狀態
+_rate_lock   = threading.Lock()    # BUG-04 fix: protect concurrent access
 
 
 def _rate_check() -> None:
-    """簡單的滑動視窗 Rate Limiting"""
+    """
+    滑動視窗 Rate Limiting（BUG-04 fix: thread-safe）。
+
+    原實作的問題：_call_times 是 module-level list，多執行緒並發讀寫
+    會導致 TOCTOU race condition，允許超過限制的請求通過。
+    修復：用 threading.Lock() 使 read-check-append 成為原子操作。
+    """
     now = time.monotonic()
     cutoff = now - 60.0
-    _call_times[:] = [t for t in _call_times if t > cutoff]
-    if len(_call_times) >= RATE_LIMIT_RPM:
-        raise RuntimeError(f"Rate limit：每分鐘最多 {RATE_LIMIT_RPM} 次呼叫")
-    _call_times.append(now)
+    with _rate_lock:
+        _call_times[:] = [t for t in _call_times if t > cutoff]
+        if len(_call_times) >= RATE_LIMIT_RPM:
+            raise RuntimeError(f"Rate limit：每分鐘最多 {RATE_LIMIT_RPM} 次呼叫")
+        _call_times.append(now)
 
 
 def _safe_str(value: Any, max_len: int, field: str) -> str:

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -164,10 +165,28 @@ class NudgeEngine:
             return []
 
         nudges = []
+        now    = datetime.now(timezone.utc)
         for r in results:
-            conf     = float(r.get("confidence") or 0.7)
+            # BUG-02 fix ①: skip deprecated nodes
+            if r.get("is_deprecated"):
+                continue
+            # BUG-02 fix ②: skip nodes whose valid_until has passed
+            valid_until = r.get("valid_until")
+            if valid_until:
+                try:
+                    vu = datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+                    if vu.tzinfo is None:
+                        vu = vu.replace(tzinfo=timezone.utc)
+                    if vu < now:
+                        continue
+                except Exception:
+                    pass  # malformed date — include the nudge to be safe
+            # BUG-02 fix ③: use explicit None-check instead of `or` so that
+            # confidence=0.0 is not silently promoted to 0.7.
+            raw_conf  = r.get("confidence")
+            conf      = float(raw_conf) if raw_conf is not None else 0.7
             is_pinned = bool(r.get("is_pinned") or 0)
-            urgency  = (
+            urgency   = (
                 "high"   if is_pinned or conf > 0.85 else
                 "medium" if conf > 0.65 else
                 "low"

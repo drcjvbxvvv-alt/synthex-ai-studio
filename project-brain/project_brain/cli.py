@@ -1197,6 +1197,41 @@ def cmd_doctor(args):
                     else:
                         _ok2("無過時知識（confidence ≥ 0.2）")
 
+                    # BUG-06 fix: FTS5 索引完整性檢查
+                    try:
+                        fts_count = conn.execute(
+                            "SELECT COUNT(*) FROM nodes_fts"
+                        ).fetchone()[0]
+                        if fts_count < nodes:
+                            _err2(
+                                f"FTS5 索引不完整：{fts_count}/{nodes} 個節點已建立索引",
+                                "全文搜尋將遺漏未索引的節點",
+                                "重建 FTS5 索引"
+                            )
+                            if fix:
+                                conn.execute(
+                                    "INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')"
+                                )
+                                conn.commit()
+                                fixes_applied.append("重建 FTS5 全文搜尋索引")
+                        else:
+                            _ok2(f"FTS5 索引完整  {D}({fts_count}/{nodes} 個節點){R}")
+                    except Exception as _fts_err:
+                        _err2(
+                            f"FTS5 索引損壞或不存在：{_fts_err}",
+                            "全文搜尋功能不可用",
+                            "重建 FTS5 索引"
+                        )
+                        if fix:
+                            try:
+                                conn.execute(
+                                    "INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')"
+                                )
+                                conn.commit()
+                                fixes_applied.append("重建損壞的 FTS5 索引")
+                            except Exception:
+                                _err2("FTS5 重建失敗，請執行：brain index")
+
                 conn.close()
             except Exception as e:
                 _err2(f"brain.db 讀取失敗：{e}")
@@ -1406,6 +1441,148 @@ def cmd_doctor(args):
     print()
 
 
+def cmd_health_report(args):
+    """FEAT-01: 知識庫健康度儀表板（brain health-report）"""
+    wd = _workdir(args)
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    db = BrainDB(bd)
+    r  = db.health_report()
+
+    fmt = getattr(args, 'format', 'text')
+    if fmt == 'json':
+        import json as _j
+        print(_j.dumps(r, ensure_ascii=False, indent=2))
+        return
+
+    score = r["health_score"]
+    color = G if score >= 0.7 else (Y if score >= 0.4 else RE)
+    bar_w = 20
+    filled = int(score * bar_w)
+    bar = f"{G}{'█' * filled}{GR}{'░' * (bar_w - filled)}{R}"
+
+    print(f"\n  {B}{P}🧠  Knowledge Health Report{R}")
+    print(f"  {GR}{'═' * 46}{R}")
+    print(f"  Health Score  {bar}  {color}{B}{score:.0%}{R}")
+    print()
+
+    _info(f"Nodes: {B}{r['total_nodes']}{R}  ({', '.join(f'{t}:{n}' for t,n in r['by_type'].items())})")
+    _info(f"Avg confidence: {r['avg_confidence']:.2f}  Low-conf: {r['low_confidence_nodes']}")
+    _info(f"Stale nodes: {r['stale_nodes']}  Deprecated: {r['deprecated_nodes']}  Expired: {r['expired_nodes']}")
+    _info(f"FTS5 coverage: {r['fts5_coverage']}/{r['total_nodes']}  Vector: {r['vector_coverage']}/{r['total_nodes']}")
+    _info(f"Episodes: {r['episodes']}  Sessions: {r['sessions']}  Recent (7d): {r['recent_7d']}")
+
+    if r['stale_nodes'] > 0:
+        print(f"\n  {Y}⚠ {r['stale_nodes']} 個節點已超過 90 天且信心值 < 0.5{R}")
+        print(f"  {D}  可考慮執行 brain doctor --fix 清理{R}")
+    if r['vector_coverage'] < r['total_nodes'] * 0.8:
+        print(f"\n  {Y}⚠ 向量索引覆蓋率不足{R}")
+        print(f"  {D}  執行：brain index{R}")
+    print()
+
+
+def cmd_analytics(args):
+    """FEAT-03: 使用率分析報告（brain analytics）"""
+    wd = _workdir(args)
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    db = BrainDB(bd)
+    r  = db.usage_analytics()
+
+    fmt = getattr(args, 'format', 'text')
+    if fmt == 'json':
+        import json as _j
+        print(_j.dumps(r, ensure_ascii=False, indent=2))
+        return
+
+    print(f"\n  {B}{C}📊  Usage Analytics{R}")
+    print(f"  {GR}{'═' * 46}{R}")
+    _info(f"Total nodes: {r['total_nodes']}  Episodes: {r['total_episodes']}")
+
+    if r['by_type']:
+        type_str = "  ".join(f"{t}:{n}" for t, n in r['by_type'].items())
+        _info(f"By type:  {type_str}")
+
+    if r['by_scope']:
+        scope_str = "  ".join(f"{s}:{n}" for s, n in list(r['by_scope'].items())[:5])
+        _info(f"By scope: {scope_str}")
+
+    if r['top_accessed_nodes']:
+        print(f"\n  {B}Top accessed nodes:{R}")
+        for n in r['top_accessed_nodes'][:5]:
+            print(f"    {GR}{n['access_count']:>3}×{R}  {n['title'][:50]}")
+
+    if r['knowledge_growth']:
+        print(f"\n  {B}Knowledge growth (recent weeks):{R}")
+        for w in r['knowledge_growth'][:6]:
+            bar = "▓" * min(w['count'], 20)
+            print(f"    {GR}{w['week']}{R}  {G}{bar}{R} {w['count']}")
+    print()
+
+
+def cmd_export(args):
+    """FEAT-05: 匯出知識庫（brain export）"""
+    wd   = _workdir(args)
+    bd   = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    db   = BrainDB(bd)
+    fmt  = getattr(args, 'format', 'json')
+    kind = getattr(args, 'kind',   None)
+    sc   = getattr(args, 'scope',  None)
+    out  = getattr(args, 'output', None)
+
+    if fmt == 'markdown':
+        content = db.export_markdown(node_type=kind, scope=sc)
+        ext = ".md"
+    else:
+        import json as _j
+        content = _j.dumps(db.export_json(node_type=kind, scope=sc),
+                           ensure_ascii=False, indent=2)
+        ext = ".json"
+
+    if out:
+        Path(out).write_text(content, encoding="utf-8")
+        _ok(f"匯出完成：{out}")
+    else:
+        default = Path(wd) / f"brain_export{ext}"
+        default.write_text(content, encoding="utf-8")
+        _ok(f"匯出完成：{default}")
+
+
+def cmd_import(args):
+    """FEAT-05: 匯入知識庫（brain import <file>）"""
+    wd  = _workdir(args)
+    bd  = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    src = getattr(args, 'file', None)
+    if not src or not Path(src).exists():
+        _err(f"找不到匯入檔案：{src}"); return
+
+    from project_brain.brain_db import BrainDB
+    import json as _j
+    db        = BrainDB(bd)
+    overwrite = getattr(args, 'overwrite', False)
+
+    try:
+        data = _j.loads(Path(src).read_text(encoding="utf-8"))
+    except Exception as e:
+        _err(f"讀取匯入檔案失敗：{e}"); return
+
+    r = db.import_json(data, overwrite=overwrite)
+    _ok(f"匯入完成：節點 {r['nodes']}  邊 {r['edges']}  跳過 {r['skipped']}  錯誤 {r['errors']}")
+
+
 def main():
     import argparse
 
@@ -1518,6 +1695,22 @@ def main():
                    help='掃描全部 commit（預設只掃最近 100 個）')
     p.add_argument('--quiet', action='store_true', help='靜默模式')
 
+    p = mkp('health-report', 'FEAT-01：知識庫健康度儀表板')
+    p.add_argument('--format', choices=['text','json'], default='text')
+
+    p = mkp('analytics', 'FEAT-03：使用率分析報告')
+    p.add_argument('--format', choices=['text','json'], default='text')
+
+    p = mkp('export', 'FEAT-05：匯出知識庫（JSON / Markdown）')
+    p.add_argument('--format', choices=['json','markdown'], default='json')
+    p.add_argument('--kind',   default=None, help='只匯出某類型節點')
+    p.add_argument('--scope',  default=None, help='只匯出某 scope 節點')
+    p.add_argument('--output', '-o', default=None, help='輸出路徑（預設：brain_export.json）')
+
+    p = mkp('import', 'FEAT-05：匯入知識庫（JSON）')
+    p.add_argument('file', help='匯入檔案路徑（brain export 產生的 JSON）')
+    p.add_argument('--overwrite', action='store_true', help='覆蓋已存在的節點')
+
     p = mkp('index', '向量索引（語意搜尋 Phase 1）')
     p.add_argument('--quiet', action='store_true')
 
@@ -1588,20 +1781,24 @@ def main():
         return
 
     dispatch = {
-        'init':         cmd_init,
-        'status':       cmd_status,
-        'setup':        cmd_setup,
-        'ask':          cmd_ask,
-        'sync':         cmd_sync,
-        'add':          cmd_add,
-        'context':      cmd_context,
-        'meta':         cmd_meta_knowledge,
-        'doctor':       cmd_doctor,
-        'review':       cmd_review,
-        'scan':         cmd_scan,
-        'serve':        cmd_serve,
-        'index':        cmd_index,
-        'webui':        cmd_webui,
+        'init':          cmd_init,
+        'status':        cmd_status,
+        'setup':         cmd_setup,
+        'ask':           cmd_ask,
+        'sync':          cmd_sync,
+        'add':           cmd_add,
+        'context':       cmd_context,
+        'meta':          cmd_meta_knowledge,
+        'doctor':        cmd_doctor,
+        'review':        cmd_review,
+        'scan':          cmd_scan,
+        'serve':         cmd_serve,
+        'index':         cmd_index,
+        'webui':         cmd_webui,
+        'health-report': cmd_health_report,
+        'analytics':     cmd_analytics,
+        'export':        cmd_export,
+        'import':        cmd_import,
     }
 
     fn = dispatch.get(args.cmd)

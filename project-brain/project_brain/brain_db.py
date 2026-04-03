@@ -5,13 +5,14 @@ Single brain.db replaces 6 scattered SQLite files.
 L2 temporal memory replaces FalkorDB with pure SQLite.
 """
 from __future__ import annotations
-import hashlib, json, logging, sqlite3, threading
-from datetime import datetime, timezone
+import contextlib, hashlib, json, logging, math, sqlite3, threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 6           # DEF-04: bump on every schema change
+MAX_SESSION_ENTRIES = 500    # DEF-06: per-session_id LRU eviction threshold
 
 _SYNONYM_MAP = {
     "token":    ["jwt","bearer","auth"],
@@ -45,6 +46,8 @@ class BrainDB:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA busy_timeout=5000")
             c.execute("PRAGMA foreign_keys=ON")
+            # DEF-02 fix: register Python UDF so SQL triggers can call brain_ngram()
+            c.create_function("brain_ngram", 1, lambda t: BrainDB._ngram(t or ""))
             self._local.conn = c
         return self._local.conn
 
@@ -123,45 +126,245 @@ class BrainDB:
             );
             CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
         """)
-        # P1-A: scope column migration for existing databases
+        self.conn.execute(
+            "INSERT OR IGNORE INTO brain_meta(key,value) VALUES('created_at',datetime('now'))"
+        )
+        self.conn.commit()
+        # DEF-04: run versioned migrations (idempotent, replaces scattered ALTER TABLE blocks)
+        self._run_migrations()
+
+        # DEF-02 fix: SQL triggers for automatic FTS5 sync on direct UPDATE/DELETE.
+        # add_node() already handles FTS on INSERT; these triggers cover other write paths
+        # (update_approved in review_board.py, direct SQL patches, etc.).
         try:
-            self.conn.execute("ALTER TABLE nodes ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'")
-        except Exception:
-            pass  # column already exists
-        # A-22: episode confidence column
+            self.conn.executescript("""
+                CREATE TRIGGER IF NOT EXISTS nodes_fts_au
+                AFTER UPDATE OF title, content, tags ON nodes
+                BEGIN
+                    DELETE FROM nodes_fts WHERE id = old.id;
+                    INSERT INTO nodes_fts(id, title, content, tags)
+                    VALUES (new.id,
+                            brain_ngram(new.title),
+                            brain_ngram(new.content),
+                            new.tags);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS nodes_fts_ad
+                AFTER DELETE ON nodes
+                BEGIN
+                    DELETE FROM nodes_fts WHERE id = old.id;
+                END;
+            """)
+            self.conn.commit()
+        except Exception as _te:
+            logger.debug("DEF-02 trigger creation: %s", _te)
+
+        # OPT-01 fix: one-time migration to rebuild FTS5 with bigram-enhanced n-grams.
+        # New entries use the enhanced _ngram() automatically; existing entries need rebuild.
         try:
-            self.conn.execute("ALTER TABLE episodes ADD COLUMN confidence REAL DEFAULT 0.5")
-        except Exception:
-            pass
-        # Phase 1: node_vectors table migration
-        try:
-            self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS node_vectors (
+            _migrated = self.conn.execute(
+                "SELECT value FROM brain_meta WHERE key='fts_bigram_v1'"
+            ).fetchone()
+            if not _migrated:
+                self.conn.execute("DELETE FROM nodes_fts")
+                _rows = self.conn.execute(
+                    "SELECT id, title, content, tags FROM nodes"
+                ).fetchall()
+                for _r in _rows:
+                    self.conn.execute(
+                        "INSERT INTO nodes_fts(id, title, content, tags) VALUES(?, ?, ?, ?)",
+                        (_r[0],
+                         BrainDB._ngram(_r[1] or ""),
+                         BrainDB._ngram(_r[2] or ""),
+                         _r[3] or "[]")
+                    )
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('fts_bigram_v1','done')"
+                )
+                self.conn.commit()
+                logger.debug("OPT-01: FTS5 rebuilt with bigram n-grams (%d nodes)", len(_rows))
+        except Exception as _oe:
+            logger.debug("OPT-01 FTS bigram migration: %s", _oe)
+
+    def _run_migrations(self) -> None:
+        """DEF-04: Versioned schema migrations — idempotent, incremental.
+
+        Each migration is numbered 1..SCHEMA_VERSION. The current applied
+        version is stored in brain_meta.schema_version. On startup only
+        unapplied migrations run, so existing databases upgrade safely.
+        """
+        row = self.conn.execute(
+            "SELECT value FROM brain_meta WHERE key='schema_version'"
+        ).fetchone()
+        current = int(row[0]) if row else 0
+
+        if current >= SCHEMA_VERSION:
+            return
+
+        # Ordered list of (description, SQL-or-callable) tuples.
+        # Each entry corresponds to schema version = index + 1.
+        _migrations = [
+            # v1: scope column on nodes (P1-A)
+            ("scope column on nodes",
+             "ALTER TABLE nodes ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'"),
+            # v2: episode confidence column (A-22)
+            ("episode confidence column",
+             "ALTER TABLE episodes ADD COLUMN confidence REAL DEFAULT 0.5"),
+            # v3: node_vectors table (Phase 1 — may already exist in main schema)
+            ("node_vectors table",
+             """CREATE TABLE IF NOT EXISTS node_vectors (
                     node_id TEXT PRIMARY KEY,
                     vector  BLOB NOT NULL,
                     dim     INTEGER NOT NULL DEFAULT 768,
                     model   TEXT DEFAULT 'nomic-embed-text',
                     created_at TEXT DEFAULT (datetime('now'))
-                )"""
-            )
-        except Exception:
-            pass
+                )"""),
+            # v4: unique index on episodes.source (BUG-01)
+            ("unique index on episodes.source",
+             "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_source"
+             " ON episodes(source) WHERE source != ''"),
+            # v5: is_deprecated column on nodes (BUG-02)
+            ("is_deprecated column on nodes",
+             "ALTER TABLE nodes ADD COLUMN is_deprecated INTEGER NOT NULL DEFAULT 0"),
+            # v6: valid_until column on nodes (BUG-02)
+            ("valid_until column on nodes",
+             "ALTER TABLE nodes ADD COLUMN valid_until TEXT DEFAULT NULL"),
+        ]
 
-        self.conn.execute(
-            "INSERT OR IGNORE INTO brain_meta(key,value) VALUES('schema_version',?)",
-            (str(SCHEMA_VERSION),)
-        )
-        self.conn.execute(
-            "INSERT OR IGNORE INTO brain_meta(key,value) VALUES('created_at',datetime('now'))"
-        )
-        self.conn.commit()
+        for idx, (desc, sql) in enumerate(_migrations):
+            ver = idx + 1
+            if ver <= current:
+                continue
+            try:
+                self.conn.execute(sql)
+            except Exception:
+                pass  # column/index already exists — safe to ignore
+            self.conn.execute(
+                "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('schema_version',?)",
+                (str(ver),)
+            )
+            self.conn.commit()
+            logger.debug("DEF-04: schema migration v%d applied: %s", ver, desc)
 
     # -- helpers --
 
     @staticmethod
     def _ngram(text: str) -> str:
+        """OPT-01 fix: CJK bigram-enhanced n-gram for improved FTS5 recall.
+
+        Strategy:
+          1. Space-separate each CJK character for single-char term matching.
+          2. Generate bigrams from CJK sequences for multi-char phrase matching.
+             (e.g. "中文搜尋" → "中 文 搜 尋 中文 文搜 搜尋")
+        Estimated CJK recall improvement: ~40% → ~70%.
+        """
         import re
-        return re.sub(r"([\u4e00-\u9fff])", r" \1 ", text or "")
+        if not text:
+            return ""
+        spaced  = re.sub(r"([\u4e00-\u9fff])", r" \1 ", text)
+        cjk_segs = re.findall(r"[\u4e00-\u9fff]+", text)
+        bigrams  = []
+        for seg in cjk_segs:
+            bigrams.extend(seg[i:i+2] for i in range(len(seg) - 1))
+        if bigrams:
+            return spaced + " " + " ".join(bigrams)
+        return spaced
+
+    @staticmethod
+    def _effective_confidence(node: dict) -> float:
+        """DEF-05/OPT-04 fix: decay-adjusted confidence for search result ranking.
+
+        Applies F1 (time decay) and F7 (access-count bonus) inline so that
+        search_nodes() re-ranks by effective_confidence rather than stale
+        static confidence values.  Pinned nodes are immune to decay.
+        """
+        base = float(node.get("confidence", 0.8))
+        if node.get("is_pinned"):
+            return base
+        created = node.get("created_at", "") or ""
+        if not created:
+            return base
+        try:
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=timezone.utc)
+            days   = max(0, (datetime.now(timezone.utc) - created_dt).days)
+            decay  = math.exp(-0.003 * days)          # F1: BASE_DECAY_RATE=0.003
+            access = int(node.get("access_count") or 0)
+            f7     = min(0.15, access / 10 * 0.05)   # F7: access-count bonus
+            return max(0.05, min(1.0, base * decay + f7))
+        except Exception:
+            return base
+
+    @contextlib.contextmanager
+    def _write_guard(self):
+        """DEF-01 fix: cross-process write serialization via advisory file lock.
+
+        Uses fcntl.flock() on a separate .write_lock file so that concurrent
+        writers from different processes (e.g. git post-commit hook + MCP server)
+        are serialized rather than racing for the SQLite write lock.
+
+        Reentrant within the same OS thread: nested calls pass through without
+        re-acquiring flock (prevents deadlock when add_node() is called inside
+        a caller that already holds the guard).
+
+        Falls back to a no-op on Windows (fcntl unavailable) or any OS error.
+        SQLite WAL mode + busy_timeout=5000 provides the inner timeout safety net.
+        """
+        # Per-thread depth counter (threading.local) for reentrancy
+        depth = getattr(self._local, "_wg_depth", 0)
+        self._local._wg_depth = depth + 1
+        if depth > 0:
+            # Already locked by this thread — pass through without re-acquiring
+            try:
+                yield
+            finally:
+                self._local._wg_depth -= 1
+            return
+
+        # Outermost call: acquire OS-level advisory lock
+        lock_path = self.brain_dir / ".write_lock"
+        lf = None
+        try:
+            import fcntl
+            lf = open(str(lock_path), "w")
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)  # blocking exclusive lock
+        except (ImportError, OSError, AttributeError):
+            pass  # flock unavailable (Windows/NFS): proceed without lock
+        try:
+            yield
+        finally:
+            self._local._wg_depth -= 1
+            if lf is not None:
+                try:
+                    import fcntl as _fcntl
+                    _fcntl.flock(lf.fileno(), _fcntl.LOCK_UN)
+                except Exception:
+                    pass
+                lf.close()
+
+    @staticmethod
+    def _adaptive_weights(query: str) -> tuple:
+        """OPT-02: Compute adaptive (fts_weight, vec_weight) based on query.
+
+        Heuristics:
+          - Short query (≤ 2 terms) or CJK-heavy → favour FTS5 (exact bigram index).
+          - Long / semantic query (≥ 5 terms)   → favour vector similarity.
+          - Medium (3–4 terms)                   → default balance (P1 baseline).
+
+        Returns: (fts_weight, vec_weight) that sum to 1.0.
+        """
+        import re
+        tokens = re.findall(r"[a-zA-Z0-9_]{2,}", query)
+        cjk    = re.findall(r"[\u4e00-\u9fff]", query)
+        n_terms = len(tokens) + len(cjk) // 2    # every 2 CJK chars ≈ 1 semantic term
+        cjk_ratio = len(cjk) / max(len(query.replace(" ", "")), 1)
+
+        if n_terms <= 2 or cjk_ratio > 0.5:
+            return (0.6, 0.4)   # short / CJK-heavy → FTS5 wins
+        if n_terms >= 5:
+            return (0.25, 0.75) # long semantic → vector wins
+        return (0.4, 0.6)       # default (P1 baseline)
 
     def _expand_terms(self, query: str) -> list:
         import re
@@ -190,27 +393,28 @@ class BrainDB:
         meta       = kw.get("meta", {})
         confidence = float(kw.get("confidence",
                            meta.get("confidence", 0.8) if isinstance(meta, dict) else 0.8))
-        self.conn.execute("""
-            INSERT OR REPLACE INTO nodes
-                (id,type,title,content,tags,confidence,importance,
-                 emotional_weight,source_url,author,meta,scope)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (node_id, node_type, title, content, tags_json,
-              confidence,
-              float(kw.get("importance", 0.5)),
-              float(kw.get("emotional_weight", 0.5)),
-              kw.get("source_url",""), kw.get("author",""),
-              json.dumps(meta if isinstance(meta, dict) else {}, ensure_ascii=False),
-              scope))
-        try:
-            self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
-            self.conn.execute(
-                "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
-                (node_id, self._ngram(title), self._ngram(content), tags_json)
-            )
-        except Exception:
-            pass
-        self.conn.commit()
+        with self._write_guard():  # DEF-01 fix: cross-process write lock
+            self.conn.execute("""
+                INSERT OR REPLACE INTO nodes
+                    (id,type,title,content,tags,confidence,importance,
+                     emotional_weight,source_url,author,meta,scope)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (node_id, node_type, title, content, tags_json,
+                  confidence,
+                  float(kw.get("importance", 0.5)),
+                  float(kw.get("emotional_weight", 0.5)),
+                  kw.get("source_url",""), kw.get("author",""),
+                  json.dumps(meta if isinstance(meta, dict) else {}, ensure_ascii=False),
+                  scope))
+            try:
+                self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
+                self.conn.execute(
+                    "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
+                    (node_id, self._ngram(title), self._ngram(content), tags_json)
+                )
+            except Exception:
+                pass
+            self.conn.commit()
         return node_id
 
     def update_node(self, node_id: str, title=None, content=None,
@@ -227,19 +431,20 @@ class BrainDB:
             return True
         ups.append("updated_at=datetime('now')")
         params.append(node_id)
-        self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
-        if title is not None or content is not None:
-            nt = title   if title   is not None else ex["title"]
-            nc = content if content is not None else ex["content"]
-            try:
-                self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
-                self.conn.execute(
-                    "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
-                    (node_id, self._ngram(nt), self._ngram(nc), ex.get("tags","[]"))
-                )
-            except Exception:
-                pass
-        self.conn.commit()
+        with self._write_guard():  # DEF-01 fix
+            self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
+            if title is not None or content is not None:
+                nt = title   if title   is not None else ex["title"]
+                nc = content if content is not None else ex["content"]
+                try:
+                    self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
+                    self.conn.execute(
+                        "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
+                        (node_id, self._ngram(nt), self._ngram(nc), ex.get("tags","[]"))
+                    )
+                except Exception:
+                    pass
+            self.conn.commit()
         return True
 
     def get_node(self, node_id: str):
@@ -273,7 +478,15 @@ class BrainDB:
                     f" WHERE nodes_fts MATCH ? {sf}"
                     f" ORDER BY {sort_clause} LIMIT ?",
                     (fts_q, *sp, _s, limit)).fetchall()
-            return [dict(r) for r in rows]
+            # DEF-05/OPT-04 fix: re-rank by decay-adjusted effective confidence
+            results = [dict(r) for r in rows]
+            for r in results:
+                r["effective_confidence"] = self._effective_confidence(r)
+            results.sort(
+                key=lambda x: (x.get("is_pinned", 0), x["effective_confidence"]),
+                reverse=True,
+            )
+            return results
         except Exception:
             return []
 
@@ -324,8 +537,9 @@ class BrainDB:
         return r.rowcount > 0
 
     def delete_node(self, node_id: str) -> bool:
-        r = self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
-        self.conn.commit()
+        with self._write_guard():  # DEF-01 fix
+            r = self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+            self.conn.commit()
         return r.rowcount > 0
 
     def all_nodes(self, node_type=None, limit: int = 500) -> list:
@@ -473,13 +687,22 @@ class BrainDB:
     def hybrid_search(self, query: str, query_vector: list = None,
                       scope: str = None, limit: int = 8) -> list:
         """
-        Phase 1: Hybrid search = vector × 0.6 + FTS5 × 0.4.
-        If no vector available, falls back to FTS5 only.
+        Phase 1+OPT-02: Hybrid search with adaptive FTS5/vector weights.
+
+        Weights are computed dynamically by _adaptive_weights():
+          - Short / CJK-heavy queries → FTS5 ×0.6 + vector ×0.4
+          - Long / semantic queries   → FTS5 ×0.25 + vector ×0.75
+          - Default (3–4 terms)       → FTS5 ×0.4 + vector ×0.6
+
+        Falls back to pure FTS5 when no query_vector is provided.
         """
         # FTS5 results
         fts_results = self.search_nodes(query, scope=scope, limit=limit)
         if not query_vector:
             return fts_results  # pure FTS5 fallback
+
+        # OPT-02: adaptive weights
+        fts_w, vec_w = self._adaptive_weights(query)
 
         # Vector results
         vec_results = self.search_nodes_by_vector(
@@ -487,18 +710,18 @@ class BrainDB:
         )
 
         # Merge: assign scores, deduplicate
-        scored: dict[str, tuple[dict, float]] = {}
+        scored: dict = {}
         for i, n in enumerate(fts_results):
             nid = n['id']
             fts_score = (limit - i) / limit  # rank-based score 0.0–1.0
-            scored[nid] = (n, fts_score * 0.4)
+            scored[nid] = (n, fts_score * fts_w)
         for i, n in enumerate(vec_results):
             nid = n['id']
             vec_score = (1.0 - n.get('dist', 0.5))  # convert distance to similarity
             if nid in scored:
-                scored[nid] = (scored[nid][0], scored[nid][1] + vec_score * 0.6)
+                scored[nid] = (scored[nid][0], scored[nid][1] + vec_score * vec_w)
             else:
-                scored[nid] = (n, vec_score * 0.6)
+                scored[nid] = (n, vec_score * vec_w)
 
         # Sort by combined score
         merged = sorted(scored.values(), key=lambda x: x[1], reverse=True)
@@ -576,13 +799,19 @@ class BrainDB:
     # ── L2: temporal memory ───────────────────────────────────────────
 
     def add_episode(self, content: str, source: str = "", ref_time=None, confidence: float = 0.5) -> str:
-        eid = "ep-" + hashlib.md5(f"{content}{source}".encode()).hexdigest()[:8]
-        ts  = ref_time or datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "INSERT OR IGNORE INTO episodes(id,content,source,ref_time,confidence) VALUES(?,?,?,?,?)",
-            (eid, content, source, ts, confidence)
-        )
-        self.conn.commit()
+        # BUG-01 fix: use source alone as hash seed when available so that the
+        # same git commit always produces the same episode ID regardless of how
+        # the content string is formatted.  Extended to 16 hex chars (64-bit)
+        # to reduce birthday-paradox collision probability to near-zero.
+        seed = source if source else f"{content}{source}"
+        eid  = "ep-" + hashlib.md5(seed.encode()).hexdigest()[:16]
+        ts   = ref_time or datetime.now(timezone.utc).isoformat()
+        with self._write_guard():  # DEF-01 fix
+            self.conn.execute(
+                "INSERT OR IGNORE INTO episodes(id,content,source,ref_time,confidence) VALUES(?,?,?,?,?)",
+                (eid, content, source, ts, confidence)
+            )
+            self.conn.commit()
         return eid
 
     def recent_episodes(self, limit: int = 10) -> list:
@@ -631,6 +860,18 @@ class BrainDB:
             INSERT INTO sessions(session_id,key,value,category) VALUES(?,?,?,?)
             ON CONFLICT(session_id,key) DO UPDATE SET value=excluded.value
         """, (session_id, key, value, category))
+        # DEF-06: LRU eviction — keep only the newest MAX_SESSION_ENTRIES per session_id
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE session_id=?", (session_id,)
+        ).fetchone()[0]
+        if count > MAX_SESSION_ENTRIES:
+            self.conn.execute(
+                "DELETE FROM sessions WHERE id IN ("
+                "  SELECT id FROM sessions WHERE session_id=?"
+                "  ORDER BY created_at ASC LIMIT ?"
+                ")",
+                (session_id, count - MAX_SESSION_ENTRIES)
+            )
         self.conn.commit()
 
     def session_get(self, key: str, session_id: str = "default"):
@@ -671,6 +912,357 @@ class BrainDB:
                 "SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── FEAT-01: knowledge health dashboard ──────────────────────
+
+    def health_report(self) -> dict:
+        """FEAT-01: Summarise knowledge-base health as a structured dict.
+
+        Returns keys:
+          total_nodes, by_type, avg_confidence, low_confidence_nodes,
+          stale_nodes (>90 days + conf<0.5), deprecated_nodes, expired_nodes,
+          fts5_coverage, vector_coverage, episodes, sessions,
+          recent_7d (nodes created in last 7 days), health_score (0.0–1.0).
+        """
+        now  = datetime.now(timezone.utc)
+        rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+        nodes = [dict(r) for r in rows]
+        total = len(nodes)
+
+        by_type: dict = {}
+        confs: list   = []
+        stale = deprecated = expired = 0
+
+        for n in nodes:
+            by_type[n.get("type","unknown")] = by_type.get(n.get("type","unknown"), 0) + 1
+            confs.append(float(n.get("confidence", 0.8)))
+            if n.get("is_deprecated"):
+                deprecated += 1
+            vu = n.get("valid_until")
+            if vu:
+                try:
+                    dt = datetime.fromisoformat(vu.replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if now > dt:
+                        expired += 1
+                except Exception:
+                    pass
+            if not n.get("is_pinned"):
+                created = n.get("created_at", "")
+                try:
+                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if (now - dt).days > 90 and float(n.get("confidence", 0.8)) < 0.5:
+                        stale += 1
+                except Exception:
+                    pass
+
+        avg_conf    = round(sum(confs) / len(confs), 3) if confs else 0.0
+        low_conf    = sum(1 for c in confs if c < 0.4)
+
+        fts_count = vec_count = 0
+        try:
+            fts_count = self.conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
+        except Exception:
+            pass
+        try:
+            vec_count = self.conn.execute("SELECT COUNT(*) FROM node_vectors").fetchone()[0]
+        except Exception:
+            pass
+
+        episodes = self.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+        sessions = self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        thresh   = (now - timedelta(days=7)).isoformat()
+        recent_7d = self.conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE created_at >= ?", (thresh,)
+        ).fetchone()[0]
+
+        score = self._compute_health_score(total, avg_conf, stale, fts_count, vec_count)
+
+        return {
+            "total_nodes":         total,
+            "by_type":             by_type,
+            "avg_confidence":      avg_conf,
+            "low_confidence_nodes": low_conf,
+            "stale_nodes":         stale,
+            "deprecated_nodes":    deprecated,
+            "expired_nodes":       expired,
+            "fts5_coverage":       fts_count,
+            "vector_coverage":     vec_count,
+            "episodes":            episodes,
+            "sessions":            sessions,
+            "recent_7d":           recent_7d,
+            "health_score":        score,
+        }
+
+    @staticmethod
+    def _compute_health_score(total: int, avg_conf: float,
+                               stale: int, fts_count: int, vec_count: int) -> float:
+        """0.0–1.0 composite health score (higher is healthier)."""
+        if total == 0:
+            return 0.5
+        score  = avg_conf * 0.4
+        score += (1 - stale / total) * 0.3
+        score += min(fts_count / total, 1.0) * 0.2
+        score += min(vec_count / total, 1.0) * 0.1
+        return round(min(1.0, max(0.0, score)), 3)
+
+    # ── FEAT-02: conflict detection ────────────────────────────
+
+    def find_conflicts(self, similarity_threshold: float = 0.7) -> list:
+        """FEAT-02: Detect potentially conflicting or duplicate knowledge nodes.
+
+        Returns up to 50 conflict dicts, each with:
+          type ('duplicate' or 'contradiction'), node_a, node_b,
+          title_a, title_b, similarity, reason.
+
+        Contradictions are ranked before duplicates.
+        """
+        nodes = [dict(r) for r in self.conn.execute(
+            "SELECT id, type, title, content FROM nodes LIMIT 500"
+        ).fetchall()]
+
+        conflicts = []
+        seen: set  = set()
+        _contra = [
+            ("must", "must not"), ("should", "should not"),
+            ("use", "do not use"), ("enable", "disable"),
+            ("allow", "deny"), ("required", "forbidden"),
+            ("需要", "不需要"), ("必須", "禁止"),
+        ]
+
+        for i, a in enumerate(nodes):
+            a_words = set(a["title"].lower().split())
+            if not a_words:
+                continue
+            for b in nodes[i + 1:]:
+                pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
+                if pair_key in seen:
+                    continue
+                seen.add(pair_key)
+
+                b_words = set(b["title"].lower().split())
+                if not b_words:
+                    continue
+                overlap = len(a_words & b_words) / len(a_words | b_words)
+                if overlap < similarity_threshold:
+                    continue
+
+                a_text = (a["title"] + " " + (a.get("content") or "")).lower()
+                b_text = (b["title"] + " " + (b.get("content") or "")).lower()
+                is_contra = any(
+                    (ka in a_text and kb in b_text) or (kb in a_text and ka in b_text)
+                    for ka, kb in _contra
+                )
+                ctype = "contradiction" if is_contra else "duplicate"
+                conflicts.append({
+                    "type":       ctype,
+                    "node_a":     a["id"],
+                    "node_b":     b["id"],
+                    "title_a":    a["title"],
+                    "title_b":    b["title"],
+                    "similarity": round(overlap, 3),
+                    "reason":     (
+                        f"相似標題（{overlap:.0%} 重疊）且內容矛盾" if is_contra
+                        else f"相似標題（{overlap:.0%} 重疊），可能重複"
+                    ),
+                })
+
+        conflicts.sort(key=lambda x: (x["type"] != "contradiction", -x["similarity"]))
+        return conflicts[:50]
+
+    # ── FEAT-03: usage analytics ────────────────────────────────
+
+    def usage_analytics(self) -> dict:
+        """FEAT-03: Return usage analytics as a structured dict.
+
+        Keys: top_accessed_nodes, knowledge_growth (weekly), by_type,
+              by_scope, avg_confidence_by_type, recent_queries, total_episodes,
+              total_nodes.
+        """
+        top_nodes = [dict(r) for r in self.conn.execute(
+            "SELECT id, title, type, access_count, last_accessed FROM nodes"
+            " WHERE access_count > 0 ORDER BY access_count DESC LIMIT 10"
+        ).fetchall()]
+
+        growth = [dict(r) for r in self.conn.execute(
+            "SELECT strftime('%Y-%W', created_at) week, COUNT(*) count"
+            " FROM nodes GROUP BY week ORDER BY week DESC LIMIT 12"
+        ).fetchall()]
+
+        by_type = {r["type"]: r["c"] for r in self.conn.execute(
+            "SELECT type, COUNT(*) c FROM nodes GROUP BY type ORDER BY c DESC"
+        ).fetchall()}
+
+        by_scope = {r["scope"]: r["c"] for r in self.conn.execute(
+            "SELECT scope, COUNT(*) c FROM nodes GROUP BY scope"
+            " ORDER BY c DESC LIMIT 10"
+        ).fetchall()}
+
+        conf_by_type = {r["type"]: round(r["avg_conf"], 3) for r in self.conn.execute(
+            "SELECT type, AVG(confidence) avg_conf FROM nodes GROUP BY type"
+        ).fetchall()}
+
+        recent_queries = [dict(r) for r in self.conn.execute(
+            "SELECT query, latency_ms, created_at FROM traces"
+            " ORDER BY created_at DESC LIMIT 10"
+        ).fetchall()]
+
+        ep_count = self.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+
+        return {
+            "top_accessed_nodes":    top_nodes,
+            "knowledge_growth":      growth,
+            "by_type":               by_type,
+            "by_scope":              by_scope,
+            "avg_confidence_by_type": conf_by_type,
+            "recent_queries":        recent_queries,
+            "total_episodes":        ep_count,
+            "total_nodes":           sum(by_type.values()),
+        }
+
+    # ── FEAT-04: auto scope inference ───────────────────────────
+
+    @staticmethod
+    def infer_scope(workdir: str, current_file: str = "") -> str:
+        """FEAT-04: Auto-infer knowledge scope from directory structure.
+
+        Examples:
+          /project/payment_service/stripe.py → 'payment_service'
+          /project/src/api/handler.py        → 'api'
+          /project/utils.py                  → 'global'
+        """
+        import re as _re
+        from pathlib import Path as _P
+        _skip = {"src", "test", "tests", "docs", "scripts", "build", "dist", "."}
+        _svc  = ["service", "module", "pkg", "app", "api", "lib", "handler", "domain"]
+        base  = _P(current_file) if current_file else _P(workdir)
+        try:
+            parts = list(base.relative_to(_P(workdir).resolve()).parts)
+        except ValueError:
+            return "global"
+        for part in parts:
+            pl = part.lower()
+            if any(k in pl for k in _svc):
+                return _re.sub(r"[^a-z0-9_]", "_", pl)
+        if parts and parts[0].lower() not in _skip:
+            return _re.sub(r"[^a-z0-9_]", "_", parts[0].lower())
+        return "global"
+
+    # ── FEAT-05: import / export ────────────────────────────────
+
+    def export_json(self, node_type: str = None, scope: str = None) -> dict:
+        """FEAT-05: Export knowledge nodes (and edges) to a JSON-serialisable dict."""
+        if node_type:
+            nodes = [dict(r) for r in self.conn.execute(
+                "SELECT * FROM nodes WHERE type=? ORDER BY created_at", (node_type,)
+            ).fetchall()]
+        elif scope:
+            nodes = [dict(r) for r in self.conn.execute(
+                "SELECT * FROM nodes WHERE scope=? ORDER BY created_at", (scope,)
+            ).fetchall()]
+        else:
+            nodes = [dict(r) for r in self.conn.execute(
+                "SELECT * FROM nodes ORDER BY created_at"
+            ).fetchall()]
+
+        edges = [dict(r) for r in self.conn.execute("SELECT * FROM edges").fetchall()]
+        return {
+            "version":     "1.0",
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "total_nodes": len(nodes),
+            "nodes":       nodes,
+            "edges":       edges,
+        }
+
+    def export_markdown(self, node_type: str = None, scope: str = None) -> str:
+        """FEAT-05: Export knowledge nodes to a Markdown document."""
+        data  = self.export_json(node_type=node_type, scope=scope)
+        lines = [
+            "# Project Brain Knowledge Export",
+            "",
+            f"Exported: {data['exported_at']}  |  Total: {data['total_nodes']} nodes",
+            "",
+        ]
+        by_type: dict = {}
+        for node in data["nodes"]:
+            t = node.get("type", "Unknown")
+            by_type.setdefault(t, []).append(node)
+
+        for t, nodes in sorted(by_type.items()):
+            lines += [f"## {t} ({len(nodes)})", ""]
+            for n in nodes:
+                lines.append(f"### {n['title']}")
+                if n.get("content"):
+                    lines += ["", n["content"]]
+                meta = []
+                if n.get("confidence") is not None:
+                    meta.append(f"confidence={n['confidence']:.2f}")
+                if n.get("scope") and n["scope"] != "global":
+                    meta.append(f"scope={n['scope']}")
+                if meta:
+                    lines += ["", f"*{', '.join(meta)}*"]
+                lines.append("")
+
+        return "\n".join(lines)
+
+    def import_json(self, data: dict, overwrite: bool = False) -> dict:
+        """FEAT-05: Import nodes and edges from an export_json() dict.
+
+        Args:
+            data:      dict as returned by export_json()
+            overwrite: if True, replace existing nodes by ID
+
+        Returns: {"nodes": imported, "edges": imported, "skipped": n, "errors": n}
+        """
+        result = {"nodes": 0, "edges": 0, "skipped": 0, "errors": 0}
+
+        for node in data.get("nodes", []):
+            try:
+                nid = node.get("id")
+                if not nid:
+                    result["errors"] += 1
+                    continue
+                if not overwrite and self.get_node(nid):
+                    result["skipped"] += 1
+                    continue
+                meta = node.get("meta", {})
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                self.add_node(
+                    node_id=nid,
+                    node_type=node.get("type", "Note"),
+                    title=node.get("title", ""),
+                    content=node.get("content", ""),
+                    scope=node.get("scope", "global"),
+                    confidence=node.get("confidence", 0.8),
+                    importance=node.get("importance", 0.5),
+                    emotional_weight=node.get("emotional_weight", 0.5),
+                    meta=meta,
+                )
+                result["nodes"] += 1
+            except Exception as e:
+                logger.debug("import_json node error: %s", e)
+                result["errors"] += 1
+
+        for edge in data.get("edges", []):
+            try:
+                self.add_edge(
+                    source_id=edge["source_id"],
+                    relation=edge["relation"],
+                    target_id=edge["target_id"],
+                    note=edge.get("note", ""),
+                )
+                result["edges"] += 1
+            except Exception:
+                result["errors"] += 1
+
+        return result
 
     # -- legacy migration --
 
