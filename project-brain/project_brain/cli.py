@@ -1840,8 +1840,11 @@ def cmd_report(args):
         import json as _j
         text = _j.dumps(report, ensure_ascii=False, indent=2)
         if out:
-            Path(out).write_text(text, encoding='utf-8')
-            _ok(f"報告已儲存：{out}")
+            out_path = Path(out)
+            if out_path.is_dir():
+                out_path = out_path / "brain_report.json"
+            out_path.write_text(text, encoding='utf-8')
+            _ok(f"報告已儲存：{out_path}")
         else:
             print(text)
         return
@@ -1889,8 +1892,11 @@ def cmd_report(args):
 
     if out:
         import json as _j
-        Path(out).write_text(_j.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-        _ok(f"詳細報告已儲存：{out}")
+        out_path = Path(out)
+        if out_path.is_dir():
+            out_path = out_path / "brain_report.json"
+        out_path.write_text(_j.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        _ok(f"詳細報告已儲存：{out_path}")
 
 
 def cmd_search(args):
