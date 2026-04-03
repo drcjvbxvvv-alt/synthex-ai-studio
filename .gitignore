@@ -2,6 +2,7 @@
 __pycache__
 *.py[cod]
 *$py.class
+.pytest_cache/
 *.pytest_cache
 
 # 資料庫檔案

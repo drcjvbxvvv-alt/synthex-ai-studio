@@ -1,10 +1,10 @@
 # Project Brain — Master Document
 
-> 這是 Project Brain 的唯一文件。所有設計決策、缺陷分析、開發計劃都在這裡。
-> 其他 `.md` 文件是對外說明（README、INSTALL），這裡是對內設計記錄。
+> 內部架構設計記錄。對外說明請見 README.md / INSTALL.md / COMMANDS.md。
+> 實作歷史請見 docs/COMPLETED_HISTORY.md。
 
-**版本**：v11.1  
-**更新日期**：2026-03-31
+**版本**：v0.2.0
+**更新日期**：2026-04-03
 
 ---
 
