@@ -100,13 +100,13 @@ def _banner() -> str:
 def _workdir(args) -> str:
     """
     Resolve working directory — same pattern as git:
-    1. --workdir flag
-    2. Auto-detect: walk up from cwd until .brain/ is found
-    3. BRAIN_WORKDIR env var (fallback for MCP server / global default)
-    4. Fallback: current directory
+    1. --workdir flag (explicit override)
+    2. Auto-detect: walk up from cwd until .brain/ is found  ← primary mechanism
+    3. BRAIN_WORKDIR env var (fallback for MCP server / headless environments only)
+    4. Fallback: current directory (brain setup will create .brain here)
 
-    Local .brain/ always takes priority over BRAIN_WORKDIR so that
-    switching between projects works correctly without stale env vars.
+    BRAIN_WORKDIR is NOT required for normal use. Auto-detection handles
+    multi-project workflows — just cd into the project and run brain commands.
     """
     explicit = getattr(args, 'workdir', None)
     if explicit:
@@ -1478,11 +1478,14 @@ def cmd_doctor(args):
 
     # BRAIN_WORKDIR
     env_wd = os.environ.get("BRAIN_WORKDIR", "")
+    bd_found = Path(wd, ".brain").exists()
     if env_wd:
         _ok2(f"BRAIN_WORKDIR={env_wd}")
+    elif bd_found:
+        _ok2(f"工作目錄自動偵測：{wd}  （.brain/ 已找到，無需設定 BRAIN_WORKDIR）")
     else:
-        _warn2(f"BRAIN_WORKDIR 未設定（自動偵測：{wd}）",
-               "可設定 export BRAIN_WORKDIR=/your/project 省略 --workdir")
+        _warn2(f"找不到 .brain/（當前目錄：{wd}）",
+               "在專案根目錄執行 brain setup 初始化")
 
     # ── 2. 資料庫 ───────────────────────────────────────────────
     _section("資料庫")
@@ -2018,7 +2021,7 @@ def main():
     def mkp(name, help_text):
         p = sub.add_parser(name, help=help_text)
         p.add_argument('--workdir', '-w', default=None,
-                       help='專案目錄（預設：$BRAIN_WORKDIR 或當前目錄）')
+                       help='專案目錄（預設：自動從當前目錄往上找 .brain/，無需設定）')
         return p
 
     p = mkp('init',   '初始化 Project Brain')
