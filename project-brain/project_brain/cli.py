@@ -222,6 +222,20 @@ def cmd_init(args):
         _db.conn.commit()
     except Exception:
         pass  # brain.db creation must not block legacy init
+
+    # PH2-05: create default synonyms.json template if not present
+    try:
+        import json as _j
+        _syn_path = Path(wd) / '.brain' / 'synonyms.json'
+        if not _syn_path.exists():
+            _default_synonyms = {
+                "_comment": "PH2-05: 自訂同義詞設定檔。新增你的業務術語，會與內建同義詞合併。格式：{ '術語': ['同義詞1','同義詞2'] }",
+                "範例術語": ["example_term", "sample"],
+            }
+            _syn_path.write_text(_j.dumps(_default_synonyms, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
 def _check_l2_health(wd: str) -> dict:
     """
     快速檢查 L2 FalkorDB/Graphiti 是否可達（不阻塞，timeout=2s）。
@@ -252,10 +266,75 @@ def cmd_status(args):
     b  = _brain(wd)
     print(b.status())
 
+def _cmd_add_interactive(args):
+    """PH2-03: 互動式分步輸入（brain add 無參數時觸發）"""
+    print(f"\n{C}{B}🧠  Brain Add — 互動模式{R}  {D}（Ctrl+C 取消）{R}\n")
+
+    # Step 1: 內容
+    try:
+        content_raw = input(f"  {C}內容{R}（必填，可以是規則/踩坑/決策）：").strip()
+    except (KeyboardInterrupt, EOFError):
+        print(); _info("已取消"); return None
+    if not content_raw:
+        _err("內容不可為空"); return None
+
+    # Step 2: 類型
+    kinds = ["Pitfall", "Rule", "Decision", "ADR", "Note"]
+    print(f"\n  {C}類型{R}：")
+    for i, k in enumerate(kinds, 1):
+        clr = {
+            "Pitfall": RE, "Rule": C, "Decision": G,
+            "ADR": P, "Note": Y,
+        }.get(k, W)
+        print(f"    {GR}{i}{R}. {clr}{k}{R}")
+    try:
+        choice = input(f"\n  選擇（1-{len(kinds)}，預設 1=Pitfall）：").strip()
+    except (KeyboardInterrupt, EOFError):
+        print(); _info("已取消"); return None
+    kind = kinds[int(choice) - 1] if choice.isdigit() and 1 <= int(choice) <= len(kinds) else "Pitfall"
+
+    # Step 3: Scope（可略過）
+    try:
+        scope_raw = input(f"\n  {C}Scope{R}（模組名，直接 Enter = 自動推導）：").strip()
+    except (KeyboardInterrupt, EOFError):
+        print(); _info("已取消"); return None
+    scope = scope_raw or "global"
+
+    # Step 4: 確認信心值（可略過）
+    try:
+        conf_raw = input(f"\n  {C}信心值{R}（0.0~1.0，直接 Enter = 0.8）：").strip()
+    except (KeyboardInterrupt, EOFError):
+        print(); _info("已取消"); return None
+    try:
+        confidence = float(conf_raw) if conf_raw else 0.8
+        confidence = max(0.0, min(1.0, confidence))
+    except ValueError:
+        confidence = 0.8
+
+    # 填入 args
+    title = content_raw[:60].strip()
+    args.title     = [title]
+    args.content   = content_raw
+    args.kind      = kind
+    args.scope     = scope
+    args.confidence = confidence
+    args.tags      = []
+    args.emotional_weight = 0.5
+    print()
+    return args
+
+
 def cmd_add(args):
     """手動加入一筆知識"""
+    # PH2-03: 無參數時進入互動模式
+    no_text  = not getattr(args, 'text', None)
+    no_title = not getattr(args, 'title', None)
+    if no_text and no_title:
+        args = _cmd_add_interactive(args)
+        if args is None:
+            return
     # 快速模式：brain add "筆記"
-    if getattr(args, 'text', None) and not getattr(args, 'title', None):
+    elif getattr(args, 'text', None) and not getattr(args, 'title', None):
         txt = ' '.join(args.text)
         args.title   = [txt[:60].strip()]
         if not args.content: args.content = txt
@@ -408,6 +487,12 @@ def cmd_ask(args):
     from project_brain.brain_db import BrainDB
     db   = BrainDB(bd)
     hits = db.search_nodes(search_q, limit=5)
+
+    # PH2-07: --json output
+    if getattr(args, 'json', False):
+        import json as _j
+        print(_j.dumps(hits, ensure_ascii=False, indent=2))
+        return
 
     print(f"\n{C}{B}🧠  Brain Ask: {query}{R}\n{GR}{'─'*50}{R}")
     if not hits:
@@ -1899,6 +1984,88 @@ def cmd_report(args):
         _ok(f"詳細報告已儲存：{out_path}")
 
 
+def cmd_link_issue(args):
+    """PH2-06: 連結 Brain 節點與 GitHub / Linear issue，建立可歸因的 ROI 數據。
+
+    用法：
+        brain link-issue --node-id <id> --url https://github.com/org/repo/issues/42
+        brain link-issue --list        # 列出所有已連結的節點
+    """
+    wd = _workdir(args)
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    from project_brain.brain_db import BrainDB
+    import json as _j
+
+    db      = BrainDB(bd)
+    do_list = getattr(args, 'list', False)
+
+    # ── list mode ─────────────────────────────────────────────────────────────
+    if do_list:
+        rows = db.recent_events(event_type="issue_link", limit=50)
+        if not rows:
+            _info("尚未連結任何 issue。")
+            _info("使用方法：brain link-issue --node-id <id> --url <issue-url>")
+            return
+        print(f"\n{C}{B}🔗  Linked Issues ({len(rows)} 筆){R}\n{GR}{'─'*54}{R}")
+        for r in rows:
+            try:
+                raw = r.get("payload") or "{}"
+                p = _j.loads(raw)
+                if isinstance(p, str):   # double-encoded: emit() wraps once more
+                    p = _j.loads(p)
+            except Exception:
+                p = {}
+            nid   = p.get("node_id", "?")[:16]
+            url   = p.get("issue_url", "?")
+            title = p.get("node_title", "")
+            kind  = p.get("node_kind", "")
+            k_c   = {"Pitfall": RE, "Rule": C, "Decision": G}.get(kind, Y)
+            print(f"  {k_c}[{kind}]{R} {B}{title[:45]}{R}")
+            print(f"  {GR}id={nid}  →  {url}{R}\n")
+        return
+
+    # ── link mode ─────────────────────────────────────────────────────────────
+    node_id   = getattr(args, 'node_id', None)
+    issue_url = getattr(args, 'url', None)
+
+    if not node_id:
+        _err("請提供 --node-id"); return
+    if not issue_url:
+        _err("請提供 --url（GitHub / Linear issue URL）"); return
+
+    # 驗證 node 存在
+    node = db.get_node(node_id)
+    if not node:
+        # try prefix match
+        rows = db.conn.execute(
+            "SELECT id, title, type FROM nodes WHERE id LIKE ? LIMIT 1",
+            (node_id + "%",)
+        ).fetchone()
+        if rows:
+            node = dict(rows)
+            node_id = node["id"]
+        else:
+            _err(f"找不到節點：{node_id}"); return
+
+    title = node.get("title", "")
+    kind  = node.get("type") or node.get("kind", "Note")
+
+    payload = _j.dumps({
+        "node_id":    node_id,
+        "node_title": title,
+        "node_kind":  kind,
+        "issue_url":  issue_url,
+    }, ensure_ascii=False)
+    db.emit("issue_link", payload)
+
+    _ok(f"已連結：{C}{node_id[:16]}{R}  →  {issue_url}")
+    _info(f"節點：[{kind}] {title}")
+    _info("此連結將用於 brain report 的 ROI 歸因統計")
+
+
 def cmd_search(args):
     """PH2-02: 純語意搜尋（brain search）— 直接查詢 BrainDB，不組裝 Context。
 
@@ -2161,6 +2328,7 @@ def main():
 
     p = mkp('ask', 'Ask Brain a question (alias for context)')
     p.add_argument('query', nargs='+', help='Question')
+    p.add_argument('--json', action='store_true', help='PH2-07: 輸出結構化 JSON')
 
     p = mkp('sync', 'Learn from latest git commit (used by hook)')
     p.add_argument('--quiet', action='store_true', help='Suppress output')
@@ -2248,6 +2416,11 @@ def main():
                    help='只搜尋特定類型')
     p.add_argument('--scope', default=None, help='只搜尋特定 scope')
     p.add_argument('--format', choices=['text','json'], default='text')
+
+    p = mkp('link-issue', 'PH2-06：連結 Brain 節點與 GitHub/Linear issue（ROI 歸因）')
+    p.add_argument('--node-id', dest='node_id', default=None, help='Brain 節點 ID（可用前綴）')
+    p.add_argument('--url', default=None, help='GitHub / Linear issue URL')
+    p.add_argument('--list', action='store_true', help='列出所有已連結的 issue')
 
     p = mkp('analytics', 'FEAT-03：使用率分析報告')
     p.add_argument('--format', choices=['text','json'], default='text')
@@ -2390,6 +2563,7 @@ def main():
         'health-report': cmd_health_report,
         'report':        cmd_report,
         'search':        cmd_search,
+        'link-issue':    cmd_link_issue,
         'analytics':     cmd_analytics,
         'export':        cmd_export,
         'import':        cmd_import,

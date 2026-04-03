@@ -84,6 +84,19 @@ class ContextEngineer:
                     pass
         self._brain_db = brain_db  # A-11/A-13
 
+        # PH2-05: load custom synonyms from .brain/synonyms.json if present,
+        # merging with the built-in map so built-in terms remain available.
+        synonyms_path = Path(brain_dir) / "synonyms.json"
+        if synonyms_path.exists():
+            try:
+                custom = json.loads(synonyms_path.read_text(encoding="utf-8"))
+                if isinstance(custom, dict):
+                    merged = dict(self._SYNONYM_MAP)
+                    merged.update(custom)  # custom keys override built-in
+                    self._SYNONYM_MAP = merged
+            except Exception:
+                pass  # 降級：沿用內建同義詞表
+
     def build(self, task: str, current_file: str = "") -> str:
         """
         為任務組裝最佳的 Context 注入片段。

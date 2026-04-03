@@ -7,3 +7,4 @@ brain_hook.py
 build
 docs/brain_llm_memory_flow.html
 docs/brain_llm_memory_flow_standalone.html
+brain_report.json
