@@ -45,12 +45,12 @@
 | ~~**P1**~~ ✅ | ~~FEAT-01~~ | `update_node()` 直接覆寫，知識演變不可追溯 | `nodes.version` 欄位 (v14) + `change_type` (v15) + `brain history / restore` CLI | 無 | 🎯 高價值 | `node_history` 表已存在；新增 version 欄位與 CLI 別名 |
 | ~~**P1**~~ ✅ | ~~ARCH-05~~ | deprecated 節點仍被正常推薦，殭屍知識持續擴散 | `deprecated_at` 欄位 (v16)；`brain deprecated list/purge`；context 加 `[已棄用]` 標記；`GET /v1/knowledge/deprecated` | 無 | 🎯 高價值 | 完整 deprecated 流程：標記→顯示→清理 |
 | ~~**P1**~~ ✅ | ~~ARCH-06~~ | `BRAIN_CONFLICT_RESOLVE=1` 設置後直接 ImportError | `conflict_resolver.py` 已存在（完整 LLM 仲裁）；`decay_engine._detect_contradictions()` 寫入 `CONFLICTS_WITH` edges | FEAT-01 | 🎯 高價值 | conflict_resolver 模組已完整，補上 edges 寫入即完成 |
-| **P2** | OBS-01 | 問題難重現，Decay 為何降低信心無從追查 | structlog 結構化日誌（`event/node_id/reason`）；`GET /v1/metrics` Prometheus 端點 | 無 | 📋 計劃執行 | 先做 structlog（1天），再做 Prometheus（2天） |
+| ~~**P2**~~ ✅ | ~~OBS-01~~ | 問題難重現，Decay 為何降低信心無從追查 | structlog 結構化日誌（`event/node_id/reason`）；`GET /v1/metrics` Prometheus 端點 | 無 | ✅ 完成 | 先做 structlog（1天），再做 Prometheus（2天） |
 | **P2** | DEEP-04 | 信心 < 0.5 的節點缺乏人工確認機制 | `context.build()` 附加 QUESTIONS 區塊；MCP `answer_question(node_id, answer)` tool | DEEP-05 | 📋 計劃執行 | 主動學習依賴反饋閉環（DEEP-05）先就位 |
-| **P2** | FED-01 | 跨庫導入無溯源，無法查「誰何時導入了什麼」 | `federation_imports` 表；`brain fed imports list/approve/reject` | 無 | 📋 計劃執行 | FED-02 和 CLI-02 的前置條件 |
-| **P2** | FED-02 | Jaccard 去重無法偵測語義近似知識，知識庫膨脹 | `_is_duplicate()` 組合 Jaccard OR 向量相似度（threshold=0.9） | FED-01 | 📋 計劃執行 | 需向量化依賴可用；搭配 FED-01 同步發布 |
-| **P2** | CLI-02 | `sync_all()` 完成但無 CLI 入口，VISION-03 無法使用 | `brain fed sync/export/import/subscribe/unsubscribe` | FED-01 | 📋 計劃執行 | 補全 Federation 最後一哩路 |
-| **P2** | FEAT-04 | L1a session 結束清空，長工作階段洞察遺失 | `SessionStore.archive()`；導出 `.brain/sessions/<id>.md`；90 天自動清理 | 無 | 🔵 填空 | 低頻場景，有餘力時處理 |
+| ~~**P2**~~ ✅ | ~~FED-01~~ | 跨庫導入無溯源，無法查「誰何時導入了什麼」 | `federation_imports` 表；`brain fed imports list/approve/reject` | 無 | ✅ 完成 | FED-02 和 CLI-02 的前置條件 |
+| ~~**P2**~~ ✅ | ~~FED-02~~ | Jaccard 去重無法偵測語義近似知識，知識庫膨脹 | `_is_duplicate()` 組合 Jaccard OR 向量相似度（threshold=0.9） | FED-01 | ✅ 完成 | 需向量化依賴可用；搭配 FED-01 同步發布 |
+| ~~**P2**~~ ✅ | ~~CLI-02~~ | `sync_all()` 完成但無 CLI 入口，VISION-03 無法使用 | `brain fed sync/export/import/subscribe/unsubscribe` | FED-01 | ✅ 完成 | 補全 Federation 最後一哩路 |
+| ~~**P2**~~ ✅ | ~~FEAT-04~~ | L1a session 結束清空，長工作階段洞察遺失 | `SessionStore.archive()`；導出 `.brain/sessions/<id>.md`；90 天自動清理 | 無 | ✅ 完成 | 低頻場景，有餘力時處理 |
 | **P2** | FEAT-03 | `temporal_query` 只有骨架，無時間過濾邏輯 | `valid_from`/`valid_until` 欄位；從 git log 推斷有效期；`brain history --at <date>` | 無 | 🔵 填空 | 邊界場景，需 git 整合 |
 | **P3** | REF-01 | BrainDB ~1800 行承擔 10+ 職責（God Object） | 逐步抽離 `VectorStore`、`FeedbackTracker` | 覆蓋率≥70% | 🏗 長期 | 前置條件未達標前不動刀 |
 | **P3** | CLI-01 | `cli.py` 2864 行，31 個函數無法維護 | 按功能拆分子模組；抽取 `@require_brain_dir` 裝飾器 | 整合測試 | 🏗 長期 | 先補整合測試再拆分 |
@@ -247,7 +247,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 |------|------|---------|----------|
 | **v0.7.0** ✅ | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、~~REF-04~~✅、~~PERF-03~~✅、~~BUG-A03~~✅、~~PERF-04~~✅ | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
 | **v0.8.0** ✅ | 知識自適應 | ~~DEEP-05~~（F6 採用率）、~~ARCH-05~~（弃用流程）、~~ARCH-06~~（ConflictResolver）、~~FEAT-01~~（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
-| **v0.9.0** | 深化功能 | ~~DEEP-04~~（AI 自動裁決）✅、FED-01+FED-02（Federation 強化）、OBS-01（可觀測性）| auto-resolve 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
+| **v0.9.0** ✅ | 深化功能 | ~~DEEP-04~~（AI 自動裁決）✅、~~FED-01~~+~~FED-02~~（Federation 強化）✅、~~OBS-01~~（可觀測性）✅、~~CLI-02~~（fed sync CLI）✅、~~FEAT-04~~（session archive）✅ | auto-resolve 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
 | **v1.0.0** | 長期穩定 | REF-01（BrainDB 拆分）、CLI-01（cli.py 拆分）、ARCH-04（scope UX）| 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |
 
 ---
@@ -258,7 +258,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 
 | 層 / 模組 | 實作完整度 | 最大缺口 |
 |----------|-----------|---------|
-| L1a SessionStore | ✅ 完整 | Session → L3 升級路徑缺失（FEAT-04）|
+| L1a SessionStore | ✅ 完整 | ~~FEAT-04~~ ✅ Session archive 已實裝 |
 | L2 Episodes / Temporal | ⚠️ 框架完成 | temporal_query 邏輯空缺（FEAT-03）|
 | L3 KnowledgeGraph | ✅ 完整 | — |
 | BrainDB（統一儲存） | ✅ 完整 | v14-v17 遷移：version/change_type/deprecated_at/adoption_count |
@@ -266,8 +266,8 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | ContextEngineer | ✅ 完整 | `[已棄用]` 標記 ✅ |
 | NudgeEngine | ✅ 完整 | `auto_resolve_batch()` ✅；rule-based + LLM-assisted；get_context 背景觸發 |
 | ConflictResolver | ✅ 完整 | LLM/Ollama 仲裁 + CONFLICTS_WITH edges ✅ |
-| Federation | ⚠️ 導出/導入完成 | 去重弱；無審計；CLI 缺 sync（FED-01/02、CLI-02）|
+| Federation | ✅ 完整 | ~~FED-01~~ ✅ 審計日誌；~~FED-02~~ ✅ 語義去重；~~CLI-02~~ ✅ fed sync/imports CLI |
 | MCP Server | ✅ 完整 | report_outcome → graph.increment_adoption() 串聯 ✅ |
 | API Server | ✅ 完整 | `GET /v1/knowledge/deprecated` ✅ |
-| CLI | ✅ 主命令完整 | `brain history/restore/deprecated` ✅；fed sync 缺失（CLI-02）|
-| 可觀測性 | ⚠️ logger.debug 有 | 無結構化日誌；無指標端點（OBS-01）|
+| CLI | ✅ 主命令完整 | `brain history/restore/deprecated/session/fed` ✅；~~CLI-02~~ ✅ |
+| 可觀測性 | ✅ 完整 | ~~OBS-01~~ ✅ 結構化日誌 + `GET /v1/metrics` Prometheus 端點 |
