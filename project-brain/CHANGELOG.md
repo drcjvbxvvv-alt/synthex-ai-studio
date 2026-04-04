@@ -93,7 +93,6 @@
   - **VISION-04 唯讀共享模式**（4 個測試）：`_Handler.readonly` 預設 False；readonly=True 回傳 403；覆蓋 POST/PUT/DELETE；`cli.py` 有 `--readonly` 旗標
   - **VISION-05 多知識庫合併查詢**（5 個測試）：`multi_brain_query` 存在；`BRAIN_EXTRA_DIRS` env var 支援；輸出含 source 標籤；`seen_titles` 跨庫去重；`reverse=True` 降冪排序
   - 23/23 通過（0.40s）
-  - **已知坑**：`FederationAutoSync` 的批次同步方法名為 `sync_all`，非 `sync`（CHANGELOG 描述為 `sync`，實際實作不同）
 
 ### 架構決策驗收測試（v0.3.0 decisions）
 
