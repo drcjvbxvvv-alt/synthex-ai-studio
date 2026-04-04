@@ -239,16 +239,16 @@ v0.10.0     ──→ ARCH-04  ✅ 完成
 | ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
 |----|------|------|---------|------|------|
 | ~~**P2**~~ ✅ | ~~DEEP-04~~ | 低信心節點無確認機制，知識庫品質停滯 | AI 自動裁決（rule-based + LLM-assisted）取代人工確認；`auto_resolve_knowledge()` MCP tool；`get_context()` 背景靜默執行 rule-based auto-resolve | 無 | 設計調整：系統目標是讓 AI 自主運作，應大量減少人工介入 |
-| FED-01 | Federation 導入無審計日誌，無法溯源「哪個專案、何時、匯入了什麼」 | 多知識庫聯邦場景下責任不清晰 | 新增 `federation_imports` 表（source / node_id / imported_at / status）；`brain fed imports list/approve/reject`；REST `GET /v1/federation/imports` | 3 天 | 前提：Federation 被積極使用 |
-| FED-02 | Federation 去重只用 Jaccard 集合匹配，無法偵測語義重複 | 批量匯入造成語義近似的知識膨脹（「JWT RS256」vs「RS256 JWT 驗證」） | chromadb 可用時加語義相似度比對（threshold=0.9）；`FederationImporter._is_duplicate()` 組合 Jaccard OR 向量相似度 | 2 天 | 需向量化依賴可用 |
-| CLI-02 | `federation.py` 的 `sync_all()` 完成，CLI `brain fed sync` 未實裝 | Federation 自動同步功能（VISION-03）無入口 | `cmd_fed_sync()`：`brain fed sync [--dry-run] [--confidence 0.5]`；`brain fed export/import/subscribe/unsubscribe` | 2 天 | 搭配 FED-01 |
-| FEAT-04 | Session 結束時 L1a 全部清空，可能丟失工作階段洞察 | 長時間工作的中間結論無法保留 | `SessionStore.archive()`：導出當前 session 為 `.brain/sessions/<id>.md`；`brain session archive [--session <id>]`；90 天後自動清理 | 1.5 天 | 低頻場景 |
+| ~~FED-01~~ ✅ | ~~Federation 導入無審計日誌~~ | 已解決 | `federation_imports` 表（source/node_id/imported_at/status）；`brain fed imports`→`cmd_fed_import_list()`；`brain_db.get_federation_imports()` | 完成 | — |
+| ~~FED-02~~ ✅ | ~~Federation 去重只用 Jaccard~~ | 已解決 | `_is_duplicate()` 組合 Jaccard + TF-IDF cosine similarity（sklearn，threshold=0.82）；chromadb 可用時自動升級為向量比對 | 完成 | — |
+| ~~CLI-02~~ ✅ | ~~CLI `brain fed sync` 未實裝~~ | 已解決 | `brain fed sync/export/import/subscribe/unsubscribe/imports` 全部在 `cli_fed.py` 實裝 | 完成 | — |
+| ~~FEAT-04~~ ✅ | ~~Session 結束 L1a 全部清空~~ | 已解決 | `SessionStore.archive()`；導出 `.brain/sessions/<id>.md`；90 天自動清理；`brain session archive/list`（`cmd_session()`） | 完成 | — |
 
 ### 可觀測性類
 
 | ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
 |----|------|------|---------|------|------|
-| OBS-01 | 系統運行時難以觀察：Decay 為何降低信心？Context 為何沒推薦某知識？Nudge 的觸發率是多少？ | 問題難重現，調優無依據 | 結構化日誌（structlog）記錄 `{event, node_id, reason, old_val, new_val}`；新增 `GET /v1/metrics`（Prometheus 格式）涵蓋 `brain_nodes_total`、`brain_decay_count`、`brain_nudge_trigger_rate`、`brain_context_tokens_avg` | 3 天 | 可分兩步：先 structlog，再 Prometheus |
+| ~~OBS-01~~ ✅ | ~~系統運行時難以觀察~~ | 已解決 | structlog 結構化日誌（`{event, node_id, reason, old_val, new_val}`）；`GET /v1/metrics` Prometheus 格式（`brain_nodes_total`、`brain_decay_count`、`brain_nudge_trigger_rate`、`brain_context_tokens_avg`） | 完成 | — |
 
 ---
 
