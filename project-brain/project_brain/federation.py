@@ -140,17 +140,19 @@ class FederationExporter:
                 (scope, min_confidence, max_nodes),
             ).fetchall()
         except Exception:
-            # scope 欄位不存在時的 fallback
+            # BUG-A04: scope column may not exist on older DBs — fallback still
+            # enforces scope filtering to avoid leaking private nodes
             try:
                 rows = self.graph._conn.execute(
                     """
                     SELECT id, type, title, content, tags, confidence, meta
                     FROM   nodes
                     WHERE  confidence >= ?
+                      AND  (scope IS NULL OR scope = 'global' OR scope = ?)
                     ORDER  BY confidence DESC
                     LIMIT  ?
                     """,
-                    (min_confidence, max_nodes),
+                    (min_confidence, scope, max_nodes),
                 ).fetchall()
             except Exception as exc:
                 logger.error("federation export: 無法查詢節點: %s", exc)

@@ -2670,11 +2670,12 @@ class TestDef01WriteLock:
 
 class TestDef02FTS5Triggers:
     """
-    驗證 DEF-02 修復：AFTER UPDATE / AFTER DELETE 觸發器自動同步 FTS5。
+    BUG-A02 修復後驗證：觸發器已移除，FTS5 由 API 手動同步。
+    v12 migration 刪除 nodes_fts_au / nodes_fts_ad；delete_node() 手動清理 FTS5。
     """
 
-    def test_triggers_exist_in_schema(self, tmp_path):
-        """nodes_fts_au 和 nodes_fts_ad 觸發器應存在於 schema。"""
+    def test_triggers_removed_from_schema(self, tmp_path):
+        """BUG-A02：nodes_fts_au 和 nodes_fts_ad 觸發器應已被移除。"""
         from project_brain.brain_db import BrainDB
         db = BrainDB(tmp_path)
         triggers = {
@@ -2682,53 +2683,42 @@ class TestDef02FTS5Triggers:
                 "SELECT name FROM sqlite_master WHERE type='trigger'"
             ).fetchall()
         }
-        assert "nodes_fts_au" in triggers, "AFTER UPDATE 觸發器應存在"
-        assert "nodes_fts_ad" in triggers, "AFTER DELETE 觸發器應存在"
+        assert "nodes_fts_au" not in triggers, "AFTER UPDATE 觸發器應已移除（BUG-A02）"
+        assert "nodes_fts_ad" not in triggers, "AFTER DELETE 觸發器應已移除（BUG-A02）"
 
-    def test_direct_update_syncs_fts5(self, tmp_path):
-        """直接 UPDATE nodes 後，FTS5 應自動更新（通過觸發器）。"""
+    def test_update_node_api_syncs_fts5(self, tmp_path):
+        """update_node() API 應手動同步 FTS5（無需觸發器）。"""
         from project_brain.brain_db import BrainDB
         db = BrainDB(tmp_path)
         db.add_node("t1", "Rule", "原始標題", content="原始內容")
-        # Direct SQL UPDATE (bypasses add_node's manual FTS sync)
-        db.conn.execute("UPDATE nodes SET title='觸發器測試標題' WHERE id='t1'")
-        db.conn.commit()
-        # FTS5 should now reflect the new title via trigger
-        results = db.search_nodes("觸發器")
+        db.update_node("t1", title="手動同步標題")
+        results = db.search_nodes("手動同步")
         titles = [r["title"] for r in results]
-        assert any("觸發器" in t for t in titles), \
-            f"直接 UPDATE 後 FTS5 應通過觸發器更新，結果: {titles}"
+        assert any("手動同步" in t for t in titles), \
+            f"update_node() 後 FTS5 應手動同步，結果: {titles}"
 
-    def test_direct_delete_removes_from_fts5(self, tmp_path):
-        """直接 DELETE nodes 後，FTS5 中的記錄應被觸發器清除。"""
+    def test_delete_node_api_removes_from_fts5(self, tmp_path):
+        """delete_node() 應手動清理 FTS5（無需觸發器）。"""
         from project_brain.brain_db import BrainDB
         db = BrainDB(tmp_path)
         db.add_node("d1", "Rule", "待刪除節點", content="unique_delete_content_xyz")
-        # Verify exists in FTS5
         before = db.search_nodes("unique_delete_content_xyz")
         assert len(before) >= 1
-        # Direct SQL DELETE
-        db.conn.execute("DELETE FROM nodes WHERE id='d1'")
-        db.conn.commit()
-        # FTS5 should be cleaned by AFTER DELETE trigger
+        db.delete_node("d1")
         fts_row = db.conn.execute(
             "SELECT * FROM nodes_fts WHERE id='d1'"
         ).fetchone()
-        assert fts_row is None, "DELETE 後 FTS5 中不應有該記錄"
+        assert fts_row is None, "delete_node() 後 FTS5 中不應有該記錄"
 
-    def test_update_content_searchable_after_trigger(self, tmp_path):
-        """通過觸發器更新 content 後，新內容應可被搜尋到。"""
+    def test_update_node_content_searchable(self, tmp_path):
+        """update_node() 更新 content 後，新內容應可被搜尋到。"""
         from project_brain.brain_db import BrainDB
         db = BrainDB(tmp_path)
         db.add_node("u1", "Decision", "JWT決策", content="使用 HS256 演算法")
-        # Direct UPDATE content via SQL (as review_board.update_approved does)
-        db.conn.execute(
-            "UPDATE nodes SET content='改用 RS256 非對稱金鑰' WHERE id='u1'"
-        )
-        db.conn.commit()
+        db.update_node("u1", content="改用 RS256 非對稱金鑰")
         results = db.search_nodes("RS256")
         assert any(r["id"] == "u1" for r in results), \
-            "更新 content 後新關鍵字應可搜尋"
+            "update_node() 更新 content 後新關鍵字應可搜尋"
 
 
 # ══════════════════════════════════════════════════════════════

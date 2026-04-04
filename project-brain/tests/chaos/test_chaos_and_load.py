@@ -14,6 +14,7 @@ from pathlib import Path
 #  Chaos Tests — 錯誤注入
 # ════════════════════════════════════════════════════════════════
 
+@pytest.mark.chaos
 class TestChaosL3GraphFailure:
     """L3 層錯誤注入：DB 損毀、權限錯誤"""
 
@@ -65,6 +66,7 @@ class TestChaosL3GraphFailure:
         assert len(chain) <= 2  # visited 集合防止無限迴圈
 
 
+@pytest.mark.chaos
 class TestChaosL1SessionStore:
     """L1a Session Store 錯誤注入"""
 
@@ -105,6 +107,7 @@ class TestChaosL1SessionStore:
         assert entries == 10, f"實際寫入 {entries} 筆（期望 10 筆）"
 
 
+@pytest.mark.chaos
 class TestChaosSemanticDedup:
     """語意去重錯誤注入"""
 
@@ -138,6 +141,7 @@ class TestChaosSemanticDedup:
         assert sim2 == 0.0
 
 
+@pytest.mark.chaos
 class TestChaosKRB:
     """KRB 錯誤注入"""
 
@@ -176,6 +180,7 @@ class TestChaosKRB:
 #  Load Tests — 壓力測試
 # ════════════════════════════════════════════════════════════════
 
+@pytest.mark.chaos
 class TestLoadL3Graph:
     """L3 Knowledge Graph 壓力測試"""
 
@@ -220,6 +225,7 @@ class TestLoadL3Graph:
         assert isinstance(result, dict)
 
 
+@pytest.mark.chaos
 class TestLoadConcurrent:
     """並行查詢壓力測試"""
 

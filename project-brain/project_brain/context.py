@@ -290,20 +290,8 @@ class ContextEngineer:
                 prev_len = len(sections)
                 budget   = self._add_if_budget(sections, s, budget)
                 if len(sections) > prev_len and node.get('id'):
-                    # Node made it into context — track for SR update
+                    # Node made it into context — track for SR batch update below
                     _shown_node_ids.append(node['id'])
-                    # Phase 3: increment access_count only for shown nodes
-                    try:
-                        if self._brain_db:
-                            self._brain_db.conn.execute(
-                                "UPDATE nodes SET access_count=access_count+1,"
-                                " last_accessed=datetime('now') WHERE id=?",
-                                (node['id'],)
-                            )
-                            self._brain_db.conn.commit()
-                    except Exception as _e:
-                        # STB-02: 統計資料丟失需可觀察，不可靜默吞下
-                        logger.debug("access_count 遞增失敗（節點 %s）：%s", node['id'], _e)
 
         # 4. 依賴關係（當前檔案的相關組件）
         if components:
@@ -572,64 +560,10 @@ class ContextEngineer:
             return sections  # scikit-learn 未安裝，跳過去重
 
     # ── 技術同義詞字典（不需 LLM，零成本擴展）────────────────────────────
-    # SYNC-01: keep in sync with brain_db._SYNONYM_MAP (master copy here)
-    _SYNONYM_MAP: dict = {
-        # 認證 / 授權
-        "token":         ["jwt","bearer","access_token","令牌","token"],
-        "jwt":           ["token","bearer","令牌","rs256","hs256","驗證","auth"],
-        "令牌":           ["jwt","token","bearer","驗證","auth","認證"],
-        "認證":           ["jwt","token","auth","authentication","驗證","authorize"],
-        "授權":           ["auth","authorization","rbac","permission","權限"],
-        "auth":          ["jwt","token","認證","授權","authentication"],
-        # 支付
-        "支付":           ["stripe","payment","charge","扣款","收費"],
-        "stripe":        ["webhook","payment","charge","idempotency","支付"],
-        "webhook":       ["stripe","idempotency","冪等","callback","回調"],
-        "冪等":           ["webhook","idempotency","idempotent","重複","duplicate"],
-        "扣款":           ["stripe","charge","payment","支付","重複"],
-        # 資料庫
-        "db":            ["database","postgres","postgresql","mysql","sqlite","資料庫"],
-        "database":      ["db","postgres","postgresql","sql","資料庫"],
-        "資料庫":         ["postgres","postgresql","mysql","mongodb","sqlite","db","database"],
-        "postgresql":    ["postgres","db","database","sql","acid","連線池","connection"],
-        "postgres":      ["postgresql","db","database","sql","acid","連線池"],
-        "連線":           ["connection","pool","連線池","database","db"],
-        "資料庫連線":      ["connection","pool","postgresql","mysql","db"],
-        "關係型":         ["postgresql","mysql","sql","acid","relational","table"],
-        "migration":     ["遷移","migrate","schema","rollback","資料庫","升級"],
-        "遷移":           ["migration","migrate","schema","rollback","資料庫"],
-        # 通用技術
-        "api":           ["endpoint","rest","http","request","response","接口"],
-        "cache":         ["redis","memcached","快取","緩存"],
-        "快取":           ["cache","redis","ttl","expire","緩存"],
-        "部署":           ["docker","deploy","kubernetes","k8s","container","ci"],
-        "容器":           ["docker","container","k8s","kubernetes","部署","image"],
-        "kubernetes":    ["k8s","container","docker","部署","pod","deploy"],
-        "效能":           ["performance","latency","throughput","slow","timeout","優化"],
-        "安全":           ["security","auth","xss","sql injection","ssl","tls","https"],
-        "測試":           ["test","unit","integration","e2e","mock","assert"],
-        "test":          ["unittest","pytest","mock","測試"],
-        "錯誤":           ["error","exception","bug","failure","crash","問題"],
-        "error":         ["exception","bug","failure","crash"],
-        "問題":           ["error","bug","issue","problem","failure","crash"],
-        # 非同步 / 並發
-        "非同步":         ["async","await","concurrency","thread","並發","event loop"],
-        "async":         ["非同步","await","concurrency","thread","asyncio"],
-        "並發":           ["concurrency","race condition","lock","thread","async"],
-        # 訊息佇列
-        "訊息佇列":        ["kafka","rabbitmq","queue","message","非同步","pub/sub"],
-        "kafka":         ["rabbitmq","queue","message","訊息佇列","consumer"],
-        # 重試 / 容錯
-        "重試":           ["retry","backoff","冪等","timeout","超時"],
-        "retry":         ["重試","backoff","冪等","idempotent","timeout"],
-        # 日誌 / 監控
-        "日誌":           ["log","logging","logger","monitor","trace"],
-        "log":           ["logging","logger","日誌","monitor","trace"],
-        "監控":           ["monitor","prometheus","grafana","alert","metric"],
-        # 配置
-        "配置":           ["config","env","環境變數","設定",".env"],
-        "config":        ["配置","env","環境變數",".env","settings"],
-    }
+    # REF-02: single source of truth in synonyms.py
+    from .synonyms import SYNONYM_MAP as _SYNONYM_MAP_BASE  # noqa: E402
+    _SYNONYM_MAP: dict = dict(_SYNONYM_MAP_BASE)  # mutable copy for custom merge
+
 
     def _expand_query(self, task: str) -> list[str]:
         """

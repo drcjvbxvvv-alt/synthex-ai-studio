@@ -59,6 +59,9 @@ exclude = ["tests*", "docs*", "core*"]
 [tool.pytest.ini_options]
 testpaths    = ["tests"]
 python_files = ["test_*.py"]
+markers      = [
+    "chaos: Chaos & load tests — run with -m chaos (STAB-08 CI gate)",
+]
 
 [tool.coverage.run]
 source   = ["project_brain"]

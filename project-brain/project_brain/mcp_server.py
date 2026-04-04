@@ -86,11 +86,12 @@ def _validate_workdir(workdir: str) -> Path:
     if not workdir:
         raise ValueError("BRAIN_WORKDIR 未設定")
 
-    path = Path(workdir).resolve()
-
-    # 防止路徑遍歷
-    if ".." in path.parts:
+    # SEC-02: check for traversal BEFORE resolving symlinks
+    raw = Path(workdir)
+    if ".." in raw.parts:
         raise ValueError("工作目錄路徑不允許包含 ..")
+
+    path = raw.resolve()
 
     if not path.exists():
         raise FileNotFoundError(f"工作目錄不存在：{path}")
@@ -398,18 +399,16 @@ def create_server(workdir: str) -> Any:
                 confidence = max(0.0, min(1.0, confidence)),
             )
             # A-21: write scope to BrainDB (P1-A integration)
+            # BUG-A01 fix: use WHERE id=? (not title=?) — title is non-unique
             if scope and scope != "global" and node_id:
                 try:
-                    from project_brain.brain_db import BrainDB
-                    _bdir = b.brain_dir
-                    _db   = BrainDB(_bdir)
-                    _db.conn.execute(
-                        "UPDATE nodes SET scope=? WHERE title=?",
-                        (scope, title_c)
+                    b.db.conn.execute(
+                        "UPDATE nodes SET scope=? WHERE id=?",
+                        (scope, node_id)
                     )
-                    _db.conn.commit()
-                except Exception:
-                    pass  # scope write failure is non-critical
+                    b.db.conn.commit()
+                except Exception as e:
+                    logger.warning("scope update failed for node %s: %s", node_id, e)
             return {"node_id": node_id, "success": True, "scope": scope, "confidence": confidence}
         except Exception as e:
             logger.error("add_knowledge 內部錯誤：%s", e)
@@ -467,7 +466,6 @@ def create_server(workdir: str) -> Any:
         """
         _rate_check()
         import json
-        from project_brain.brain_db import BrainDB
         from pathlib import Path as _P
 
         wd = os.environ.get("BRAIN_WORKDIR", workdir)
@@ -475,8 +473,15 @@ def create_server(workdir: str) -> Any:
         if not db_path.exists():
             return json.dumps({"error": "Brain not initialized", "edges": []})
 
+        # BUG-A05: validate git_branch format before passing to subprocess
+        if git_branch and git_branch != "HEAD":
+            import re as _re
+            if not _re.match(r'^[a-zA-Z0-9._\-/]+$', git_branch):
+                return json.dumps({"error": "git_branch 格式無效", "edges": []})
+
         try:
-            db = BrainDB(_P(wd) / ".brain")
+            # ARCH-01 fix: use singleton via _resolve_brain instead of new BrainDB
+            db = _resolve_brain(wd).db
 
             resolved_time = at_time.strip() or None
             if not resolved_time and git_branch and git_branch != "HEAD":
@@ -522,7 +527,6 @@ def create_server(workdir: str) -> Any:
         """
         _rate_check()
         import json
-        from project_brain.brain_db import BrainDB
         from pathlib import Path as _P
 
         node_id = _safe_str(node_id, 100, "node_id")
@@ -532,7 +536,8 @@ def create_server(workdir: str) -> Any:
             return json.dumps({"error": "Brain not initialized"})
 
         try:
-            db       = BrainDB(_P(wd) / ".brain")
+            # ARCH-01 fix: use singleton via _resolve_brain instead of new BrainDB
+            db       = _resolve_brain(wd).db
             new_conf = db.record_feedback(node_id, helpful=bool(helpful))
             return json.dumps({
                 "node_id":    node_id,
@@ -770,20 +775,13 @@ def create_server(workdir: str) -> Any:
         notes_clean   = _safe_str(notes, MAX_CONTENT_LEN, "notes") if notes else ""
         wd_str = _safe_str(workdir or os.environ.get("BRAIN_WORKDIR", ""), 500, "workdir") or workdir
 
-        from project_brain.brain_db import BrainDB
-        from pathlib import Path as _P
-
-        brain_root = _P(wd_str) / ".brain" if wd_str else None
-        if brain_root is None or not (brain_root / "brain.db").exists():
-            # Fall back to auto-detect
-            found = _find_brain_root(wd_str or os.getcwd())
-            if found:
-                brain_root = found / ".brain"
-        if brain_root is None or not (brain_root / "brain.db").exists():
+        # ARCH-01 fix: use singleton via _resolve_brain instead of new BrainDB
+        b = _resolve_brain(wd_str)
+        if not (b.brain_dir / "brain.db").exists():
             return {"ok": False, "error": "Brain not initialized — run brain init first"}
 
         try:
-            db      = BrainDB(brain_root)
+            db      = b.db
             delta   = 0.03 if was_useful else -0.05
             new_conf = db.record_feedback(node_id_clean, helpful=bool(was_useful))
 

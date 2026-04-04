@@ -11,68 +11,11 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 11          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 13          # DEF-04: bump on every schema change
 MAX_SESSION_ENTRIES = 500    # DEF-06: per-session_id LRU eviction threshold
 
-# Synonym map shared with ContextEngineer._SYNONYM_MAP (keep in sync).
-# Master copy lives in context.py; changes there should be reflected here.
-_SYNONYM_MAP = {
-    # 認證 / 授權
-    "token":         ["jwt","bearer","access_token","令牌","token"],
-    "jwt":           ["token","bearer","令牌","rs256","hs256","驗證","auth"],
-    "令牌":           ["jwt","token","bearer","驗證","auth","認證"],
-    "認證":           ["jwt","token","auth","authentication","驗證","authorize"],
-    "授權":           ["auth","authorization","rbac","permission","權限"],
-    "auth":          ["jwt","token","認證","授權","authentication"],
-    # 支付
-    "支付":           ["stripe","payment","charge","扣款","收費"],
-    "stripe":        ["webhook","payment","charge","idempotency","支付"],
-    "webhook":       ["stripe","idempotency","冪等","callback","回調"],
-    "冪等":           ["webhook","idempotency","idempotent","重複","duplicate"],
-    "扣款":           ["stripe","charge","payment","支付","重複"],
-    # 資料庫
-    "db":            ["database","postgres","postgresql","mysql","sqlite","資料庫"],
-    "database":      ["db","postgres","postgresql","sql","資料庫"],
-    "資料庫":         ["postgres","postgresql","mysql","mongodb","sqlite","db","database"],
-    "postgresql":    ["postgres","db","database","sql","acid","連線池","connection"],
-    "postgres":      ["postgresql","db","database","sql","acid","連線池"],
-    "連線":           ["connection","pool","連線池","database","db"],
-    "資料庫連線":      ["connection","pool","postgresql","mysql","db"],
-    "關係型":         ["postgresql","mysql","sql","acid","relational","table"],
-    "migration":     ["遷移","migrate","schema","rollback","資料庫","升級"],
-    "遷移":           ["migration","migrate","schema","rollback","資料庫"],
-    # 通用技術
-    "api":           ["endpoint","rest","http","request","response","接口"],
-    "cache":         ["redis","memcached","快取","緩存"],
-    "快取":           ["cache","redis","ttl","expire","緩存"],
-    "部署":           ["docker","deploy","kubernetes","k8s","container","ci"],
-    "容器":           ["docker","container","k8s","kubernetes","部署","image"],
-    "kubernetes":    ["k8s","container","docker","部署","pod","deploy"],
-    "效能":           ["performance","latency","throughput","slow","timeout","優化"],
-    "安全":           ["security","auth","xss","sql injection","ssl","tls","https"],
-    "測試":           ["test","unit","integration","e2e","mock","assert"],
-    "test":          ["unittest","pytest","mock","測試"],
-    "錯誤":           ["error","exception","bug","failure","crash","問題"],
-    "error":         ["exception","bug","failure","crash"],
-    "問題":           ["error","bug","issue","problem","failure","crash"],
-    # 非同步 / 並發
-    "非同步":         ["async","await","concurrency","thread","並發","event loop"],
-    "async":         ["非同步","await","concurrency","thread","asyncio"],
-    "並發":           ["concurrency","race condition","lock","thread","async"],
-    # 訊息佇列
-    "訊息佇列":        ["kafka","rabbitmq","queue","message","非同步","pub/sub"],
-    "kafka":         ["rabbitmq","queue","message","訊息佇列","consumer"],
-    # 重試 / 容錯
-    "重試":           ["retry","backoff","冪等","timeout","超時"],
-    "retry":         ["重試","backoff","冪等","idempotent","timeout"],
-    # 日誌 / 監控
-    "日誌":           ["log","logging","logger","monitor","trace"],
-    "log":           ["logging","logger","日誌","monitor","trace"],
-    "監控":           ["monitor","prometheus","grafana","alert","metric"],
-    # 配置
-    "配置":           ["config","env","環境變數","設定",".env"],
-    "config":        ["配置","env","環境變數",".env","settings"],
-}
+# REF-02: single source of truth in synonyms.py
+from .synonyms import SYNONYM_MAP as _SYNONYM_MAP  # noqa: E402
 
 
 class BrainDB:
@@ -81,8 +24,9 @@ class BrainDB:
     def __init__(self, brain_dir: Path):
         self.brain_dir = Path(brain_dir)
         self.brain_dir.mkdir(parents=True, exist_ok=True)
-        self.db_path = self.brain_dir / "brain.db"
-        self._local  = threading.local()
+        self.db_path   = self.brain_dir / "brain.db"
+        self._local    = threading.local()
+        self._write_lock = threading.RLock()  # REF-03: replaces fcntl
         self._setup()
 
     @property
@@ -180,31 +124,8 @@ class BrainDB:
         # DEF-04: run versioned migrations (idempotent, replaces scattered ALTER TABLE blocks)
         self._run_migrations()
 
-        # DEF-02 fix: SQL triggers for automatic FTS5 sync on direct UPDATE/DELETE.
-        # add_node() already handles FTS on INSERT; these triggers cover other write paths
-        # (update_approved in review_board.py, direct SQL patches, etc.).
-        try:
-            self.conn.executescript("""
-                CREATE TRIGGER IF NOT EXISTS nodes_fts_au
-                AFTER UPDATE OF title, content, tags ON nodes
-                BEGIN
-                    DELETE FROM nodes_fts WHERE id = old.id;
-                    INSERT INTO nodes_fts(id, title, content, tags)
-                    VALUES (new.id,
-                            brain_ngram(new.title),
-                            brain_ngram(new.content),
-                            new.tags);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS nodes_fts_ad
-                AFTER DELETE ON nodes
-                BEGIN
-                    DELETE FROM nodes_fts WHERE id = old.id;
-                END;
-            """)
-            self.conn.commit()
-        except Exception as _te:
-            logger.debug("DEF-02 trigger creation: %s", _te)
+        # BUG-A02 fix: FTS5 triggers removed — all write paths use manual sync.
+        # Migration v12 drops existing triggers on upgrade.
 
     def _run_migrations(self) -> None:
         """DEF-04: Versioned schema migrations — idempotent, incremental.
@@ -280,12 +201,24 @@ class BrainDB:
             # v11: compound index for scope+confidence queries (federation.py WHERE clause was full-scan)
             ("scope+confidence compound index",
              "CREATE INDEX IF NOT EXISTS idx_nodes_scope_conf ON nodes(scope, confidence)"),
+            # v12: BUG-A02 fix — drop FTS5 triggers; all write paths now use manual sync
+            ("drop FTS5 auto-update/delete triggers",
+             lambda conn: (
+                 conn.execute("DROP TRIGGER IF EXISTS nodes_fts_au"),
+                 conn.execute("DROP TRIGGER IF EXISTS nodes_fts_ad"),
+             )),
+            # v13: PERF-02 — composite index for sort-heavy queries
+            ("is_pinned+confidence composite index",
+             "CREATE INDEX IF NOT EXISTS idx_nodes_pinned_conf"
+             " ON nodes(is_pinned DESC, confidence DESC)"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
             ver = idx + 1
             if ver <= current:
                 continue
+            # DATA-02 fix: track genuine failures so we don't advance schema_version
+            _genuine_failure = False
             try:
                 if callable(sql):
                     sql(self.conn)
@@ -303,12 +236,15 @@ class BrainDB:
                         "run `brain doctor` to inspect schema state.",
                         ver, desc, _me
                     )
-            self.conn.execute(
-                "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('schema_version',?)",
-                (str(ver),)
-            )
-            self.conn.commit()
-            logger.debug("DEF-04: schema migration v%d applied: %s", ver, desc)
+                    _genuine_failure = True
+            # DATA-02 fix: only advance version if migration succeeded or was benign
+            if not _genuine_failure:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('schema_version',?)",
+                    (str(ver),)
+                )
+                self.conn.commit()
+                logger.debug("DEF-04: schema migration v%d applied: %s", ver, desc)
 
     # -- helpers --
 
@@ -359,50 +295,15 @@ class BrainDB:
 
     @contextlib.contextmanager
     def _write_guard(self):
-        """DEF-01 fix: cross-process write serialization via advisory file lock.
+        """REF-03: Write serialization via threading.RLock (cross-platform).
 
-        Uses fcntl.flock() on a separate .write_lock file so that concurrent
-        writers from different processes (e.g. git post-commit hook + MCP server)
-        are serialized rather than racing for the SQLite write lock.
-
-        Reentrant within the same OS thread: nested calls pass through without
-        re-acquiring flock (prevents deadlock when add_node() is called inside
-        a caller that already holds the guard).
-
-        Falls back to a no-op on Windows (fcntl unavailable) or any OS error.
-        SQLite WAL mode + busy_timeout=5000 provides the inner timeout safety net.
+        Replaces the previous fcntl.flock() implementation which was
+        macOS/Linux-only and added 1-2ms syscall overhead per write.
+        SQLite WAL mode + busy_timeout=5000 handles cross-process serialization.
+        RLock is reentrant so nested calls in the same thread are safe.
         """
-        # Per-thread depth counter (threading.local) for reentrancy
-        depth = getattr(self._local, "_wg_depth", 0)
-        self._local._wg_depth = depth + 1
-        if depth > 0:
-            # Already locked by this thread — pass through without re-acquiring
-            try:
-                yield
-            finally:
-                self._local._wg_depth -= 1
-            return
-
-        # Outermost call: acquire OS-level advisory lock
-        lock_path = self.brain_dir / ".write_lock"
-        lf = None
-        try:
-            import fcntl
-            lf = open(str(lock_path), "w")
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)  # blocking exclusive lock
-        except (ImportError, OSError, AttributeError):
-            pass  # flock unavailable (Windows/NFS): proceed without lock
-        try:
+        with self._write_lock:
             yield
-        finally:
-            self._local._wg_depth -= 1
-            if lf is not None:
-                try:
-                    import fcntl as _fcntl
-                    _fcntl.flock(lf.fileno(), _fcntl.LOCK_UN)
-                except Exception:
-                    pass
-                lf.close()
 
     @staticmethod
     def _adaptive_weights(query: str) -> tuple:
@@ -576,6 +477,10 @@ class BrainDB:
         return dict(r) if r else None
 
     def search_nodes(self, query: str, node_type=None, limit: int = 8, scope: str = None) -> list:
+        # SEC-01: whitelist scope to prevent injection via dynamic SQL clause
+        import re as _re
+        if scope is not None and not _re.match(r'^[a-z0-9_-]+$', scope):
+            scope = None
         terms = self._expand_terms(query)
         if not terms:
             return []
@@ -693,8 +598,25 @@ class BrainDB:
         return r.rowcount > 0
 
     def delete_node(self, node_id: str) -> bool:
-        with self._write_guard():  # DEF-01 fix
+        with self._write_guard():
+            # DATA-01: capture node data for audit log before deletion
+            row = self.conn.execute(
+                "SELECT title, content, confidence FROM nodes WHERE id=?", (node_id,)
+            ).fetchone()
+            # BUG-A02: manual FTS5 cleanup (trigger removed in v12 migration)
+            self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
             r = self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+            if r.rowcount > 0 and row:
+                try:
+                    self.conn.execute(
+                        "INSERT INTO node_history"
+                        " (node_id, version, title, content, confidence, change_note, snapshot_at)"
+                        " SELECT ?, COALESCE(MAX(version),0)+1, ?, ?, ?, 'deleted', datetime('now')"
+                        " FROM node_history WHERE node_id=?",
+                        (node_id, row[0], row[1], row[2], node_id)
+                    )
+                except Exception as _e:
+                    logger.debug("delete_node: audit log failed for %s: %s", node_id, _e)
             self.conn.commit()
         return r.rowcount > 0
 
