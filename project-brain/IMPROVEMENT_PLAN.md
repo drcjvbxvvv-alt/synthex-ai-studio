@@ -52,9 +52,9 @@
 | ~~**P2**~~ ✅ | ~~CLI-02~~ | `sync_all()` 完成但無 CLI 入口，VISION-03 無法使用 | `brain fed sync/export/import/subscribe/unsubscribe` | FED-01 | ✅ 完成 | 補全 Federation 最後一哩路 |
 | ~~**P2**~~ ✅ | ~~FEAT-04~~ | L1a session 結束清空，長工作階段洞察遺失 | `SessionStore.archive()`；導出 `.brain/sessions/<id>.md`；90 天自動清理 | 無 | ✅ 完成 | 低頻場景，有餘力時處理 |
 | **P2** | FEAT-03 | `temporal_query` 只有骨架，無時間過濾邏輯 | `valid_from`/`valid_until` 欄位；從 git log 推斷有效期；`brain history --at <date>` | 無 | 🔵 填空 | 邊界場景，需 git 整合 |
-| **P3** | REF-01 | BrainDB ~1800 行承擔 10+ 職責（God Object） | 逐步抽離 `VectorStore`、`FeedbackTracker` | 覆蓋率≥70% | 🏗 長期 | 前置條件未達標前不動刀 |
-| **P3** | CLI-01 | `cli.py` 2864 行，31 個函數無法維護 | 按功能拆分子模組；抽取 `@require_brain_dir` 裝飾器 | 整合測試 | 🏗 長期 | 先補整合測試再拆分 |
-| **P3** | ARCH-04 | scope 三路控制流讓使用者困惑 | 合併 `--global`/`--scope` 為單一 `--scope global` | major 版本 | 🏗 長期 | Breaking change，配合 v2.0.0 |
+| ~~**P3**~~ ✅ | ~~REF-01~~ | BrainDB ~1800 行承擔 10+ 職責（God Object） | 逐步抽離 `VectorStore`、`FeedbackTracker` | 覆蓋率≥70% | ✅ 完成 | `vector_store.py` + `feedback_tracker.py`；BrainDB 以 delegation 模式保持 backward compat |
+| ~~**P3**~~ ✅ | ~~CLI-01~~ | `cli.py` 2864 行，31 個函數無法維護 | 按功能拆分子模組；抽取 `@require_brain_dir` 裝飾器 | 整合測試 | ✅ 完成 | `cli_utils.py`、`cli_knowledge.py`、`cli_admin.py`、`cli_serve.py`、`cli_fed.py`；`cli.py` 精簡至 ≤500 行 |
+| ~~**P3**~~ ✅ | ~~ARCH-04~~ | scope 三路控制流讓使用者困惑 | 合併 `--global`/`--scope` 為單一 `--scope global` | major 版本 | ✅ 完成 | `--global` 保留但印棄用警告，導引使用 `--scope global` |
 | **⏳** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 對比有/無衰減召回率；統計過時節點前 3 比例 | 90天真實數據 | ⏳ 等待 | 無法提前執行 |
 
 ### 依賴鏈
@@ -70,8 +70,8 @@ FEAT-01 ──→ ARCH-06（版本歷史提供比對基礎）
 FED-01  ──→ FED-02
         └─→ CLI-02
 
-覆蓋率≥70% ──→ REF-01 ──→ CLI-01
-major 版本  ──→ ARCH-04
+覆蓋率≥70% ──→ REF-01 ──→ CLI-01  ✅ 全部完成
+major 版本  ──→ ARCH-04  ✅ 完成
 ```
 
 ### 象限說明
@@ -209,9 +209,9 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 
 | ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
 |----|------|------|---------|------|------|
-| REF-01 | BrainDB ~1800 行，承擔 10+ 職責（God Object） | 難以維護，重構前需測試覆蓋率 ≥ 70% | 逐步抽離：`VectorStore`（add/search vector）、`FeedbackTracker`（record_feedback）| 2 週+ | 前提：覆蓋率 ≥ 70% |
-| CLI-01 | `cli.py` 2864 行，31 個 `cmd_*` 函數全在同一檔案 | 比 BrainDB 更大；每個命令函數重複 `_workdir + brain_dir.exists()` 樣板；`cmd_serve` 240 行、`cmd_doctor` 378 行 | 按功能群組拆分：`cli_serve.py`、`cli_admin.py`、`cli_knowledge.py` 等；抽取 `@require_brain_dir` 裝飾器消除樣板 | 1.5 週 | 先補整合測試覆蓋率，再拆分 |
-| ARCH-04 | scope 三路控制流（`--global` / `--scope` / 自動推斷）讓使用者困惑 | UX 複雜，Breaking change | 合併 `--global` / `--scope` 為單一 `--scope global`；保留自動推斷 | 1 週 | Breaking change，需 major 版本 |
+| ~~REF-01~~ ✅ | ~~BrainDB ~1800 行，承擔 10+ 職責（God Object）~~ | 已解決 | 抽離 `VectorStore`（`vector_store.py`）+ `FeedbackTracker`（`feedback_tracker.py`）；BrainDB 以 delegation 模式保持 backward compat | 完成 | — |
+| ~~CLI-01~~ ✅ | ~~`cli.py` 2864 行，31 個 `cmd_*` 函數全在同一檔案~~ | 已解決 | 拆分為 `cli_utils.py`、`cli_knowledge.py`、`cli_admin.py`、`cli_serve.py`、`cli_fed.py`；`cli.py` 精簡至 ≤500 行 | 完成 | — |
+| ~~ARCH-04~~ ✅ | ~~scope 三路控制流（`--global` / `--scope` / 自動推斷）讓使用者困惑~~ | 已解決 | `--global` 保留但印棄用警告（stderr），導引使用 `--scope global` | 完成 | — |
 | REF-04 | 魔法數字散落（`0.003`、`800`、`400`、`limit=8`） | 維護時難以追蹤意圖，修改需同步多處 | 新增 `project_brain/constants.py`，遷入四個常數 | 半天 | 📋 `tests/unit/test_ref04_constants.py` |
 
 ### 修正類
@@ -248,7 +248,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | **v0.7.0** ✅ | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、~~REF-04~~✅、~~PERF-03~~✅、~~BUG-A03~~✅、~~PERF-04~~✅ | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
 | **v0.8.0** ✅ | 知識自適應 | ~~DEEP-05~~（F6 採用率）、~~ARCH-05~~（弃用流程）、~~ARCH-06~~（ConflictResolver）、~~FEAT-01~~（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
 | **v0.9.0** ✅ | 深化功能 | ~~DEEP-04~~（AI 自動裁決）✅、~~FED-01~~+~~FED-02~~（Federation 強化）✅、~~OBS-01~~（可觀測性）✅、~~CLI-02~~（fed sync CLI）✅、~~FEAT-04~~（session archive）✅ | auto-resolve 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
-| **v1.0.0** | 長期穩定 | REF-01（BrainDB 拆分）、CLI-01（cli.py 拆分）、ARCH-04（scope UX）| 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |
+| **v1.0.0** ✅ | 長期穩定 | ~~REF-01~~（BrainDB 拆分）✅、~~CLI-01~~（cli.py 拆分）✅、~~ARCH-04~~（scope UX）✅ | 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |
 
 ---
 
