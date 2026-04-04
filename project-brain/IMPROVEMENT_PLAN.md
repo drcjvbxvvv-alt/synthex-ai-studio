@@ -46,7 +46,8 @@
 | ~~**P1**~~ ✅ | ~~ARCH-05~~ | deprecated 節點仍被正常推薦，殭屍知識持續擴散 | `deprecated_at` 欄位 (v16)；`brain deprecated list/purge`；context 加 `[已棄用]` 標記；`GET /v1/knowledge/deprecated` | 無 | 🎯 高價值 | 完整 deprecated 流程：標記→顯示→清理 |
 | ~~**P1**~~ ✅ | ~~ARCH-06~~ | `BRAIN_CONFLICT_RESOLVE=1` 設置後直接 ImportError | `conflict_resolver.py` 已存在（完整 LLM 仲裁）；`decay_engine._detect_contradictions()` 寫入 `CONFLICTS_WITH` edges | FEAT-01 | 🎯 高價值 | conflict_resolver 模組已完整，補上 edges 寫入即完成 |
 | ~~**P2**~~ ✅ | ~~OBS-01~~ | 問題難重現，Decay 為何降低信心無從追查 | structlog 結構化日誌（`event/node_id/reason`）；`GET /v1/metrics` Prometheus 端點 | 無 | ✅ 完成 | 先做 structlog（1天），再做 Prometheus（2天） |
-| **P2** | DEEP-04 | 信心 < 0.5 的節點缺乏人工確認機制 | `context.build()` 附加 QUESTIONS 區塊；MCP `answer_question(node_id, answer)` tool | DEEP-05 | 📋 計劃執行 | 主動學習依賴反饋閉環（DEEP-05）先就位 |
+| ~~**P2**~~ ✅ | ~~DEEP-04~~ | 信心 < 0.5 的節點缺乏確認機制，知識庫品質停滯 | AI 自動裁決（rule-based + LLM-assisted）取代人工確認 | DEEP-05 | ✅ 完成 | 設計調整：AI 自主運作，大幅減少人工介入 |
+| **P1** | KRB-01 | KRB 人工審核是系統最後一個人力瓶頸，違背 AI 全自主目標 | 方案 B+C 混合：AI 全自動裁決（閾值驅動）+ 知識來源初始信心差異化；人退出關鍵路徑，只留 audit log | DEEP-04 ✅ | 🎯 高價值 | AI 推理能力已超越人工審查速度與一致性；git commit 本身即高可信來源 |
 | ~~**P2**~~ ✅ | ~~FED-01~~ | 跨庫導入無溯源，無法查「誰何時導入了什麼」 | `federation_imports` 表；`brain fed imports list/approve/reject` | 無 | ✅ 完成 | FED-02 和 CLI-02 的前置條件 |
 | ~~**P2**~~ ✅ | ~~FED-02~~ | Jaccard 去重無法偵測語義近似知識，知識庫膨脹 | `_is_duplicate()` 組合 Jaccard OR 向量相似度（threshold=0.9） | FED-01 | ✅ 完成 | 需向量化依賴可用；搭配 FED-01 同步發布 |
 | ~~**P2**~~ ✅ | ~~CLI-02~~ | `sync_all()` 完成但無 CLI 入口，VISION-03 無法使用 | `brain fed sync/export/import/subscribe/unsubscribe` | FED-01 | ✅ 完成 | 補全 Federation 最後一哩路 |
@@ -98,6 +99,78 @@ v0.10.0     ──→ ARCH-04  ✅ 完成
 ## P2 — 核心功能缺口
 
 ~~BUG-B01~~ ✅ **已修復（2026-04-04）**：移除 `BrainDB.session_set/get/list/clear` 四個方法及 `ReadBrainDB` 中的 2 個 override；`import_json` 改用直接 SQL INSERT 替代 `session_set()`；移除 `MAX_SESSION_ENTRIES` 常數及 `TestDef06SessionLRU` 測試。`SessionStore`（`session_store.py`）是 L1a 的唯一入口，brain.db 的 `sessions` 表格仍保留供舊資料統計用（`stats()` / `health_report()`）。
+
+---
+
+### KRB-01 — 自主審核（Autonomous KRB）
+
+**設計背景**：KRB（Knowledge Review Board）的人工 approve/reject 流程是系統中最後一個人力瓶頸。設計初衷是防止壞知識污染知識庫，但該假設建立在「人比 AI 更能判斷知識品質」的前提上。現今 AI 推理能力已能以更快、更一致的方式完成審核；且 git commit 本身即高度結構化的可信來源，不需要額外人工背書。
+
+**核心設計：方案 B + C 混合**
+
+#### 裁決閾值（方案 B）
+
+| AI pre-screen confidence | 自動動作 | 說明 |
+|--------------------------|---------|------|
+| ≥ 0.75 | **auto-approve** → 直接進入 active graph | 高可信，AI 確認無歧義 |
+| 0.50–0.74 | **auto-approve（降信心）** → initial_confidence = 0.55 | 讓採用率閉環決定命運 |
+| < 0.50 | **auto-reject** → 記錄至 audit log，不入庫 | AI 判斷不可信，成本低於誤導 Agent |
+
+> 所有裁決均寫入 `staged_nodes.auto_review_result`，完整可追溯。人類不在關鍵路徑上。
+
+#### 知識來源初始信心差異化（方案 C）
+
+| 來源 | initial_confidence | 理由 |
+|------|-------------------|------|
+| `brain sync`（git commit） | **0.60** | 結構化但需要採用率驗證 |
+| `brain scan`（歷史掃描） | **0.55** | 大批量，品質參差 |
+| MCP `add_knowledge`（AI Agent） | **0.70** | AI 主動判斷，可信度較高 |
+| `brain add`（手動輸入） | **0.80** | 人類明確意圖，保持不變 |
+
+> 降低初始信心的目的：讓採用率閉環（DEEP-05 F6）自然篩選，而非依賴一次性的人工審核。
+
+#### 人類角色轉移
+
+```
+舊流程：知識 → staging → 人工佇列 → approve/reject → active
+新流程：知識 → staging → AI 即時裁決（< 100ms）→ active / rejected
+                                  ↓
+                             audit log（永久保留，隨時可查）
+```
+
+- `brain review list` → 預設顯示 **audit log**（AI 裁決紀錄）
+- `brain review list --pending` → 顯示真正待人工審查（設計上永遠為空）
+- 人類可隨時 override：`brain review approve <id>` / `brain review reject <id>` 仍有效
+
+**實作步驟**
+
+1. **`brain_db.py` v19 migration**：`staged_nodes` 表新增欄位：
+   - `source TEXT DEFAULT 'manual'`（`git_sync` / `scan` / `mcp` / `manual`）
+   - `auto_reviewed_at TEXT DEFAULT NULL`
+   - `auto_review_result TEXT DEFAULT NULL`（`approved` / `rejected` / `low_confidence_approved`）
+   - `auto_review_confidence REAL DEFAULT NULL`（AI pre-screen 回傳的信心值）
+2. **`brain_db.py`**：`stage_node(source='manual')` 新增 `source` 參數；依 source 對照表設定 `initial_confidence`
+3. **`nudge_engine.py`**：新增 `auto_review_staged(node_id) → AutoReviewResult`；整合現有 `krb_pre_screen` 邏輯；依閾值自動呼叫 `approve_staged()` / `reject_staged()`；寫入 audit 欄位
+4. **`mcp_server.py`**：`add_knowledge()` 成功後，背景執行 `auto_review_staged()`（不阻塞 MCP 回應）
+5. **`api_server.py`**：`POST /v1/knowledge` → 觸發 `auto_review_staged()`；新增 `GET /v1/krb/audit` 端點
+6. **`brain_db.py`**：新增 `get_krb_audit_log(limit, source, result, since)` 查詢方法
+7. **CLI**：`brain review list` 改為 audit log 模式；`--pending` flag 顯示待審（空佇列）；`brain review audit` 新別名
+8. **環境變數**（可覆蓋預設值）：
+   ```
+   BRAIN_KRB_AUTO=1                    # 啟用自主審核（預設 1）
+   BRAIN_KRB_APPROVE_THRESHOLD=0.75    # auto-approve 門檻
+   BRAIN_KRB_REJECT_THRESHOLD=0.50     # auto-reject 門檻
+   BRAIN_KRB_INITIAL_CONF_SYNC=0.60    # git sync 來源初始信心
+   BRAIN_KRB_INITIAL_CONF_SCAN=0.55    # scan 來源初始信心
+   BRAIN_KRB_INITIAL_CONF_MCP=0.70     # MCP Agent 來源初始信心
+   ```
+
+**安全網**：若 AI 裁決出錯（誤批一條壞知識），自動修正路徑為：
+- 壞知識 adoption_count 永遠 = 0 → F6 無加成 → Decay 持續降低 confidence → deprecated → auto-purge（90 天）
+
+**工時**：3 天
+
+**依賴**：DEEP-04 ✅（AI auto-resolve 邏輯可複用）、DEEP-05 ✅（採用率閉環作為安全網）
 
 ---
 
@@ -249,6 +322,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | **v0.8.0** ✅ | 知識自適應 | ~~DEEP-05~~（F6 採用率）、~~ARCH-05~~（弃用流程）、~~ARCH-06~~（ConflictResolver）、~~FEAT-01~~（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
 | **v0.9.0** ✅ | 深化功能 | ~~DEEP-04~~（AI 自動裁決）✅、~~FED-01~~+~~FED-02~~（Federation 強化）✅、~~OBS-01~~（可觀測性）✅、~~CLI-02~~（fed sync CLI）✅、~~FEAT-04~~（session archive）✅ | auto-resolve 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
 | **v0.10.0** ✅ | 長期穩定 | ~~REF-01~~（BrainDB 拆分）✅、~~CLI-01~~（cli.py 拆分）✅、~~ARCH-04~~（scope UX）✅ | cli.py = 240 行 ✅（目標 ≤500）；parser 抽至 cli_utils._build_parser() |
+| **v0.11.0** | AI 全自主 | **KRB-01**（自主審核）：AI 全自動裁決 + 知識來源初始信心差異化；人退出關鍵路徑 | KRB pending 佇列為空；audit log 可查；auto-approve 率 ≥ 80%；所有測試通過 |
 
 ---
 
@@ -267,6 +341,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | NudgeEngine | ✅ 完整 | `auto_resolve_batch()` ✅；rule-based + LLM-assisted；get_context 背景觸發 |
 | ConflictResolver | ✅ 完整 | LLM/Ollama 仲裁 + CONFLICTS_WITH edges ✅ |
 | Federation | ✅ 完整 | ~~FED-01~~ ✅ 審計日誌；~~FED-02~~ ✅ 語義去重；~~CLI-02~~ ✅ fed sync/imports CLI |
+| KRB（知識審核） | ⚠️ 半自主 | AI pre-screen 已有；KRB-01 將完成全自動裁決 + audit log（v0.11.0）|
 | MCP Server | ✅ 完整 | report_outcome → graph.increment_adoption() 串聯 ✅ |
 | API Server | ✅ 完整 | `GET /v1/knowledge/deprecated` ✅ |
 | CLI | ✅ 主命令完整 | `brain history/restore/deprecated/session/fed` ✅；~~CLI-02~~ ✅ |
