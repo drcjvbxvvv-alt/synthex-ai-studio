@@ -92,6 +92,12 @@ v0.10.0     ──→ ARCH-04  ✅ 完成
 
 ~~BUG-B02~~ ✅ **已修復（2026-04-04）**：`_effective_confidence()`（`brain_db.py`）和 `decay_engine._factor_time()`（`decay_engine.py`）改用 `MAX(created_at, updated_at)` 作為衰減時間基準。820 天前建立但 3 天前更新的節點，effective_confidence 從 0.077 恢復至 0.892。
 
+~~BUG-C01~~ ✅ **已修復（2026-04-04）**：`mcp_server.py` `report_knowledge_outcome()` 更新了 `confidence` 但未呼叫 `db.emit("knowledge_outcome", {...})`，導致 `events` 表永遠空，`analytics_engine.useful_knowledge_rate()`（`brain report` 最重要 ROI 指標）永遠回傳 `null`。**修復**：在 `record_feedback()` 之後立即插入 `db.emit("knowledge_outcome", {node_id, was_useful, notes, confidence})`。
+
+~~BUG-C02~~ ✅ **已修復（2026-04-04）**：`traces` 表缺少 `result_count` 欄位，且 `search_nodes()` 從未寫入 `traces`，導致 `analytics_engine.query_hit_rate()` 因 `total = 0` 永遠回傳 `None`（fallback 的 `latency_ms >= 5` 估算完全不可靠）。**修復**：SCHEMA v20 新增 `result_count INTEGER NOT NULL DEFAULT 0`；`search_nodes()` 尾端加入 `INSERT INTO traces(query, result_count, latency_ms)`（含 `monotonic()` 計時）。
+
+~~BUG-C03~~ ✅ **已修復（2026-04-04）**：`CLAUDE.md` 只有 8 行通用指令，缺少要求 Agent 在完成任務後呼叫 `complete_task` MCP 工具和 `report_knowledge_outcome` 的明確協議，導致知識摘要閉環從未被觸發。**修復**：新增 `## Knowledge Summary Protocol` 段落，明定呼叫時機、必填欄位及 `report_knowledge_outcome` 反饋規則。
+
 > P1 項目全數完成，本節保留供 CHANGELOG 同步後移除。
 
 ---
