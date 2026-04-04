@@ -84,6 +84,17 @@
   - 12/12 通過（0.48s）
   - **已知限制**：v0.5.0 文件提及的 `context.py` 4 處 `except: pass` 在當前版本仍為選填功能守衛（embedding / causal chain 渲染），非真實靜默失效，測試不強制要求（否則誤報）
 
+### 架構決策驗收測試（v0.4.0 decisions）
+
+- **`tests/unit/test_arch_decisions_v04.py`**：新增 23 個測試確保 v0.4.0 五項長期願景決策在所有版本永久成立：
+  - **VISION-01 動態 confidence 更新**（4 個測試）：`_session_nodes` 全局 dict 存在；complete_task 上限 5 個節點（`[:5]`）；有 pitfalls → `helpful=False`；失敗靜默降級（logger.debug）
+  - **VISION-02 知識衝突自動解決**（5 個測試）：`ConflictResolver` 可 import；接受 duck-typed client；`CACHE_SECONDS == 86400`（24h）；實例有 `_cache` dict；`BRAIN_CONFLICT_RESOLVE` env var 引用
+  - **VISION-03 FederationAutoSync**（5 個測試）：`FederationAutoSync` 可 import；有 `add_source` / `remove_source` / `sync_all` 方法；`federation_sync` MCP 工具存在；`cmd_fed_sync` CLI 函式存在；讀取 `sync_sources` 設定
+  - **VISION-04 唯讀共享模式**（4 個測試）：`_Handler.readonly` 預設 False；readonly=True 回傳 403；覆蓋 POST/PUT/DELETE；`cli.py` 有 `--readonly` 旗標
+  - **VISION-05 多知識庫合併查詢**（5 個測試）：`multi_brain_query` 存在；`BRAIN_EXTRA_DIRS` env var 支援；輸出含 source 標籤；`seen_titles` 跨庫去重；`reverse=True` 降冪排序
+  - 23/23 通過（0.40s）
+  - **已知坑**：`FederationAutoSync` 的批次同步方法名為 `sync_all`，非 `sync`（CHANGELOG 描述為 `sync`，實際實作不同）
+
 ### 架構決策驗收測試（v0.3.0 decisions）
 
 - **`tests/unit/test_arch_decisions_v03.py`**：新增 16 個測試確保 v0.3.0 四項核心決策在所有版本永久成立：
