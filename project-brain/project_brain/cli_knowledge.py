@@ -146,21 +146,38 @@ def cmd_review(args):
     if sub == 'list' or sub is None:
         limit      = getattr(args, 'limit', 20)
         ai_pending = getattr(args, 'pending_ai', False)
-        pending    = krb.list_pending(limit=limit)
-        if ai_pending:
-            pending = [n for n in pending if n.ai_recommendation == "review"]
-        if not pending:
-            _info("KRB Staging 目前沒有待審知識")
-            _info("自動捕捉的知識（brain scan / git hook LLM 提取）會出現在這裡")
-            return
-        label = "待人工審查（AI 標記）" if ai_pending else f"待審知識 ({len(pending)} 筆)"
-        print(f"\n{B}{C}  KRB Staging — {label}{R}")
-        print(f"{D}{'─'*68}{R}")
-        for node in pending:
-            print(f"  {node.summary_line()}")
-        print(f"\n{D}  brain review approve <id>          核准進入 L3{R}")
-        print(f"{D}  brain review reject  <id>          拒絕並記錄原因{R}")
-        print(f"{D}  brain review pre-screen            AI 預篩所有 pending 節點{R}\n")
+        show_pend  = getattr(args, 'pending', False)
+
+        if show_pend:
+            # --pending: show human-review queue
+            nodes = krb.list_pending(limit=limit)
+            if ai_pending:
+                nodes = [n for n in nodes if n.ai_recommendation == "review"]
+            if not nodes:
+                _info("KRB Staging 目前沒有待人工審查的知識 (KRB-01 自主模式已啟用)")
+                return
+            label = "待人工審查（AI 標記）" if ai_pending else f"待審知識 ({len(nodes)} 筆)"
+            print(f"\n{B}{C}  KRB Staging — {label}{R}")
+            print(f"{D}{'─'*68}{R}")
+            for node in nodes:
+                print(f"  {node.summary_line()}")
+            print(f"\n{D}  brain review approve <id>          核准進入 L3{R}")
+            print(f"{D}  brain review reject  <id>          拒絕並記錄原因{R}")
+            print(f"{D}  brain review pre-screen            AI 預篩所有 pending 節點{R}\n")
+        else:
+            # default: show audit log (KRB-01 autonomous mode)
+            nodes = krb.list_audit_log(limit=limit)
+            stats = krb.stats()
+            print(f"\n{B}{C}  KRB 審計記錄 — 最近 {len(nodes)} 筆{R}  "
+                  f"{D}(pending={stats['pending']} approved={stats['approved']} "
+                  f"rejected={stats['rejected']}){R}")
+            print(f"{D}{'─'*68}{R}")
+            if not nodes:
+                _info("尚無審核記錄。執行 brain scan 或 brain sync 後自動填入。")
+            for node in nodes:
+                print(f"  {node.summary_line()}")
+            print(f"\n{D}  brain review list --pending        查看待人工審查項目{R}")
+            print(f"{D}  brain review pre-screen            AI 批次預篩{R}\n")
 
     elif sub == 'pre-screen':
         import os as _os

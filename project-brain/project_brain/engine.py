@@ -441,9 +441,10 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             其他方法（add_edge、get_node 等）委派給真正的 graph。
             """
             def __init__(self, inner, review_board):
-                self._inner = inner
-                self._krb   = review_board
-                self._count = 0
+                self._inner      = inner
+                self._krb        = review_board
+                self._count      = 0
+                self._staged_ids: list = []  # KRB-01: track for auto-approve
 
             def __getattr__(self, name: str):
                 """
@@ -463,15 +464,14 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                          tags=None, source_url="", author="", meta=None, **kw):
                 # 只攔截知識類型節點（非 Component 結構節點）
                 if node_type in ("Decision", "Pitfall", "Rule", "ADR"):
-                    import json as _j
-                    confidence = (meta or {}).get("confidence", 0.8) if meta else 0.8
-                    self._krb.submit(
+                    sid = self._krb.submit(
                         title     = title,
                         content   = content,
                         kind      = node_type,
-                        source    = source_url or "brain-scan",
+                        source    = "scan",   # KRB-01: canonical source key
                         submitter = "auto-scan",
                     )
+                    self._staged_ids.append(sid)
                     self._count += 1
                     return node_id
                 else:
@@ -494,6 +494,18 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             staged = staging_graph._count
         except Exception as e:
             logger.warning("krb_staging_scan_failed: %s", str(e)[:100])
+
+        # KRB-01: auto-approve all staged items by confidence
+        auto_approved = 0
+        for sid in staging_graph._staged_ids:
+            try:
+                l3_id = krb.auto_approve_by_confidence(sid)
+                if l3_id:
+                    auto_approved += 1
+            except Exception as e:
+                logger.debug("krb01_scan_auto_approve_failed: %s %s", sid[:8], e)
+        if auto_approved:
+            logger.info("krb01_scan: auto_approved=%d / staged=%d", auto_approved, staged)
 
         return staged
 

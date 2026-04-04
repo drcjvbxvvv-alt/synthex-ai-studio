@@ -525,8 +525,10 @@ def _build_parser():
     p.add_argument('--note',          default='',      help='核准備注')
     p.add_argument('--reason',        default='',      help='拒絕原因')
     p.add_argument('--limit',         type=int, default=20,  help='列出/預篩筆數上限')
+    p.add_argument('--pending',       dest='pending',    action='store_true',
+                   help='顯示待人工審查的 pending 隊列（預設：顯示審計記錄）')
     p.add_argument('--pending-ai',    dest='pending_ai', action='store_true',
-                   help='只列出 AI 標記為 review 的待人工審查項目')
+                   help='只列出 AI 標記為 review 的待人工審查項目（需搭配 --pending）')
     p.add_argument('--auto-approve',  dest='auto_approve', type=float, default=None,
                    help='AI 信心 ≥ 此值時自動核准（預設關閉）')
     p.add_argument('--auto-reject',   dest='auto_reject',  type=float, default=None,

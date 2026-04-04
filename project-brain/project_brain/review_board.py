@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -71,7 +72,32 @@ from project_brain.brain_db import BrainDB  # BUG-07 fix: sync brain.db FTS5
 logger = logging.getLogger(__name__)
 
 # STAB-06: bump this when schema changes; tracked in schema_meta table
-RB_SCHEMA_VERSION = 2
+RB_SCHEMA_VERSION = 3  # KRB-01: added confidence column
+
+# KRB-01: Source-based initial confidence (方案 C)
+# git_sync is highest — AI-generated, structured, CI-verified commits
+INITIAL_CONF_BY_SOURCE: dict[str, float] = {
+    "git_sync": 0.85,   # structured AI git commit — highest quality
+    "mcp":      0.80,   # AI Agent explicit add_knowledge
+    "manual":   0.75,   # brain add — explicit human intent
+    "scan":     0.60,   # brain scan — bulk, needs verification
+}
+
+# KRB-01: Auto-verdict thresholds (方案 B) — configurable via env vars
+AUTO_APPROVE_THRESHOLD = float(os.environ.get("BRAIN_KRB_AUTO_APPROVE", "0.75"))
+AUTO_REJECT_THRESHOLD  = float(os.environ.get("BRAIN_KRB_AUTO_REJECT",  "0.50"))
+
+
+def _conf_from_source(source: str) -> float:
+    """Map a source string to its initial confidence value (KRB-01 方案 C)."""
+    if source.startswith("git-") or source == "git_sync":
+        return INITIAL_CONF_BY_SOURCE["git_sync"]
+    if source == "mcp":
+        return INITIAL_CONF_BY_SOURCE["mcp"]
+    if source in ("manual", "user", ""):
+        return INITIAL_CONF_BY_SOURCE["manual"]
+    # 'brain-scan', 'auto-scan', 'scan', etc.
+    return INITIAL_CONF_BY_SOURCE["scan"]
 
 STATUS_PENDING  = "pending"
 STATUS_APPROVED = "approved"
@@ -97,6 +123,8 @@ class StagedNode:
     l3_node_id:  str        = ""    # 核准後在 L3 的節點 ID
     applicability_condition: str = ""
     invalidation_condition:  str = ""
+    # KRB-01: source-based initial confidence
+    confidence:        float = 0.75
     # PH3-03: AI 預篩欄位
     ai_recommendation: str  = ""   # "approve" | "review" | "reject" | ""
     ai_confidence:     float = 0.0
@@ -242,7 +270,9 @@ class KnowledgeReviewBoard:
             ) from exc
 
         # STAB-06: PH3-03 migration with observable logging
+        # KRB-01: also migrate confidence column (schema v3)
         _ai_cols = {
+            "confidence":        "REAL NOT NULL DEFAULT 0.75",
             "ai_recommendation": "TEXT NOT NULL DEFAULT ''",
             "ai_confidence":     "REAL NOT NULL DEFAULT 0.0",
             "ai_reasoning":      "TEXT NOT NULL DEFAULT ''",
@@ -302,19 +332,23 @@ class KnowledgeReviewBoard:
                 invalidation_condition="如果 Stripe API 版本 >= 2025-XX 支援原生冪等時"
             )
         """
-        sid = str(uuid.uuid4())[:16]
-        now = datetime.now(timezone.utc).isoformat()
+        sid  = str(uuid.uuid4())[:16]
+        now  = datetime.now(timezone.utc).isoformat()
+        conf = _conf_from_source(source)   # KRB-01: source-based initial confidence
         conn = self._conn_()
         conn.execute("""
             INSERT INTO staged_nodes
                 (id, kind, title, content, tags, source, submitter,
-                 status, created_at, applicability_condition, invalidation_condition)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, created_at, applicability_condition, invalidation_condition,
+                 confidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (sid, kind, title, content, tags, source, submitter,
               STATUS_PENDING, now,
-              applicability_condition, invalidation_condition))
+              applicability_condition, invalidation_condition,
+              conf))
         conn.commit()
-        logger.info("krb_submit: id=%s kind=%s title=%s", sid[:8], kind, title[:30])
+        logger.info("krb_submit: id=%s kind=%s title=%s source=%s conf=%.2f",
+                    sid[:8], kind, title[:30], source, conf)
         return sid
 
     # ── 審查操作 ─────────────────────────────────────────────────
@@ -361,11 +395,14 @@ class KnowledgeReviewBoard:
 
         # 寫入 L3（使用 add_node 正確的 positional 參數）
         l3_id = f"krb_{staged_id}"
+        # KRB-01: pass stored confidence into L3
+        node_conf = float(row["confidence"]) if "confidence" in row.keys() else 0.75
         self.graph.add_node(
             node_id   = l3_id,
             node_type = row["kind"],
             title     = row["title"],
             content   = row["content"],
+            meta      = {"confidence": node_conf},
         )
         node_id = l3_id
 
@@ -373,10 +410,11 @@ class KnowledgeReviewBoard:
         try:
             bdb = BrainDB(self.brain_dir)
             bdb.add_node(
-                node_id   = l3_id,
-                node_type = row["kind"],
-                title     = row["title"],
-                content   = row["content"] or "",
+                node_id    = l3_id,
+                node_type  = row["kind"],
+                title      = row["title"],
+                content    = row["content"] or "",
+                confidence = node_conf,
             )
         except Exception as _e:
             logger.warning("krb_approve: brain.db FTS 同步失敗（不影響核准）: %s", _e)
@@ -656,12 +694,71 @@ class KnowledgeReviewBoard:
             l3_node_id  = d["l3_node_id"],
             applicability_condition = d.get("applicability_condition") or "",
             invalidation_condition  = d.get("invalidation_condition")  or "",
+            # KRB-01: source-based initial confidence
+            confidence        = float(d.get("confidence") or 0.75),
             # PH3-03 AI 欄位（舊紀錄可能缺欄位，用 .get 安全存取）
             ai_recommendation = d.get("ai_recommendation") or "",
             ai_confidence     = float(d.get("ai_confidence") or 0.0),
             ai_reasoning      = d.get("ai_reasoning") or "",
             ai_screened_at    = d.get("ai_screened_at") or "",
         )
+
+    # ── KRB-01: 自主審核 ──────────────────────────────────────────
+
+    def auto_approve_by_confidence(self, staged_id: str) -> Optional[str]:
+        """
+        KRB-01: Immediately apply auto-verdict based on source confidence.
+
+        Thresholds (configurable via env vars):
+          conf >= AUTO_APPROVE_THRESHOLD (0.75) → auto-approve with stored confidence
+          0.50 <= conf < 0.75               → auto-approve with reduced confidence (0.55)
+          conf < AUTO_REJECT_THRESHOLD (0.50) → auto-reject (audit log only)
+
+        Returns:
+            str | None: L3 node_id if approved, None otherwise.
+        """
+        row = self._get_staged(staged_id)
+        if not row or row["status"] != STATUS_PENDING:
+            return None
+
+        conf = float(row["confidence"]) if "confidence" in row.keys() else 0.75
+
+        if conf >= AUTO_APPROVE_THRESHOLD:
+            l3_id = self.approve(
+                staged_id, reviewer="auto-krb",
+                note=f"[KRB-01 auto conf={conf:.2f} source={row['source']}]",
+            )
+            logger.info("krb01_auto_approve: id=%s conf=%.2f", staged_id[:8], conf)
+            return l3_id
+
+        if conf < AUTO_REJECT_THRESHOLD:
+            self.reject(
+                staged_id, reviewer="auto-krb",
+                reason=f"[KRB-01 auto-reject conf={conf:.2f} below threshold]",
+            )
+            logger.info("krb01_auto_reject: id=%s conf=%.2f", staged_id[:8], conf)
+            return None
+
+        # 0.50–0.74: approve with reduced confidence
+        self._conn_().execute(
+            "UPDATE staged_nodes SET confidence=0.55 WHERE id=?", (staged_id,)
+        )
+        self._conn_().commit()
+        l3_id = self.approve(
+            staged_id, reviewer="auto-krb",
+            note=f"[KRB-01 auto conf={conf:.2f}→0.55 source={row['source']}]",
+        )
+        logger.info("krb01_auto_approve_reduced: id=%s conf=%.2f→0.55", staged_id[:8], conf)
+        return l3_id
+
+    def list_audit_log(self, limit: int = 50) -> list[StagedNode]:
+        """KRB-01: List recently processed nodes (approved + rejected) as audit trail."""
+        rows = self._conn_().execute(
+            "SELECT * FROM staged_nodes WHERE status IN ('approved','rejected') "
+            "ORDER BY reviewed_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        return [self._row_to_staged(r) for r in rows]
 
     def close(self) -> None:
         if self._conn:
