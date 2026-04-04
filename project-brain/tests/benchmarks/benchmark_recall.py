@@ -18,6 +18,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
@@ -377,20 +378,27 @@ def run_benchmark() -> list[QueryResult]:
     return results
 
 
-def detect_embedder() -> str:
-    """偵測 ContextEngineer 實際使用的 embedder。"""
+def detect_embedder() -> tuple[str, str]:
+    """偵測 ContextEngineer 實際使用的 embedder。
+
+    Returns:
+        (class_name, model_detail)  e.g. ("MultilingualEmbedder", "intfloat/multilingual-e5-small")
+    """
     emb = get_embedder()
     if emb is None:
-        return "None（純 FTS5 模式）"
-    return type(emb).__name__
+        return "None", "純 FTS5 模式"
+    cls = type(emb).__name__
+    model = getattr(emb, "model_name", None) or getattr(emb, "_model_name", None) or ""
+    return cls, model
 
 
 def print_report(results: list[QueryResult]) -> None:
-    hits     = sum(1 for r in results if r.hit)
-    total    = len(results)
-    recall   = hits / total
-    avg_ms   = sum(r.elapsed_ms for r in results) / total
-    embedder = detect_embedder()
+    hits      = sum(1 for r in results if r.hit)
+    total     = len(results)
+    recall    = hits / total
+    avg_ms    = sum(r.elapsed_ms for r in results) / total
+    emb_cls, emb_model = detect_embedder()
+    run_date  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     target_60 = "✅" if recall >= 0.60 else "❌"
     target_40 = "✅" if recall >= 0.40 else "❌"
@@ -398,9 +406,12 @@ def print_report(results: list[QueryResult]) -> None:
     print("\n" + "═" * 70)
     print("  UNQ-03 基準測試報告 — get_context 召回率")
     print("═" * 70)
+    print(f"  日期        : {run_date}")
     print(f"  知識庫規模  : {len(NODES)} 個節點")
     print(f"  查詢數      : {total}")
-    print(f"  Embedder    : {embedder}")
+    print(f"  Embedder    : {emb_cls}")
+    if emb_model:
+        print(f"  模型        : {emb_model}")
     print(f"  平均延遲    : {avg_ms:.0f} ms / query")
     print()
     print(f"  ┌─────────────────────────────────────────┐")
@@ -439,7 +450,9 @@ def print_report(results: list[QueryResult]) -> None:
         verdict = "補充參考 ⚠️   FTS5/LocalTFIDF 模式下可用，建議安裝 sentence-transformers 提升到 60%+"
     else:
         verdict = "需改善 ❌  召回率低於 40%，不建議作為主要 context 來源"
-    print(f"  結論: {verdict}")
+    print(f"  召回率: {recall*100:.1f}%（{hits}/{total}）  |  {emb_cls}"
+          + (f" ({emb_model})" if emb_model else ""))
+    print(f"  結論  : {verdict}")
     print("═" * 70 + "\n")
 
     return recall
