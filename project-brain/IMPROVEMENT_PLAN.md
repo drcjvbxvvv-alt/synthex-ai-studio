@@ -30,10 +30,10 @@
 | UNQ-03   | P2     | 持續品質基準測試            | 建立基準測試資料集（50 個節點、20 個查詢、已知正確答案），每個版本自動跑並記錄召回率與精確率。量測方法：`SELECT COUNT(*) FROM nodes` 搭配固定查詢集，目標召回率 ≥ 60%（sentence-transformers）/ ≥ 40%（LocalTFIDF） |
 | DIR-01   | P2     | 補建驗收標準                | 為已完成的核心功能補建最低品質門檻：`get_context` 召回率 ≥ 60%；`complete_task` 正確寫入率 100%                                                                                             |
 | DIR-02   | P2     | 區分完成狀態標記            | 凡功能需使用者自備工具、手動執行步驟才能使用，標記為「架構就緒 (Arch-Ready)」而非「完成 ✅」                                                                                                 |
-| STAB-06  | **P1** | **ReviewBoard.db 穩定性**   | **唯一未列入計劃的穩定性盲點。** `review_board.db` 無 schema 版本控制，損壞後 `brain review list` 丟出 stack trace 而非可操作錯誤訊息。需加 schema 版控 + 損壞恢復路徑（graceful error + `brain doctor` 提示） |
-| STAB-07  | **P1** | **SR node ID 比對**         | `context.py:316` title 子字串比對改為 node ID 比對。含截斷或 emoji 的標題下誤判率目標降至 0。量測：故意注入含 emoji 標題後確認 access_count 更新對象正確                                     |
-| HON-01   | P2     | README LoRA 說明準確性      | `brain distill` 在 README 中補充：「產生訓練用 JSONL 與設定檔，實際訓練需自行執行 Axolotl / Unsloth」。不需等版本，今天即可做                                                               |
-| SYNC-01  | P2     | Synonym Map 完全同步        | `brain_db._SYNONYM_MAP` 從 32 條補齊至 45 條，與 `context.py._SYNONYM_MAP` 完全對齊。現況：還差 13 條（嵌入式系統、容器、訊息佇列等詞域）。完成後量測：兩個入口同一查詢的召回率差距 ≤ 5% |
+| ~~STAB-06~~ | ~~P1~~ | ~~ReviewBoard.db 穩定性~~ | ✅ 完成 → CHANGELOG v0.6.0 |
+| ~~STAB-07~~ | ~~P1~~ | ~~SR node ID 比對~~       | ✅ 完成 → CHANGELOG v0.6.0 |
+| ~~HON-01~~  | ~~P2~~ | ~~README LoRA 說明~~      | N/A：`brain distill` 已於 v10.x 移除，無對象 |
+| ~~SYNC-01~~ | ~~P2~~ | ~~Synonym Map 完全同步~~  | ✅ 完成：兩表均擴展至 46 條 → CHANGELOG v0.6.0 |
 
 ### v0.7.0（護城河強化）
 
@@ -101,8 +101,8 @@
 | 靜默失效路徑數               | 0（Gate）        | `grep -rn 'except' --include='*.py'` 後過濾無 logger 行                                     | ✅ 0（v0.6.0 修復後） |
 | Migration 失敗可觀察率       | 100%             | 故意破壞 schema v11 後執行 `brain doctor`，確認有 warning 輸出                               | ✅ 已修復    |
 | Chaos test 通過率            | 100%（Gate v0.7.0）| CI 自動執行 `tests/chaos/test_chaos_and_load.py`                                           | ❌ 未接 CI（STAB-08） |
-| SR node 追蹤準確率           | 誤判率 0%        | 故意注入含 emoji 標題，確認 access_count 更新對象正確                                        | ❌ 仍是 title 子字串比對（STAB-07） |
-| ReviewBoard.db 損壞恢復能力  | 有可操作錯誤訊息 | 故意損壞 review_board.db 後，確認 `brain review list` 給出可操作訊息而非 stack trace         | ❌ 未設計（STAB-06）|
+| SR node 追蹤準確率           | 誤判率 0%        | 故意注入含 emoji 標題，確認 access_count 更新對象正確                                        | ✅ 已修復（STAB-07） |
+| ReviewBoard.db 損壞恢復能力  | 有可操作錯誤訊息 | 故意損壞 review_board.db 後，確認 `brain review list` 給出可操作訊息而非 stack trace         | ✅ 已修復（STAB-06）|
 
 ### 三、新技術誠實性（Tech Honesty）
 
@@ -110,7 +110,7 @@
 | -------------------------- | -------- | ----------------------------------------------------------------------- | ----------- |
 | 功能狀態標記覆蓋率         | 100%     | README 和 CHANGELOG 中每個功能是否有 🟢/🟡/🔴 標記                     | ❌ 0%（TECH-01） |
 | LoRA 路徑說明準確性        | 已標注   | README `brain distill` 說明是否含「需自行執行 Axolotl / Unsloth」      | ❌ 未更新（HON-01） |
-| Synonym Map 條目數一致性   | 差距 ≤ 2 | `len(brain_db._SYNONYM_MAP)` vs `len(context.py._SYNONYM_MAP)`         | ❌ 32 vs 45，差距 13（SYNC-01） |
+| Synonym Map 條目數一致性   | 差距 ≤ 2 | `len(brain_db._SYNONYM_MAP)` vs `len(context.py._SYNONYM_MAP)`         | ✅ 兩表均為 46 條（SYNC-01） |
 | ANN 觸發條件文件化         | 已標注   | 安裝文件中是否標注「建議 > 2000 節點後切換 HNSW」                      | ❌ 未標注（TECH-03） |
 | 每版本宣稱 vs 實際審計     | 每版本執行 | 隨機抽查 3 個 CHANGELOG「完成」項目，確認有 commit hash + 行號        | ✅ v0.6.0 已執行一次（DIR-03 制度化中） |
 

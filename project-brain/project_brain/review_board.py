@@ -70,6 +70,9 @@ from project_brain.brain_db import BrainDB  # BUG-07 fix: sync brain.db FTS5
 
 logger = logging.getLogger(__name__)
 
+# STAB-06: bump this when schema changes; tracked in schema_meta table
+RB_SCHEMA_VERSION = 2
+
 STATUS_PENDING  = "pending"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
@@ -151,61 +154,94 @@ class KnowledgeReviewBoard:
 
     def _conn_(self) -> sqlite3.Connection:
         if self._conn is None:
-            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn = conn
+            try:
+                conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                self._conn = conn
+            except sqlite3.DatabaseError as exc:
+                # STAB-06: graceful error instead of raw stack trace
+                logger.error(
+                    "review_board.db 無法開啟（%s）。執行 `brain doctor` 查看詳情。",
+                    exc,
+                )
+                raise RuntimeError(
+                    f"KnowledgeReviewBoard 資料庫無法開啟：{exc}。"
+                    f"執行 `brain doctor` 或刪除 {self._db_path} 後重新初始化。"
+                ) from exc
         return self._conn
 
     def _setup(self) -> None:
         self.brain_dir.mkdir(parents=True, exist_ok=True)
-        conn = self._conn_()
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS staged_nodes (
-                id           TEXT PRIMARY KEY,
-                kind         TEXT NOT NULL DEFAULT 'Rule',
-                title        TEXT NOT NULL,
-                content      TEXT NOT NULL DEFAULT '',
-                tags         TEXT NOT NULL DEFAULT '',
-                source       TEXT NOT NULL DEFAULT 'manual',
-                submitter    TEXT NOT NULL DEFAULT 'user',
-                status       TEXT NOT NULL DEFAULT 'pending',
-                reviewer     TEXT NOT NULL DEFAULT '',
-                review_note  TEXT NOT NULL DEFAULT '',
-                created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-                reviewed_at  TEXT NOT NULL DEFAULT '',
-                l3_node_id   TEXT NOT NULL DEFAULT '',
-                applicability_condition TEXT NOT NULL DEFAULT '',
-                invalidation_condition  TEXT NOT NULL DEFAULT '',
-                ai_recommendation TEXT NOT NULL DEFAULT '',
-                ai_confidence     REAL NOT NULL DEFAULT 0.0,
-                ai_reasoning      TEXT NOT NULL DEFAULT '',
-                ai_screened_at    TEXT NOT NULL DEFAULT ''
-            );
+        try:
+            conn = self._conn_()
+        except RuntimeError:
+            raise  # already logged; propagate with user-friendly message
 
-            CREATE INDEX IF NOT EXISTS idx_staged_status
-                ON staged_nodes(status);
-            CREATE INDEX IF NOT EXISTS idx_staged_created
-                ON staged_nodes(created_at);
+        try:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS staged_nodes (
+                    id           TEXT PRIMARY KEY,
+                    kind         TEXT NOT NULL DEFAULT 'Rule',
+                    title        TEXT NOT NULL,
+                    content      TEXT NOT NULL DEFAULT '',
+                    tags         TEXT NOT NULL DEFAULT '',
+                    source       TEXT NOT NULL DEFAULT 'manual',
+                    submitter    TEXT NOT NULL DEFAULT 'user',
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    reviewer     TEXT NOT NULL DEFAULT '',
+                    review_note  TEXT NOT NULL DEFAULT '',
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                    reviewed_at  TEXT NOT NULL DEFAULT '',
+                    l3_node_id   TEXT NOT NULL DEFAULT '',
+                    applicability_condition TEXT NOT NULL DEFAULT '',
+                    invalidation_condition  TEXT NOT NULL DEFAULT '',
+                    ai_recommendation TEXT NOT NULL DEFAULT '',
+                    ai_confidence     REAL NOT NULL DEFAULT 0.0,
+                    ai_reasoning      TEXT NOT NULL DEFAULT '',
+                    ai_screened_at    TEXT NOT NULL DEFAULT ''
+                );
 
-            -- v8.0: 知識版本歷史（每次 approve 後修改，記錄 diff）
-            CREATE TABLE IF NOT EXISTS knowledge_history (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                l3_node_id   TEXT NOT NULL,
-                staged_id    TEXT NOT NULL DEFAULT '',
-                action       TEXT NOT NULL,  -- approved / updated / rejected
-                title        TEXT NOT NULL DEFAULT '',
-                content      TEXT NOT NULL DEFAULT '',
-                reviewer     TEXT NOT NULL DEFAULT '',
-                note         TEXT NOT NULL DEFAULT '',
-                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_kh_node ON knowledge_history(l3_node_id);
-        """)
-        conn.commit()
+                CREATE INDEX IF NOT EXISTS idx_staged_status
+                    ON staged_nodes(status);
+                CREATE INDEX IF NOT EXISTS idx_staged_created
+                    ON staged_nodes(created_at);
 
-        # PH3-03 migration: 對現有 DB 補加 ai_* 欄位（靜默，若已存在則跳過）
+                -- v8.0: 知識版本歷史（每次 approve 後修改，記錄 diff）
+                CREATE TABLE IF NOT EXISTS knowledge_history (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    l3_node_id   TEXT NOT NULL,
+                    staged_id    TEXT NOT NULL DEFAULT '',
+                    action       TEXT NOT NULL,  -- approved / updated / rejected
+                    title        TEXT NOT NULL DEFAULT '',
+                    content      TEXT NOT NULL DEFAULT '',
+                    reviewer     TEXT NOT NULL DEFAULT '',
+                    note         TEXT NOT NULL DEFAULT '',
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_kh_node ON knowledge_history(l3_node_id);
+
+                -- STAB-06: schema version tracking
+                CREATE TABLE IF NOT EXISTS schema_meta (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT ''
+                );
+            """)
+            conn.commit()
+        except sqlite3.DatabaseError as exc:
+            # STAB-06: DB corrupted or locked — give actionable message
+            logger.error(
+                "review_board.db 初始化失敗（%s）。可能已損壞。"
+                "執行 `brain doctor` 查看詳情，或刪除 %s 重新建立。",
+                exc, self._db_path,
+            )
+            raise RuntimeError(
+                f"review_board.db 初始化失敗：{exc}。"
+                f"執行 `brain doctor` 或刪除 {self._db_path} 後重新初始化。"
+            ) from exc
+
+        # STAB-06: PH3-03 migration with observable logging
         _ai_cols = {
             "ai_recommendation": "TEXT NOT NULL DEFAULT ''",
             "ai_confidence":     "REAL NOT NULL DEFAULT 0.0",
@@ -222,8 +258,21 @@ class KnowledgeReviewBoard:
                     conn.execute(
                         f"ALTER TABLE staged_nodes ADD COLUMN {col} {typedef}"
                     )
-                except Exception:
-                    pass
+                except sqlite3.OperationalError as exc:
+                    msg = str(exc).lower()
+                    if "duplicate column" in msg or "already exists" in msg:
+                        logger.debug("review_board migration: column %s already exists", col)
+                    else:
+                        logger.warning(
+                            "review_board migration: 新增欄位 %s 失敗（%s）。"
+                            "執行 `brain doctor` 查看詳情。", col, exc
+                        )
+
+        # STAB-06: record schema version
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('version', ?)",
+            (str(RB_SCHEMA_VERSION),)
+        )
         conn.commit()
 
     # ── 提交（Staging 入口）─────────────────────────────────────

@@ -33,6 +33,27 @@
 - **`NodeDict` TypedDict**：`context.py` 新增 `NodeDict = TypedDict(...)` 定義，涵蓋所有已知節點欄位（`total=False`，與 SQLite Row → dict 的實際狀況一致）；`_node_priority` 等內部方法現有靜態型別支撐，鍵名錯誤可由 mypy/pyright 提前發現
 - **測試覆蓋率門檻**：`pyproject.toml` 移除 `cli.py`、`api_server.py`、`mcp_server.py` 的 coverage `omit`；新增 `fail_under = 50`，三個主要入口點納入覆蓋率統計
 
+### P1 修復（STAB-06 ～ STAB-07）
+
+- **STAB-06 ReviewBoard.db 穩定性**：`review_board.py` 加入 `RB_SCHEMA_VERSION = 2` 常數與 `schema_meta` 表記錄 schema 版本；`_conn_()` 捕捉 `sqlite3.DatabaseError` 並轉換為含 `brain doctor` 提示的 `RuntimeError`（不再丟出 stack trace）；`_setup()` 同樣捕捉 DB 損壞並給出可操作錯誤訊息；PH3-03 migration 的 `except Exception: pass` 改為 `logger.warning` 含欄位名與錯誤原因
+- **STAB-07 SR node ID 比對**：`context.py` 在 `build()` 初始化 `_shown_node_ids: list[str] = []`；主迴圈改為先呼叫 `_add_if_budget` 再判斷節點是否進入 context，只對進入 context 的節點增加 `access_count` 並追蹤 ID；Spaced Repetition 批次更新改用 `_shown_node_ids` 取代 title 子字串比對，含截斷或 emoji 的標題不再誤判
+
+### P2 修復（SYNC-01）
+
+- **SYNC-01 Synonym Map 完全同步**：兩個映射表均擴展至 **46 條**，完全一致。新增詞域：
+  - 資料庫遷移（`migration` / `遷移`）
+  - 容器化（`容器` / `kubernetes`）
+  - 非同步（`非同步` / `async` / `並發`）
+  - 訊息佇列（`訊息佇列` / `kafka`）
+  - 重試容錯（`重試` / `retry`）
+  - 日誌監控（`日誌` / `log` / `監控`）
+  - 配置管理（`配置` / `config`）
+  - `context.py` 補齊缺少的 `db`、`database`、`test`、`error` 4 條獨立鍵
+
+### 文件更新（HON-01）
+
+- **HON-01 標記為 N/A**：`brain distill` 指令已於 v10.x 移除（COMMANDS.md 有記錄），README LoRA 說明已無對象。計劃中該項目標記為不適用並關閉
+
 ---
 
 ## v0.5.0（2026-04-04）— 品質基線版
