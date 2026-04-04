@@ -208,8 +208,8 @@ class ContextEngineer:
                                 scope=_scope, limit=limit  # BUG-12 fix
                             )
                     # Always query KnowledgeGraph and merge (BUG-09 fix)
-                    graph_results = self.graph.search_nodes_multi(
-                        terms, node_type=node_type, limit=limit
+                    graph_results = self.graph.search_nodes(
+                        "", node_type=node_type, limit=limit, terms=terms  # ARCH-03
                     )
                     # Deduplicate by id: BrainDB results take precedence
                     seen_ids: set = {r["id"] for r in db_results if "id" in r}

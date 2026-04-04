@@ -55,8 +55,8 @@
 
 | ID | 問題 | 影響 | 解決方案 | 工時 |
 |----|------|------|---------|------|
-| ARCH-02 | thread-local SQLite 連線無清理 | API server 每請求一執行緒，長跑洩漏 file descriptor | 改用單一 `check_same_thread=False` 連線 + `threading.RLock`，或 handler 完成後顯式 `close()` | 2 天 |
-| ARCH-03 | `search_nodes` / `search_nodes_multi` 簽名不一致，回傳結構不同 | 呼叫方需 workaround，API 令人困惑 | 合併為單一函式，統一回傳結構與 scope 支援 | 3 天 |
+| ~~ARCH-02~~ | ~~thread-local SQLite 連線無清理~~ | ~~API server 每請求一執行緒，長跑洩漏 file descriptor~~ | ✅ **已修復（2026-04-04）**：`BrainDB`/`KnowledgeGraph` 改用單一 `_conn_obj`（`check_same_thread=False`）；`_make_connection()` 虛方法供 `ReadBrainDB` 覆寫；新增 `close()` 方法 | 2 天 |
+| ~~ARCH-03~~ | ~~`search_nodes` / `search_nodes_multi` 簽名不一致，回傳結構不同~~ | ~~呼叫方需 workaround，API 令人困惑~~ | ✅ **已修復（2026-04-04）**：`search_nodes` 加 `terms: list \| None` 參數；`search_nodes_multi` 改為 thin wrapper；`context.py` 改呼叫 `search_nodes(terms=terms)` | 3 天 |
 
 ### 效能
 

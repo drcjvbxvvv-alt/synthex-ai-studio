@@ -24,23 +24,34 @@ class BrainDB:
     def __init__(self, brain_dir: Path):
         self.brain_dir = Path(brain_dir)
         self.brain_dir.mkdir(parents=True, exist_ok=True)
-        self.db_path   = self.brain_dir / "brain.db"
-        self._local    = threading.local()
+        self.db_path     = self.brain_dir / "brain.db"
         self._write_lock = threading.RLock()  # REF-03: replaces fcntl
+        # ARCH-02: single shared connection — eliminates per-thread fd leak
+        self._conn_obj: sqlite3.Connection = self._make_connection()
         self._setup()
+
+    def _make_connection(self) -> sqlite3.Connection:
+        """ARCH-02: open the shared SQLite connection. Override in subclasses."""
+        c = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA busy_timeout=5000")
+        c.execute("PRAGMA foreign_keys=ON")
+        # DEF-02 fix: register Python UDF so SQL triggers can call brain_ngram()
+        c.create_function("brain_ngram", 1, lambda t: BrainDB._ngram(t or ""))
+        return c
 
     @property
     def conn(self) -> sqlite3.Connection:
-        if not getattr(self._local, "conn", None):
-            c = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            c.row_factory = sqlite3.Row
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("PRAGMA busy_timeout=5000")
-            c.execute("PRAGMA foreign_keys=ON")
-            # DEF-02 fix: register Python UDF so SQL triggers can call brain_ngram()
-            c.create_function("brain_ngram", 1, lambda t: BrainDB._ngram(t or ""))
-            self._local.conn = c
-        return self._local.conn
+        # ARCH-02: single connection shared across threads (check_same_thread=False)
+        return self._conn_obj
+
+    def close(self) -> None:
+        """ARCH-02: explicitly close the shared connection to release the fd."""
+        try:
+            self._conn_obj.close()
+        except Exception:
+            pass
 
     def _setup(self) -> None:
         self.conn.executescript("""
@@ -1687,17 +1698,15 @@ class BrainDB:
 class ReadBrainDB(BrainDB):
     """OPT-05: Read-only view of BrainDB — uses WAL snapshot, no writes."""
 
-    @property
-    def conn(self) -> sqlite3.Connection:
-        if not getattr(self._local, "conn", None):
-            c = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True,
-                                check_same_thread=False)
-            c.row_factory = sqlite3.Row
-            c.execute("PRAGMA query_only=ON")
-            c.execute("PRAGMA journal_mode=WAL")
-            c.create_function("brain_ngram", 1, lambda t: BrainDB._ngram(t or ""))
-            self._local.conn = c
-        return self._local.conn
+    def _make_connection(self) -> sqlite3.Connection:
+        """ARCH-02: read-only URI connection."""
+        c = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True,
+                            check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA query_only=ON")
+        c.execute("PRAGMA journal_mode=WAL")
+        c.create_function("brain_ngram", 1, lambda t: BrainDB._ngram(t or ""))
+        return c
 
     def _setup(self): pass  # no-op: read-only, schema already exists
 

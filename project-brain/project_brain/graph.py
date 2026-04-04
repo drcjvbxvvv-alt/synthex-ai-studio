@@ -50,30 +50,32 @@ class KnowledgeGraph:
     }
 
     def __init__(self, brain_dir: Path):
-        import threading as _thr
         self.db_path = brain_dir / "knowledge_graph.db"
-        self._local  = _thr.local()  # per-thread connections
+        # ARCH-02: single shared connection — no per-thread fd leak
+        self._conn_obj: sqlite3.Connection = self._make_connection()
         self._setup_schema()
         self._migrate_schema()
 
-    @property
-    def _conn(self):
-        """Per-thread SQLite connection (thread-safety fix)"""
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            c = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            c.row_factory = sqlite3.Row
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("PRAGMA busy_timeout=5000")
-            c.execute("PRAGMA foreign_keys=ON")
-            self._local.conn = c
-        return self._local.conn
+    def _make_connection(self) -> sqlite3.Connection:
+        """ARCH-02: open the shared SQLite connection."""
+        c = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA busy_timeout=5000")
+        c.execute("PRAGMA foreign_keys=ON")
+        return c
 
-    @_conn.setter
-    def _conn(self, value):
-        if not hasattr(self, "_local"):
-            import threading
-            self._local = threading.local()
-        self._local.conn = value
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """ARCH-02: single connection shared across threads."""
+        return self._conn_obj
+
+    def close(self) -> None:
+        """ARCH-02: explicitly close the shared connection to release the fd."""
+        try:
+            self._conn_obj.close()
+        except Exception:
+            pass
 
     def _setup_schema(self):
         # P1-1：WAL 模式（多進程並發安全）
@@ -204,88 +206,8 @@ class KnowledgeGraph:
         node_type: str = None,
         limit:     int = 10,
     ) -> list:
-        """
-        A-4：多詞 OR 搜尋 — 一次 SQL 查詢取代多次逐詞搜尋。
-
-        把所有擴展詞合成一個 FTS5 OR 查詢：
-          MATCH 'jwt OR token OR 令 OR 牌 OR 認 OR 證'
-
-        比逐詞迴圈快 5-10x（1000 節點：60ms → <10ms）。
-
-        Args:
-            terms:     擴展詞列表（來自 _expand_query）
-            node_type: 過濾類型（None = 全部）
-            limit:     最多回傳筆數
-        """
-        if not terms:
-            return []
-
-        # 建立 FTS5 OR 查詢字串（每個詞用引號包圍防注入）
-        import re as _re
-        safe_terms = [_re.sub(r'[^\w\u4e00-\u9fff]', '', t) for t in terms]
-        safe_terms = [t for t in safe_terms if len(t) >= 2][:20]  # 至少 2 字元
-        if not safe_terms:
-            return []
-
-        # DEF-07 fix: expand each term through _ngram_text() for CJK sub-word matching
-        _expanded_terms: list[str] = []
-        for _st in safe_terms:
-            _tokens = KnowledgeGraph._ngram_text(_st).split()
-            _valid = [_tok for _tok in _tokens if len(_tok) >= 1]
-            _expanded_terms.extend(_valid if _valid else [_st])
-        # deduplicate preserving order
-        _seen_terms: set = set()
-        _deduped: list[str] = []
-        for _term in _expanded_terms:
-            if _term not in _seen_terms:
-                _deduped.append(_term)
-                _seen_terms.add(_term)
-        safe_terms = _deduped if _deduped else safe_terms
-
-        # OPT-08 fix: sanitize terms before FTS5 query
-        import re as _re
-        _sanitized = [_re.sub(r'["()*\-^ ]', '', t) for t in safe_terms]
-        _sanitized = [t for t in _sanitized if len(t) >= 1]
-        fts_query = " OR ".join(f'"{t}"' for t in _sanitized) if _sanitized else '""'
-
-        try:
-            if node_type:
-                rows = self._conn.execute("""
-                    SELECT n.id, n.type, n.title, n.content, n.tags,
-                           n.confidence, n.importance, n.is_pinned,
-                           n.access_count, n.emotional_weight,
-                           n.applicability_condition, n.perspective
-                    FROM   nodes_fts
-                    JOIN   nodes n ON nodes_fts.rowid = n.rowid
-                    WHERE  nodes_fts MATCH ?
-                      AND  n.type = ?
-                    ORDER  BY n.is_pinned DESC,
-                              n.confidence DESC,
-                              n.importance DESC
-                    LIMIT  ?
-                """, (fts_query, node_type, limit)).fetchall()
-            else:
-                rows = self._conn.execute("""
-                    SELECT n.id, n.type, n.title, n.content, n.tags,
-                           n.confidence, n.importance, n.is_pinned,
-                           n.access_count, n.emotional_weight,
-                           n.applicability_condition, n.perspective
-                    FROM   nodes_fts
-                    JOIN   nodes n ON nodes_fts.rowid = n.rowid
-                    WHERE  nodes_fts MATCH ?
-                    ORDER  BY n.is_pinned DESC,
-                              n.confidence DESC,
-                              n.importance DESC
-                    LIMIT  ?
-                """, (fts_query, limit)).fetchall()
-            return [dict(r) for r in rows]
-        except Exception:
-            # FTS5 查詢語法錯誤時降級到逐詞搜尋
-            for term in safe_terms[:5]:
-                results = self.search_nodes(term, node_type=node_type, limit=limit)
-                if results:
-                    return results
-            return []
+        """ARCH-03: deprecated — delegates to search_nodes(terms=terms)."""
+        return self.search_nodes("", node_type=node_type, limit=limit, terms=terms)
 
     def add_node(
         self,
@@ -399,25 +321,24 @@ class KnowledgeGraph:
 
     def search_nodes(
         self,
-        query:     str,
-        node_type: str  = None,
-        limit:     int  = 10,
+        query:        str = "",
+        node_type:    str  = None,
+        limit:        int  = 10,
         pinned_first: bool = True,
+        terms:        list | None = None,
     ) -> list:
         """
         全文搜尋節點（FTS5 + LIKE 雙重搜尋 + confidence/importance 加權排序）
 
-        v5.1 改進：
-        1. is_pinned=1 的節點永遠優先（免疫衰減的關鍵規則排最前）
-        2. importance 欄位影響排序（高重要性排前）
-        3. meta.confidence 影響排序（衰減後低信心的排後）
-        4. FTS5 中文子詞問題：LIKE 備援
+        ARCH-03: accepts optional pre-expanded `terms` list (bypasses query-string
+        processing). When terms is provided, query is ignored.
 
         Args:
-            query:        搜尋關鍵字
+            query:        搜尋關鍵字（terms 存在時忽略）
             node_type:    過濾節點類型（None = 全部）
             limit:        最多回傳筆數
             pinned_first: 是否讓 is_pinned=1 的節點優先（預設 True）
+            terms:        ARCH-03 pre-expanded term list (from context engine)
         """
         import re, json
 
@@ -431,6 +352,60 @@ class KnowledgeGraph:
             importance = -(row.get("importance") or 0.5)
             confidence = -(row.get("confidence") or 0.8)   # 直接讀欄位
             return (pinned, importance, confidence)
+
+        # ARCH-03: pre-expanded terms fast-path (from search_nodes_multi / context engine)
+        if terms is not None:
+            if not terms:
+                return []
+            import re as _re
+            safe = [_re.sub(r'[^\w\u4e00-\u9fff]', '', t) for t in terms]
+            safe = [t for t in safe if len(t) >= 2][:20]
+            if not safe:
+                return []
+            # DEF-07: n-gram expansion for CJK sub-word matching
+            expanded: list[str] = []
+            for st in safe:
+                tokens = KnowledgeGraph._ngram_text(st).split()
+                valid = [tok for tok in tokens if len(tok) >= 1]
+                expanded.extend(valid if valid else [st])
+            seen_set: set = set()
+            deduped: list[str] = []
+            for t in expanded:
+                if t not in seen_set:
+                    deduped.append(t)
+                    seen_set.add(t)
+            safe = deduped if deduped else safe
+            # OPT-08: sanitize before FTS5
+            sanitized = [_re.sub(r'["()*\-^ ]', '', t) for t in safe]
+            sanitized = [t for t in sanitized if len(t) >= 1]
+            fts_q = " OR ".join(f'"{t}"' for t in sanitized) if sanitized else '""'
+            try:
+                if node_type:
+                    rows = self._conn.execute(
+                        "SELECT n.* FROM nodes_fts"
+                        " JOIN nodes n ON nodes_fts.rowid = n.rowid"
+                        " WHERE nodes_fts MATCH ? AND n.type = ?"
+                        " ORDER BY n.is_pinned DESC, n.confidence DESC, n.importance DESC"
+                        " LIMIT ?",
+                        (fts_q, node_type, limit),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        "SELECT n.* FROM nodes_fts"
+                        " JOIN nodes n ON nodes_fts.rowid = n.rowid"
+                        " WHERE nodes_fts MATCH ?"
+                        " ORDER BY n.is_pinned DESC, n.confidence DESC, n.importance DESC"
+                        " LIMIT ?",
+                        (fts_q, limit),
+                    ).fetchall()
+                return [dict(r) for r in rows]
+            except Exception:
+                # FTS5 error: fall back to first few terms via LIKE
+                for term in safe[:5]:
+                    results = self.search_nodes(term, node_type=node_type, limit=limit)
+                    if results:
+                        return results
+                return []
 
         # Step 1: FTS5 精準查詢
         rows = []
