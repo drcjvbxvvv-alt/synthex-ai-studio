@@ -17,6 +17,91 @@
 
 ---
 
+## 優先矩陣（Impact × Cost）
+
+> 雙維度分類：縱軸 **影響度**（正確性 / 效能 / 可維護性），橫軸 **實施成本**（工時估算）。
+> 每格依重要性排列。「→ 版本」為建議納入目標。
+
+```
+                  低成本（< 1 天）          中成本（1–5 天）          高成本（> 1 週）
+               ┌──────────────────────┬──────────────────────┬──────────────────────┐
+               │  ★ 立即執行          │  ▲ 計劃執行          │  ◆ 策略投資          │
+  高影響       │  BUG-A01 scope 更新  │  ARCH-01 DB singleton│  REV-01 30 天實驗    │
+  （正確性     │  SEC-01  SQL 參數化  │  BUG-A02 FTS5 觸發器 │  MON-04 bundle 審核  │
+   / 安全      │  BUG-A04 fed scope   │  ARCH-02 fd 洩漏     │  MON-02 公開 bundle  │
+   / 核心功能）│  DATA-02 migration   │  STAB-08 Chaos CI    │  PH3-04 Cloud        │
+               │  BUG-A05 git branch  │  MON-04（前置）      │                      │
+               ├──────────────────────┼──────────────────────┼──────────────────────┤
+               │  ✦ 順勢執行          │  ○ 計劃排入          │  △ 評估後決定        │
+  中影響       │  PERF-01 N+1 UPDATE  │  FLY-04 Nudge 量測   │  ARCH-03 search API  │
+  （效能       │  REF-02 Synonym 模組 │  REV-02 Decay 量測   │  ARCH-04 scope CLI   │
+   / 穩定性    │  REF-03 移除 fcntl   │  FLY-03 status 評分  │  FLY-06 Time to FV   │
+   / UX）      │  DIR-01 驗收標準     │  FLY-05 成長率量測   │                      │
+               │  DIR-03 隨機審計     │  MON-03 商業草案     │                      │
+               │  SEC-02 symlink      │                      │                      │
+               ├──────────────────────┼──────────────────────┼──────────────────────┤
+               │  ⊙ 填補執行          │  ⊘ 低優先            │  ✗ 延後 / 跳過       │
+  低影響       │  BUG-A03 DCL locking │  ARCH-04（重評）     │  REF-01 BrainDB 拆分 │
+  （可維護性   │  TECH-01~03 文件標記 │  DATA-01 刪除審計    │  SEC-03 PII library  │
+   / 技術債    │  DIR-02 狀態標記     │  UNQ-02 競品追蹤     │  REV-03 公開報告     │
+   / 低頻路徑）│  PERF-02 FTS5 索引   │  MON-01 contributor  │  PH3-04（獨立規劃）  │
+               │  PERF-03 CJK cache   │                      │                      │
+               │  REF-04 魔法數字     │                      │                      │
+               │  MON-01（contrib）   │                      │                      │
+               └──────────────────────┴──────────────────────┴──────────────────────┘
+```
+
+### 矩陣說明
+
+**★ 立即執行（高影響 × 低成本）——Quick Wins，v0.7.0 patch 優先**
+
+| ID | 項目 | 根本原因 | 預估工時 |
+|----|------|---------|---------|
+| BUG-A01 | scope 更新改用 node_id | `WHERE title=?` 非唯一鍵，多節點誤改 | 30 分 |
+| SEC-01 | SQL scope filter 完全參數化 | f-string 拼接有潛在注入路徑 | 1 小時 |
+| BUG-A04 | federation export scope 驗證 | fallback 靜默忽略 scope 過濾，洩漏本地節點 | 1 小時 |
+| DATA-02 | migration 失敗不遞增 version | 失敗後 version+1 導致後續 migration 永久跳過 | 1 小時 |
+| BUG-A05 | git branch 名稱格式驗證 | 使用者輸入未驗證，傳入 subprocess | 30 分 |
+
+**▲ 計劃執行（高影響 × 中成本）——v0.7.0 目標**
+
+| ID | 項目 | 根本原因 | 預估工時 |
+|----|------|---------|---------|
+| ARCH-01 | BrainDB 存取統一走 singleton | MCP tools 直接 `new BrainDB`，WAL writer 競爭 | 1 天 |
+| BUG-A02 | 移除 FTS5 觸發器 | 觸發器 + 手動同步並存，可能重複索引 | 1 天 |
+| ARCH-02 | thread-local 連線加清理 | API server 長跑耗盡 fd | 2 天 |
+| STAB-08 | Chaos test 接 CI gate | 已有 chaos test 但未阻塞 merge | 半天 |
+
+**✦ 順勢執行（中影響 × 低成本）——有空就做**
+
+| ID | 項目 | 根本原因 | 預估工時 |
+|----|------|---------|---------|
+| PERF-01 | access_count 批次 UPDATE | 迴圈內逐筆 UPDATE（N+1 寫入） | 2 小時 |
+| REF-02 | Synonym Map 獨立為 `synonyms.py` | 兩處重複，「master copy」說明矛盾 | 1 小時 |
+| REF-03 | 移除 `_write_guard()` fcntl | 不跨平台；WAL + busy_timeout 已足夠 | 1 小時 |
+| DIR-01 | 補建驗收標準 | 核心功能無最低品質門檻 | 半天 |
+| DIR-03 | 發布前隨機審計制度化 | 已執行一次，需制度化 | 半天 |
+| SEC-02 | symlink 路徑驗證補強 | `resolve()` 後才驗 `..`，symlink 可繞過 | 1 小時 |
+
+**◆ 策略投資（高影響 × 高成本）——需單獨規劃**
+
+| ID | 項目 | 說明 | 備註 |
+|----|------|------|------|
+| REV-01 | 30 天對照實驗 | v0.6.0 Gate 數據來源，必須完成 | 持續進行 |
+| MON-04 | 官方 bundle 審核機制 | MON-02 前置條件，聯邦信任根基 | v0.7.0 Gate |
+| MON-02 | 公開知識模板庫 | 降低冷啟動；需 MON-04 完成後 | v0.7.0 目標 |
+| PH3-04 | Cloud 版本 | 企業就緒；需獨立專案規劃 | v1.0.0 |
+
+**✗ 延後評估（低影響 × 高成本）——當前版本勿觸**
+
+| ID | 項目 | 原因 | 重新評估時機 |
+|----|------|------|-------------|
+| REF-01 | BrainDB God Object 拆分 | 1797 行；拆分風險高，測試覆蓋不足前勿動 | 測試覆蓋率 ≥ 70% 後 |
+| SEC-03 | PII library 整合 | 引入 presidio/spaCy 增加 20MB+ 依賴 | 有企業客戶要求時 |
+| ARCH-03 | Graph search API 統一 | Breaking change，影響所有呼叫者 | v1.0.0 大重構期 |
+
+---
+
 ## 待辦功能
 
 ### v0.6.0（飛輪啟動）
