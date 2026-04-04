@@ -82,14 +82,17 @@ class NudgeEngine:
     MIN_CONFIDENCE = 0.4  # 低於此值不提醒
     DEFAULT_TOP_K  = 5    # 預設最多回傳幾條
 
-    def __init__(self, graph, session_store=None):
+    def __init__(self, graph, session_store=None, brain_db=None):
         """
         Args:
             graph:         KnowledgeGraph 實例
             session_store: SessionStore 實例（選填，用於讀取當前進度 context）
+            brain_db:      BrainDB 實例（選填）。補接後 brain.db 的 Pitfall 也能觸發 nudge。
+                           若為 None，只查 KnowledgeGraph（向後相容）。
         """
         self.graph         = graph
         self.session_store = session_store
+        self._brain_db     = brain_db  # NudgeEngine-BrainDB bridge (v0.6.0)
 
     def check(
         self,
@@ -157,14 +160,34 @@ class NudgeEngine:
     # ── 內部實作 ──────────────────────────────────────────────────────
 
     def _from_l3_pitfalls(self, query: str, top_k: int) -> list[Nudge]:
-        """從 L3 搜尋相關 Pitfall 節點"""
+        """從 L3 搜尋相關 Pitfall 節點（KnowledgeGraph + BrainDB 合併）。
+
+        v0.6.0: 同時查詢 BrainDB，讓 `brain add` 手動加入的 Pitfall 也能觸發 nudge。
+        結果以 node id 去重，BrainDB 結果優先（含 effective_confidence）。
+        """
+        # 1. KnowledgeGraph
         try:
             results = self.graph.search_nodes(
                 query, node_type="Pitfall", limit=top_k
             )
         except Exception as e:
-            logger.warning("NudgeEngine L3 search failed: %s", e)
-            return []
+            logger.warning("NudgeEngine KnowledgeGraph search failed: %s", e)
+            results = []
+
+        # 2. BrainDB (補接)
+        if self._brain_db is not None:
+            try:
+                db_results = self._brain_db.search_nodes(
+                    query, node_type="Pitfall", limit=top_k
+                )
+                # Merge: BrainDB takes precedence (may carry effective_confidence)
+                seen_ids = {r["id"] for r in results if "id" in r}
+                for r in db_results:
+                    if r.get("id") not in seen_ids:
+                        results.append(r)
+                        seen_ids.add(r.get("id"))
+            except Exception as e:
+                logger.debug("NudgeEngine BrainDB search failed: %s", e)
 
         nudges = []
         now    = datetime.now(timezone.utc)

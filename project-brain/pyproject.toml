@@ -65,13 +65,11 @@ source   = ["project_brain"]
 omit     = [
     "tests/*",
     "brain.py",
-    "project_brain/cli.py",       # CLI layer，由 test_brain.py 整合測試覆蓋
-    "project_brain/api_server.py", # HTTP routes，需要真實伺服器環境測試
-    "project_brain/mcp_server.py", # MCP，需要 mcp 套件
     "project_brain/web_ui/*",      # 前端靜態檔案
 ]
 
 [tool.coverage.report]
+fail_under = 50
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

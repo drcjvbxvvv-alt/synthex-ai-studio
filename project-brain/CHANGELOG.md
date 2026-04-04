@@ -4,6 +4,37 @@
 
 ---
 
+## v0.6.0（2026-04-04）— 飛輪啟動版（進行中）
+
+### P1 修復
+
+- **DB 複合索引**：`brain_db.py` schema v11 新增 `idx_nodes_scope_conf ON nodes(scope, confidence)`。`federation.py` 的 `WHERE scope=? AND confidence>=?` 由全表掃改為索引查詢；10k 節點下查詢延遲預期 < 50ms
+- **NudgeEngine 補接 BrainDB**：`nudge_engine.py` `__init__` 新增 `brain_db` 參數；`_from_l3_pitfalls` 同時查 KnowledgeGraph + BrainDB，結果以 node id 去重（BrainDB 優先）。用 `brain add` 手動加入的 Pitfall 現在可觸發主動提醒。更新 `mcp_server.py`（2 處）、`engine.py`、`cli.py` 的呼叫點，傳入 `brain_db=b.db`
+- **Migration 失效可觀察**：`brain_db.py` migration 迴圈中 `except Exception: pass` 改為條件判斷：`already exists`/`duplicate column` 記 `debug`（正常），其他異常記 `logger.warning` 含遷移版本與描述，提示執行 `brain doctor`
+
+### P2 修復（第一批）
+
+- **殘餘 `except: pass` 清理**：`context.py` 4 處靜默路徑全數加可觀察日誌：dedup 失敗 → `logger.debug`；SR 外層失敗 → `logger.debug`；causal chain 失敗 → `logger.debug`；reasoning chain 失敗 → `logger.debug`
+- **死碼清理**：
+  - `context.py` 移除 `_node_priority` 函數內未使用的 `import json as _json`
+  - `context.py` causal chain 區塊移除無意義的空 for 迴圈（`for _seg in result.split('\n'): pass`），保留工作正常的標題匹配路徑
+  - `engine.py` 移除 `ProjectBrain.__init__` 的 `graphiti_url` 死碼參數（FalkorDB 移除後從未被任何生產呼叫點使用）；router 初始化改為直接讀 `os.environ.get("GRAPHITI_URL", "")`
+- **Synonym Map 同步**：`brain_db._SYNONYM_MAP` 從 10 條擴展至 32 條，與 `context.py._SYNONYM_MAP` 對齊覆蓋相同詞彙域（認證/支付/資料庫/通用技術）；消除 `search_knowledge` 與 `get_context` 之間的語義擴展不對稱
+
+### P2 修復（第二批）
+
+- **Decay 即時化**：`context.py` `_node_priority` 內新增 `_eff_conf_fn` 參考（`BrainDB._effective_confidence` 靜態方法）。KnowledgeGraph 節點無 `effective_confidence` 欄位時，即時套用 F1（時間衰減）+ F7（使用頻率加成），不再依賴手動執行 `brain decay`。BrainDB 節點保持原有行為（搜尋時已預計算）
+- **Nudge 注入信心標記**：`mcp_server.py` nudge 渲染迴圈加入 `[conf=X.XX]` 標記；urgency=high 用 ⚠，其餘用 ℹ；Agent 現在可根據信心值調整對 nudge 的信任程度
+- **`brain config` 指令**：新增 `cmd_config()` 函數，一個指令顯示並驗證所有 6 處設定來源（`.brain/config.json`、`decay_config.json`、`federation.json`、`.brain/.env`、根目錄 `.env`、`BRAIN_*` 環境變數）；含有 KEY/TOKEN/SECRET 的變數值自動遮蔽
+- **`brain optimize --prune-episodes`**：新增 `BrainDB.prune_episodes(older_than_days)` 方法，刪除超過指定天數的 L2 episode 記錄；`brain optimize` 加入 `--prune-episodes` + `--older-than <days>` 旗標（預設 365 天）；不影響 L3 nodes 表
+
+### P3 修復
+
+- **`NodeDict` TypedDict**：`context.py` 新增 `NodeDict = TypedDict(...)` 定義，涵蓋所有已知節點欄位（`total=False`，與 SQLite Row → dict 的實際狀況一致）；`_node_priority` 等內部方法現有靜態型別支撐，鍵名錯誤可由 mypy/pyright 提前發現
+- **測試覆蓋率門檻**：`pyproject.toml` 移除 `cli.py`、`api_server.py`、`mcp_server.py` 的 coverage `omit`；新增 `fail_under = 50`，三個主要入口點納入覆蓋率統計
+
+---
+
 ## v0.5.0（2026-04-04）— 品質基線版
 
 ### 靜默失效修復（STB-01 ～ STB-05）

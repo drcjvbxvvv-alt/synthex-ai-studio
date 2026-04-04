@@ -701,7 +701,7 @@ def cmd_context(args):
             from project_brain.brain_db import BrainDB
             from project_brain.nudge_engine import NudgeEngine
             _db = BrainDB(bd)
-            ne  = NudgeEngine(b.graph)
+            ne  = NudgeEngine(b.graph, brain_db=_db)
             qs  = ne.generate_questions(task)
             if qs:
                 print(f"\n{P}{B}❓  Brain 想知道（低信心知識確認）{R}")
@@ -1567,6 +1567,82 @@ def _verify_sqlite_vec():
         print(f"  {Y}⚠{R}  Embedding 後端偵測失敗：{e}")
 
 
+def cmd_config(args):
+    """顯示並驗證所有設定來源（brain config）"""
+    import json
+    wd = args.workdir or os.environ.get("BRAIN_WORKDIR") or os.getcwd()
+    brain_dir = Path(wd) / ".brain"
+
+    print(f"\n{B}⚙  Project Brain — 設定來源一覽{R}\n")
+
+    # 1. .brain/config.json
+    cfg_path = brain_dir / "config.json"
+    print(f"  {C}1. .brain/config.json{R}", f"{'✓' if cfg_path.exists() else '✗ 不存在'}")
+    if cfg_path.exists():
+        try:
+            cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            for k, v in cfg_data.items():
+                print(f"     {k}: {v}")
+        except Exception as e:
+            print(f"     {RE}讀取失敗：{e}{R}")
+
+    # 2. .brain/decay_config.json
+    decay_path = brain_dir / "decay_config.json"
+    print(f"\n  {C}2. .brain/decay_config.json{R}", f"{'✓' if decay_path.exists() else '（未設定，使用預設值）'}")
+    if decay_path.exists():
+        try:
+            decay_data = json.loads(decay_path.read_text(encoding="utf-8"))
+            for k, v in decay_data.items():
+                print(f"     {k}: {v}")
+        except Exception as e:
+            print(f"     {RE}讀取失敗：{e}{R}")
+
+    # 3. .brain/federation.json
+    fed_path = brain_dir / "federation.json"
+    print(f"\n  {C}3. .brain/federation.json{R}", f"{'✓' if fed_path.exists() else '（未設定）'}")
+    if fed_path.exists():
+        try:
+            fed_data = json.loads(fed_path.read_text(encoding="utf-8"))
+            sources = fed_data.get("sync_sources", [])
+            print(f"     sync_sources: {len(sources)} 個來源")
+        except Exception as e:
+            print(f"     {RE}讀取失敗：{e}{R}")
+
+    # 4. .brain/.env
+    brain_env = brain_dir / ".env"
+    print(f"\n  {C}4. .brain/.env{R}", f"{'✓' if brain_env.exists() else '（未設定）'}")
+    if brain_env.exists():
+        try:
+            for line in brain_env.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key = line.split('=', 1)[0]
+                    print(f"     {key}=***")  # 隱藏值，只顯示 key
+        except Exception as e:
+            print(f"     {RE}讀取失敗：{e}{R}")
+
+    # 5. 根目錄 .env
+    root_env = Path(wd) / ".env"
+    print(f"\n  {C}5. {root_env}{R}", f"{'✓' if root_env.exists() else '（未設定）'}")
+    if root_env.exists():
+        try:
+            count = sum(1 for line in root_env.read_text(encoding="utf-8").splitlines()
+                        if line.strip() and not line.strip().startswith('#') and '=' in line)
+            print(f"     {count} 個環境變數")
+        except Exception as e:
+            print(f"     {RE}讀取失敗：{e}{R}")
+
+    # 6. 相關環境變數（直接來自 os.environ）
+    brain_env_vars = {k: v for k, v in os.environ.items() if k.startswith("BRAIN_")}
+    print(f"\n  {C}6. 目前 BRAIN_* 環境變數{R}", f"（{len(brain_env_vars)} 個）")
+    for k, v in sorted(brain_env_vars.items()):
+        # 遮蔽可能含有 key 的變數
+        display_v = "***" if any(s in k for s in ("KEY","TOKEN","SECRET","PASSWORD")) else v
+        print(f"     {k}={display_v}")
+
+    print()
+
+
 def cmd_optimize(args):
     """C-1/C-3: 資料庫維護 — VACUUM + ANALYZE + FTS5 rebuild（brain optimize）"""
     from project_brain.brain_db import BrainDB
@@ -1584,6 +1660,13 @@ def cmd_optimize(args):
     print(f"  {G}✓ VACUUM + ANALYZE 完成{R}")
     print(f"  {G}✓ FTS5 索引重建：{res['fts5_status']}{R}")
     print(f"  {B}磁碟使用：{before_kb:.1f} KB → {after_kb:.1f} KB  節省 {saved_kb:.1f} KB{R}")
+    if getattr(args, 'prune_episodes', False):
+        days    = getattr(args, 'older_than', 365)
+        deleted = db.prune_episodes(older_than_days=days)
+        if deleted:
+            print(f"  {G}✓ 清理 episode：刪除 {deleted} 筆超過 {days} 天的 L2 記錄{R}")
+        else:
+            print(f"  {D}ℹ 無超過 {days} 天的 episode 記錄需要清理{R}")
 
 
 def cmd_clear(args):
@@ -2543,7 +2626,13 @@ def main():
     p = mkp('doctor', '系統健康檢查與自動修復')
     p.add_argument('--fix', action='store_true', help='嘗試自動修復發現的問題')
 
-    mkp('optimize', 'C-1: 資料庫維護 — VACUUM + FTS5 rebuild（節省磁碟）')
+    mkp('config', '顯示並驗證所有設定來源（5 處）')
+
+    p = mkp('optimize', 'C-1: 資料庫維護 — VACUUM + FTS5 rebuild（節省磁碟）')
+    p.add_argument('--prune-episodes', action='store_true',
+                   help='清理舊 Episode（L2 git commit 記錄），搭配 --older-than 使用')
+    p.add_argument('--older-than', dest='older_than', type=int, default=365,
+                   help='清理幾天前的 episode（預設 365）')
 
     p = mkp('clear', 'U-5: 安全清除工作記憶（session 條目）')
     p.add_argument('--all', dest='target', action='store_const', const='all',
@@ -2736,6 +2825,7 @@ def main():
         'context':       cmd_context,
         'meta':          cmd_meta_knowledge,
         'doctor':        cmd_doctor,
+        'config':        cmd_config,
         'optimize':      cmd_optimize,
         'clear':         cmd_clear,
         'review':        cmd_review,

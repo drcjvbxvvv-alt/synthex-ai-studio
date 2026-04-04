@@ -60,14 +60,9 @@ class ProjectBrain:
     BRAIN_DIR   = ".brain"
     CONFIG_FILE = "config.json"
 
-    def __init__(self, workdir: str, graphiti_url: str = ""):
+    def __init__(self, workdir: str):
         self.workdir      = Path(workdir).resolve()
         self.brain_dir    = self.workdir / self.BRAIN_DIR
-        # 優先順序：參數 > 環境變數 GRAPHITI_URL > 預設 redis://localhost:6379
-        import os as _os
-        self._graphiti_url = (graphiti_url
-                             or _os.environ.get("GRAPHITI_URL", "")
-                             or "redis://localhost:6379")
 
         # 延遲初始化（只有呼叫 init/scan 後才建立）
         self._db        = None   # A-10: BrainDB (unified)
@@ -162,7 +157,7 @@ class ProjectBrain:
                     self._router = BrainRouter(
                         brain_dir    = self.brain_dir,
                         l3_brain     = self,
-                        graphiti_url = self._graphiti_url,
+                        graphiti_url = os.environ.get("GRAPHITI_URL", ""),
                         agent_name   = self._config.get("project_name", "project-brain"),
                     )
         return self._router
@@ -723,7 +718,7 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             nudge_msgs: list = []
             try:
                 from .nudge_engine import NudgeEngine
-                nudges = NudgeEngine(self.graph).check(task, top_k=3)
+                nudges = NudgeEngine(self.graph, brain_db=self._db).check(task, top_k=3)
                 nudge_msgs = [getattr(n,"message","") or str(n) for n in nudges]
             except Exception:
                 pass

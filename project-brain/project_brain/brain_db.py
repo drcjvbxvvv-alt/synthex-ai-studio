@@ -11,20 +11,46 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 10          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 11          # DEF-04: bump on every schema change
 MAX_SESSION_ENTRIES = 500    # DEF-06: per-session_id LRU eviction threshold
 
+# Synonym map shared with ContextEngineer._SYNONYM_MAP (keep in sync).
+# Master copy lives in context.py; changes there should be reflected here.
 _SYNONYM_MAP = {
-    "token":    ["jwt","bearer","auth"],
-    "jwt":      ["token","bearer","rs256","hs256","auth"],
-    "auth":     ["jwt","token","authentication"],
-    "webhook":  ["idempotency","callback","stripe"],
-    "stripe":   ["webhook","payment","charge"],
-    "db":       ["database","postgres","postgresql","mysql"],
-    "database": ["db","postgres","postgresql","sql"],
-    "cache":    ["redis","memcached","ttl"],
-    "error":    ["exception","bug","failure","crash"],
-    "test":     ["unittest","pytest","mock"],
+    # 認證 / 授權
+    "token":         ["jwt","bearer","access_token","令牌","token"],
+    "jwt":           ["token","bearer","令牌","rs256","hs256","驗證","auth"],
+    "令牌":           ["jwt","token","bearer","驗證","auth","認證"],
+    "認證":           ["jwt","token","auth","authentication","驗證","authorize"],
+    "授權":           ["auth","authorization","rbac","permission","權限"],
+    "auth":          ["jwt","token","認證","授權","authentication"],
+    # 支付
+    "支付":           ["stripe","payment","charge","扣款","收費"],
+    "stripe":        ["webhook","payment","charge","idempotency","支付"],
+    "webhook":       ["stripe","idempotency","冪等","callback","回調"],
+    "冪等":           ["webhook","idempotency","idempotent","重複","duplicate"],
+    "扣款":           ["stripe","charge","payment","支付","重複"],
+    # 資料庫
+    "db":            ["database","postgres","postgresql","mysql","sqlite","資料庫"],
+    "database":      ["db","postgres","postgresql","sql","資料庫"],
+    "資料庫":         ["postgres","postgresql","mysql","mongodb","sqlite","db","database"],
+    "postgresql":    ["postgres","db","database","sql","acid","連線池","connection"],
+    "postgres":      ["postgresql","db","database","sql","acid","連線池"],
+    "連線":           ["connection","pool","連線池","database","db"],
+    "資料庫連線":      ["connection","pool","postgresql","mysql","db"],
+    "關係型":         ["postgresql","mysql","sql","acid","relational","table"],
+    # 通用技術
+    "api":           ["endpoint","rest","http","request","response","接口"],
+    "cache":         ["redis","memcached","快取","緩存"],
+    "快取":           ["cache","redis","ttl","expire","緩存"],
+    "部署":           ["docker","deploy","kubernetes","k8s","container","ci"],
+    "效能":           ["performance","latency","throughput","slow","timeout","優化"],
+    "安全":           ["security","auth","xss","sql injection","ssl","tls","https"],
+    "測試":           ["test","unit","integration","e2e","mock","assert"],
+    "test":          ["unittest","pytest","mock","測試"],
+    "錯誤":           ["error","exception","bug","failure","crash","問題"],
+    "error":         ["exception","bug","failure","crash"],
+    "問題":           ["error","bug","issue","problem","failure","crash"],
 }
 
 
@@ -230,6 +256,9 @@ class BrainDB:
                  ) for r in conn.execute("SELECT id, title, content, tags FROM nodes").fetchall()],
                  conn.execute("INSERT OR REPLACE INTO brain_meta(key,value) VALUES('fts_bigram_v1','done')")
              )),
+            # v11: compound index for scope+confidence queries (federation.py WHERE clause was full-scan)
+            ("scope+confidence compound index",
+             "CREATE INDEX IF NOT EXISTS idx_nodes_scope_conf ON nodes(scope, confidence)"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -241,8 +270,18 @@ class BrainDB:
                     sql(self.conn)
                 else:
                     self.conn.execute(sql)
-            except Exception:
-                pass  # column/index already exists — safe to ignore
+            except Exception as _me:
+                # Most failures are benign (column/index already exists).
+                # Log at WARNING so brain doctor can surface genuine schema problems.
+                _msg = str(_me).lower()
+                if "already exists" in _msg or "duplicate column" in _msg:
+                    logger.debug("DEF-04: migration v%d skipped (already applied): %s", ver, desc)
+                else:
+                    logger.warning(
+                        "DEF-04: migration v%d FAILED (%s): %s — "
+                        "run `brain doctor` to inspect schema state.",
+                        ver, desc, _me
+                    )
             self.conn.execute(
                 "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('schema_version',?)",
                 (str(ver),)
@@ -566,6 +605,25 @@ class BrainDB:
             return results
         except Exception:
             return []
+
+    def prune_episodes(self, older_than_days: int = 365) -> int:
+        """清理超過指定天數的 L2 episode 記錄（brain optimize --prune-episodes）。
+
+        Episodes 為 git commit 自動提取的暫時性知識，長期累積可達 100MB+。
+        此方法刪除 older_than_days 天前的記錄，返回刪除筆數。
+        注意：手動 `brain add` 的 L3 節點不受影響（存在 nodes 表，不在 episodes 表）。
+        """
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        ).isoformat()
+        result = self.conn.execute(
+            "DELETE FROM episodes WHERE created_at < ?", (cutoff,)
+        )
+        self.conn.commit()
+        deleted = result.rowcount
+        if deleted:
+            logger.debug("prune_episodes: 刪除 %d 筆超過 %d 天的 episode", deleted, older_than_days)
+        return deleted
 
     def record_access(self, node_id: str) -> None:
         self.conn.execute(

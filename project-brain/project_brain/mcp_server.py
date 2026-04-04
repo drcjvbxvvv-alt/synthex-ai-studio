@@ -230,15 +230,18 @@ def create_server(workdir: str) -> Any:
             # Agent cannot opt out — if it queries anything, nudges come with it
             try:
                 from project_brain.nudge_engine import NudgeEngine
-                nudge_eng = NudgeEngine(b.graph)
+                nudge_eng = NudgeEngine(b.graph, brain_db=b.db)
                 nudges    = nudge_eng.check(task_clean, top_k=3)
                 if nudges:
                     nudge_block = "\n## 🧠 Brain Nudges（主動警告）\n"
                     for n in nudges:
-                        level = getattr(n, 'level', 'info')
-                        msg   = getattr(n, 'message', '') or getattr(n, 'content', '') or str(n)
-                        icon  = '⚠' if level == 'warning' else 'ℹ'
-                        nudge_block += f"  {icon} {msg}\n"
+                        _urgency = getattr(n, 'urgency', '')
+                        _msg     = getattr(n, 'content', '') or getattr(n, 'message', '') or str(n)
+                        _conf    = getattr(n, 'confidence', None)
+                        _icon    = '⚠' if _urgency == 'high' else 'ℹ'
+                        # 加信心標記：Agent 可依此判斷 nudge 可信度
+                        _conf_str = f" [conf={_conf:.2f}]" if _conf is not None else ""
+                        nudge_block += f"  {_icon}{_conf_str} {_msg}\n"
                     ctx = nudge_block + ctx if ctx else nudge_block
             except Exception:
                 pass  # nudge failure must never break context delivery
@@ -584,7 +587,7 @@ def create_server(workdir: str) -> Any:
         b = _resolve_brain(workdir)
         try:
             from project_brain.nudge_engine import NudgeEngine
-            ne = NudgeEngine(b.graph)
+            ne = NudgeEngine(b.graph, brain_db=b.db)
             return ne.generate_questions(t_clean, threshold=float(threshold))
         except Exception as e:
             logger.error("generate_questions error: %s", e)

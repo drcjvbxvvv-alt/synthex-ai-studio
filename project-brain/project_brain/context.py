@@ -18,8 +18,33 @@ import re
 import json
 from pathlib import Path
 from .graph import KnowledgeGraph
+from typing import TypedDict
 if TYPE_CHECKING:
     from .vector_memory import VectorMemory
+
+
+class NodeDict(TypedDict, total=False):
+    """知識節點的型別定義，供 _node_priority 等內部方法使用。
+    total=False 表示所有欄位為選填（與 SQLite Row → dict 的實際狀況一致）。
+    """
+    id:                     str
+    type:                   str
+    title:                  str
+    content:                str
+    confidence:             float
+    effective_confidence:   float
+    importance:             float
+    is_pinned:              int
+    access_count:           int
+    emotional_weight:       float
+    scope:                  str
+    created_at:             str
+    updated_at:             str
+    is_deprecated:          int
+    valid_until:            str
+    applicability_condition:str
+    invalidation_condition: str
+    tags:                   str
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +226,14 @@ class ContextEngineer:
 
             # v5.1 修正：先到先服務偏見 → importance + confidence 加權排序後填充
             # 原本按搜尋順序直接填，導致長文低品質知識擠佔高品質短知識的 Budget
-            import json as _json
+
+            # Decay 即時化：取得 BrainDB._effective_confidence 靜態方法的參考
+            # 讓 KnowledgeGraph 節點（無 effective_confidence 欄位）也能即時算 F1+F7
+            try:
+                from .brain_db import BrainDB as _BDB_ec
+                _eff_conf_fn = _BDB_ec._effective_confidence
+            except Exception:
+                _eff_conf_fn = None
 
             def _node_priority(node: dict) -> float:
                 """
@@ -216,9 +248,15 @@ class ContextEngineer:
                   - access_norm 0.25（實際被使用的知識應排更前）
                   - importance 0.15（人工設定，輔助參考）
                 """
-                pinned      = 2.5 if (node.get("is_pinned") or 0) else 0.0
-                # OPT-09 fix: prefer pre-computed decay-adjusted effective_confidence
-                confidence  = float(node.get("effective_confidence") or node.get("confidence") or 0.8)
+                pinned = 2.5 if (node.get("is_pinned") or 0) else 0.0
+                # Decay 即時化：BrainDB 節點已有 effective_confidence；
+                # KnowledgeGraph 節點無此欄位，即時用 F1+F7 計算
+                if node.get("effective_confidence") is not None:
+                    confidence = float(node["effective_confidence"])
+                elif _eff_conf_fn is not None:
+                    confidence = _eff_conf_fn(node)
+                else:
+                    confidence = float(node.get("confidence") or 0.8)
                 importance  = float(node.get("importance") or 0.5)
                 access_cnt  = int(node.get("access_count") or 0)
                 # 正規化：50 次以上視為飽和（避免極端值主導）
@@ -307,8 +345,8 @@ class ContextEngineer:
         try:
             sections = self._deduplicate_sections(sections)
             result   = header + "\n\n".join(sections) + footer
-        except Exception:
-            pass  # dedup failure — use original result
+        except Exception as _de:
+            logger.debug("context: dedup skipped (%s), using original result", _de)
         # Spaced Repetition: 批次記錄訪問（v9.0 修補 race condition）
         try:
             _node_ids = [
@@ -336,33 +374,28 @@ class ContextEngineer:
                 except Exception as _e:
                     # STB-02: SR 失敗需可觀察
                     logger.debug("Spaced Repetition 批次更新失敗：%s", _e)
-        except Exception:
-            pass
+        except Exception as _se:
+            logger.debug("context: SR block failed: %s", _se)
         # P1-B: prepend causal chain conclusions to result
         try:
-            _ids = []
-            for _seg in result.split('\n'):
-                # Extract node IDs referenced in the output
-                pass
-            # Use BrainDB edges if available
             _db = getattr(self, '_brain_db', None)
             if _db is not None:
                 _all_nodes = _db.all_nodes(limit=50)
-                # Find nodes whose titles appear in this result
+                # Find nodes whose titles appear in this result (title-match heuristic)
                 _ids = [n['id'] for n in _all_nodes
                         if n.get('title','') and n['title'] in result]
                 _chain = self._build_causal_chain(_ids[:5], db=_db)
                 if _chain:
                     result = _chain + result
-        except Exception:
-            pass
+        except Exception as _ce:
+            logger.debug("context: causal chain failed: %s", _ce)
         # DEEP-01: append reasoning chain when edges exist
         try:
             _rc = self.build_reasoning_chain(task)
             if _rc:
                 result = (result or "") + _rc
-        except Exception:
-            pass
+        except Exception as _re:
+            logger.debug("context: reasoning chain failed: %s", _re)
         result = result or ""
         logger.debug("context.build done: sections=%d chars=%d", len(sections), len(result))
         return result  # BUG-05 fix: guarantee str return, never None
