@@ -97,6 +97,15 @@
 
 - **HON-01 標記為 N/A**：`brain distill` 指令已於 v10.x 移除（COMMANDS.md 有記錄），README LoRA 說明已無對象。計劃中該項目標記為不適用並關閉
 
+### UNQ-03 基準測試資料集與召回率量測（2026-04-04）
+
+- **`tests/benchmarks/benchmark_recall.py`**：建立 50 節點測試知識庫（10 個 SE 領域 × 5 節點）+ 20 個有已知正確答案的查詢，量測 `get_context` 召回率：
+  - **召回率：45%（9/20 命中）**，embedder 為 FTS5 模式（`brain_db=None`，無向量搜尋路徑）
+  - 平均查詢延遲：6 ms / query（純 SQLite FTS5，無向量計算）
+  - 目標 ≥ 60%（sentence-transformers）：❌ 未達標；目標 ≥ 40%（LocalTFIDF）：✅ 達標
+  - **結論：補充參考工具**。FTS5 模式下可作為 context 補充來源；若需成為主要 context 來源，需安裝 `sentence-transformers` 並接入 `brain_db` 啟用混合向量搜尋，預期可提升至 60%+
+  - 主要失效模式：50 節點密集庫中 FTS5 關鍵字排名不穩定，11 個 miss 中多數返回 `arch-02`（分散式系統本地事務節點）作為錯誤命中
+
 ---
 
 ## v0.5.0（2026-04-04）— 品質基線版
