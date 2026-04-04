@@ -526,6 +526,82 @@ class SessionStore:
             meta       = meta,
         )
 
+    def list_all(self, limit: int = 100) -> list[SessionEntry]:
+        """列出所有活躍條目（不分 session）"""
+        return self.list(limit=limit)
+
+    def archive(
+        self,
+        session_id: str = "",
+        output_dir: "Path | None" = None,
+        older_than_days: int = 0,
+    ) -> "Path | None":
+        """FEAT-04: 將當前或指定 session 的條目匯出為 Markdown 檔案。
+
+        Args:
+            session_id:       要歸檔的 session（空字串 = 當前 session）
+            output_dir:       輸出目錄（預設：.brain/sessions/）
+            older_than_days:  清理超過 N 天的歸檔（0 = 不清理）
+
+        Returns:
+            輸出檔案路徑，若無條目則回傳 None
+        """
+        sid = session_id or self.session_id
+        output_dir = Path(output_dir) if output_dir else (self.brain_dir / "sessions")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Auto-cleanup old archives
+        if older_than_days > 0:
+            self._cleanup_archives(output_dir, older_than_days)
+
+        # Get entries for this session
+        try:
+            rows = self._conn_().execute(
+                "SELECT * FROM session_entries WHERE session_id=? ORDER BY created_at ASC",
+                (sid,)
+            ).fetchall()
+        except Exception:
+            rows = []
+
+        if not rows:
+            return None
+
+        ts       = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"{sid}_{ts}.md"
+        out_path = output_dir / filename
+
+        lines = [f"# Session Archive: {sid}", f"", f"Archived: {ts}", f"Entries: {len(rows)}", f""]
+        by_cat: dict[str, list] = {}
+        for row in rows:
+            r = dict(row)
+            cat = r.get("category", "notes")
+            by_cat.setdefault(cat, []).append(r)
+
+        for cat, entries in sorted(by_cat.items()):
+            lines.append(f"## {cat}")
+            for e in entries:
+                lines.append(f"- **{e.get('key','')}**: {e.get('value','')[:300]}")
+            lines.append("")
+
+        out_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("session_archived | path=%s entries=%d", out_path, len(rows))
+        return out_path
+
+    def _cleanup_archives(self, archive_dir: "Path", older_than_days: int) -> int:
+        """FEAT-04: 清理超過指定天數的歸檔檔案"""
+        from datetime import datetime, timezone, timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        deleted = 0
+        try:
+            for f in archive_dir.glob("*.md"):
+                mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+                if mtime < cutoff:
+                    f.unlink()
+                    deleted += 1
+        except Exception as e:
+            logger.debug("_cleanup_archives: %s", e)
+        return deleted
+
     def close(self) -> None:
         """關閉資料庫連線"""
         if hasattr(self._local, 'conn') and self._local.conn:

@@ -139,6 +139,13 @@ class NudgeEngine:
                 })
             except Exception:
                 pass
+        # OBS-01: structured log for observability
+        if result:
+            logger.info(
+                "nudge_triggered | task_len=%d count=%d urgency_high=%d",
+                len(task), len(result),
+                sum(1 for n in result if n.urgency == "high")
+            )
         return result
 
     def check_on_commit(self, commit_hash: str, files_changed: list[str]) -> list[Nudge]:

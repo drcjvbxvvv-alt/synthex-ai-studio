@@ -26,6 +26,7 @@ project_brain/api_server.py — Project Brain REST API Server
   GET  /v1/events
   POST /webhook/slack
   POST /webhook/github
+  GET  /v1/metrics
 """
 from __future__ import annotations
 
@@ -224,6 +225,9 @@ class _Handler(BaseHTTPRequestHandler):
             # Events
             if path == "/v1/events" and method == "GET":
                 return self._events(wd, qs)
+            # Metrics
+            if path == "/v1/metrics" and method == "GET":
+                return self._metrics(wd)
             # Webhooks
             if path == "/webhook/slack" and method == "POST":
                 return self._webhook_slack(wd, body)
@@ -274,6 +278,80 @@ class _Handler(BaseHTTPRequestHandler):
                     "by_type": s.get("by_type", {})},
             "l1a": _store(wd).stats(),
         })
+
+    # ── /v1/metrics ────────────────────────────────────────
+    def _metrics(self, wd: str):
+        """OBS-01: Prometheus-compatible metrics endpoint"""
+        try:
+            from project_brain.brain_db import BrainDB
+            g  = _graph(wd)
+            db = BrainDB(Path(wd) / ".brain")
+
+            stats   = g.stats()
+            n_total = stats.get("nodes", 0)
+
+            # Count deprecated nodes via query
+            n_dep = 0
+            try:
+                n_dep = g._conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE is_deprecated=1"
+                ).fetchone()[0]
+            except Exception:
+                pass
+
+            # Count by type
+            by_type = stats.get("by_type", {})
+
+            # Count decay events from brain_db events table
+            try:
+                decay_count = db.conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='decay_applied'"
+                ).fetchone()[0]
+            except Exception:
+                decay_count = 0
+
+            # Count nudge triggers
+            try:
+                nudge_count = db.conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type='nudge_triggered'"
+                ).fetchone()[0]
+            except Exception:
+                nudge_count = 0
+
+            # Count federation imports
+            try:
+                fed_count = db.conn.execute(
+                    "SELECT COUNT(*) FROM federation_imports"
+                ).fetchone()[0]
+            except Exception:
+                fed_count = 0
+
+            lines = [
+                "# HELP brain_nodes_total Total knowledge nodes in L3",
+                "# TYPE brain_nodes_total gauge",
+                f"brain_nodes_total {n_total}",
+                "# HELP brain_deprecated_nodes_total Deprecated knowledge nodes",
+                "# TYPE brain_deprecated_nodes_total gauge",
+                f"brain_deprecated_nodes_total {n_dep}",
+                "# HELP brain_decay_events_total Total decay events applied",
+                "# TYPE brain_decay_events_total counter",
+                f"brain_decay_events_total {decay_count}",
+                "# HELP brain_nudge_events_total Total nudge trigger events",
+                "# TYPE brain_nudge_events_total counter",
+                f"brain_nudge_events_total {nudge_count}",
+                "# HELP brain_federation_imports_total Total federation import events",
+                "# TYPE brain_federation_imports_total counter",
+                f"brain_federation_imports_total {fed_count}",
+            ]
+            # Per-type breakdown
+            for node_type, count in by_type.items():
+                safe_type = node_type.lower().replace(" ", "_")
+                lines.append(f'brain_nodes_by_type{{type="{safe_type}"}} {count}')
+
+            self._text("\n".join(lines) + "\n")
+        except Exception as exc:
+            logger.warning("metrics error: %s", exc)
+            self._json({"error": "metrics unavailable"}, 500)
 
     # ── /v1/knowledge ──────────────────────────────────────
     def _knowledge(self, wd: str):

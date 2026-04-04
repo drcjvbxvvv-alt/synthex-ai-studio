@@ -393,6 +393,11 @@ class ContextEngineer:
             logger.debug("context: reasoning chain failed: %s", _re)
         result = result or ""
         logger.debug("context.build done: sections=%d chars=%d", len(sections), len(result))
+        # OBS-01: structured log for observability
+        logger.info(
+            "context_built | task_len=%d nodes=%d tokens=%d",
+            len(task), len(_shown_node_ids), len(result) // 4
+        )
         return result  # BUG-05 fix: guarantee str return, never None
 
     def build_reasoning_chain(self, task: str) -> str:

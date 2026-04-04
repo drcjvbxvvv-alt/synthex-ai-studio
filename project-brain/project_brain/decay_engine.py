@@ -368,7 +368,8 @@ class DecayEngine:
 
             offset += batch_size
 
-        logger.info("DecayEngine.run: 處理 %d 個節點，%d 個有變化", processed, len(reports))
+        logger.info("decay_run_complete | processed=%d changed=%d deprecated=%d",
+                    processed, len(reports), sum(1 for r in reports if r.deprecated))
         self._decay_log.append({
             "run_at":    datetime.now(timezone.utc).isoformat(),
             "processed": processed,
@@ -568,6 +569,10 @@ class DecayEngine:
                     (json.dumps(meta, ensure_ascii=False), round(new_conf, 4), node_id)
                 )
             self.graph._conn.commit()
+            logger.debug(
+                "decay_applied | node_id=%s old_conf=%.4f new_conf=%.4f deprecated=%s",
+                node_id, old_conf, new_conf, deprecated
+            )
         except Exception as e:
             logger.error("_apply_decay 寫入失敗 (%s): %s", node_id, e)
 

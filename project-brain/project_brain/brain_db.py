@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 17          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 18          # DEF-04: bump on every schema change
 
 # REF-02: single source of truth in synonyms.py
 from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -234,6 +234,17 @@ class BrainDB:
             # v17: DEEP-05 — adoption_count column for F6 factor
             ("adoption_count column on nodes",
              "ALTER TABLE nodes ADD COLUMN adoption_count INTEGER NOT NULL DEFAULT 0"),
+            # v18: FED-01 — federation import audit log
+            ("federation_imports table",
+             """CREATE TABLE IF NOT EXISTS federation_imports (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 source      TEXT NOT NULL DEFAULT '',
+                 node_id     TEXT NOT NULL DEFAULT '',
+                 node_title  TEXT NOT NULL DEFAULT '',
+                 status      TEXT NOT NULL DEFAULT 'pending',
+                 imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+                 notes       TEXT NOT NULL DEFAULT ''
+             )"""),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -885,6 +896,39 @@ class BrainDB:
                 "SELECT * FROM nodes ORDER BY confidence DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── FED-01: Federation audit log ──────────────────────────────
+
+    def record_federation_import(self, source: str, node_id: str, node_title: str, status: str = 'pending') -> int:
+        """FED-01: 記錄一次聯邦匯入事件"""
+        try:
+            cur = self.conn.execute(
+                "INSERT INTO federation_imports(source, node_id, node_title, status) VALUES(?,?,?,?)",
+                (source, node_id, node_title, status)
+            )
+            self.conn.commit()
+            return cur.lastrowid or 0
+        except Exception as e:
+            logger.warning("record_federation_import failed: %s", e)
+            return 0
+
+    def get_federation_imports(self, limit: int = 50, source: str = '') -> list:
+        """FED-01: 列出聯邦匯入記錄"""
+        try:
+            if source:
+                rows = self.conn.execute(
+                    "SELECT * FROM federation_imports WHERE source=? ORDER BY imported_at DESC LIMIT ?",
+                    (source, limit)
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM federation_imports ORDER BY imported_at DESC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning("get_federation_imports failed: %s", e)
+            return []
 
     def add_edge(self, source_id: str, relation: str, target_id: str, note: str = "") -> int:
         cur = self.conn.execute(

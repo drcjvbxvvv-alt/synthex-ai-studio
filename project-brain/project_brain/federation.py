@@ -239,10 +239,11 @@ class FederationImporter:
         stats    = importer.import_bundle(Path("bundle.json"), dry_run=False)
     """
 
-    def __init__(self, krb, brain_dir: Path) -> None:
+    def __init__(self, krb, brain_dir: Path, brain_db=None) -> None:
         self.krb       = krb
         self.brain_dir = Path(brain_dir)
         self._sub_mgr  = SubscriptionManager(brain_dir)
+        self._brain_db = brain_db
 
     def import_bundle(
         self,
@@ -297,7 +298,7 @@ class FederationImporter:
                     continue
 
             # 去重複
-            if self._is_duplicate(title):
+            if self._is_duplicate(title, content):
                 stats["skipped_dup"] += 1
                 continue
 
@@ -312,6 +313,14 @@ class FederationImporter:
                         source   = f"federation:{bundle.source_project}",
                         submitter = "federation",
                     )
+                    # FED-01: record federation import audit
+                    if self._brain_db:
+                        self._brain_db.record_federation_import(
+                            source=f"federation:{bundle.source_project}",
+                            node_id=node.get("id", ""),
+                            node_title=title[:100],
+                            status='staged'
+                        )
                 except Exception as exc:
                     logger.error("import_bundle: submit 失敗 (%s): %s", title[:40], exc)
                     continue
@@ -325,11 +334,12 @@ class FederationImporter:
         )
         return stats
 
-    def _is_duplicate(self, title: str) -> bool:
+    def _is_duplicate(self, title: str, content: str = "") -> bool:
         """
-        簡單重複檢查：
+        重複檢查：
           1. 精確比對 nodes.title
           2. Jaccard 相似度 > 0.8（title token 集合）
+          3. FED-02: TF-IDF cosine similarity >= 0.82（title+content 向量）
         """
         if not title:
             return False
@@ -361,6 +371,28 @@ class FederationImporter:
                     continue
                 jaccard = len(title_tokens & existing_tokens) / len(union)
                 if jaccard > 0.8:
+                    return True
+        except Exception:
+            pass
+
+        # FED-02: semantic similarity check via TF-IDF cosine
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity as _cos_sim
+            query_text = (title + " " + content).strip()
+            rows = self.krb.graph._conn.execute(
+                "SELECT title, content FROM nodes LIMIT 300"
+            ).fetchall()
+            if rows:
+                corpus = [(row[0] or "") + " " + (row[1] or "") for row in rows]
+                all_texts = [query_text] + corpus
+                vec = TfidfVectorizer(
+                    analyzer="char_wb", ngram_range=(2, 4),
+                    max_features=3000, sublinear_tf=True,
+                )
+                matrix = vec.fit_transform(all_texts)
+                sims = _cos_sim(matrix[0:1], matrix[1:]).flatten()
+                if sims.max() >= 0.82:
                     return True
         except Exception:
             pass
@@ -775,3 +807,23 @@ def cmd_fed_sync(brain_dir: Path, krb, args) -> None:
             )
         else:
             print(f"    [{name}] {status}")
+
+
+def cmd_fed_import_list(bd: Path, args) -> None:
+    """FED-01: brain fed imports — 列出聯邦匯入記錄"""
+    from project_brain.brain_db import BrainDB
+    db    = BrainDB(bd)
+    limit = int(getattr(args, 'limit', 20) or 20)
+    rows  = db.get_federation_imports(limit=limit)
+    if not rows:
+        print("  (無聯邦匯入記錄)")
+        return
+    print(f"\n  \033[1m聯邦匯入記錄（最近 {len(rows)} 筆）\033[0m")
+    print(f"  \033[90m{'─'*60}\033[0m")
+    for r in rows:
+        ts     = (r.get('imported_at') or '')[:16]
+        src    = (r.get('source') or '')[:25]
+        title  = (r.get('node_title') or '')[:35]
+        status = r.get('status', '?')
+        print(f"  \033[90m{ts}\033[0m  \033[96m{src}\033[0m  {title}  [{status}]")
+    print()

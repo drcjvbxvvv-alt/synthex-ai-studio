@@ -1074,9 +1074,13 @@ def cmd_fed(args):
         krb   = KnowledgeReviewBoard(db, graph)
         cmd_fed_sync(bd, krb, args)
 
+    elif fed_sub == 'imports':
+        from project_brain.federation import cmd_fed_import_list
+        cmd_fed_import_list(bd, args)
+
     else:
         _err(f"未知子命令：{fed_sub}")
-        _info("用法：brain fed export | import | sync | subscribe | unsubscribe | list")
+        _info("用法：brain fed export | import | sync | imports | subscribe | unsubscribe | list")
 
 
 def cmd_counterfactual(args):
@@ -1136,6 +1140,39 @@ def cmd_counterfactual(args):
         conf_c = G if conf >= 0.7 else (Y if conf >= 0.4 else RE)
         print(f"  {C}[{kind}]{R}  \"{n['title'][:60]}\"  {conf_c}conf={conf:.2f}{R}")
     print()
+
+
+def cmd_session(args):
+    """FEAT-04: brain session archive / list"""
+    sub = getattr(args, 'session_sub', 'list') or 'list'
+    wd  = _workdir(args)
+    bd  = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化"); return
+
+    from project_brain.session_store import SessionStore
+    store = SessionStore(bd)
+
+    if sub == 'archive':
+        out = store.archive(
+            session_id=getattr(args, 'session', '') or '',
+            older_than_days=int(getattr(args, 'older_than', 0) or 0),
+        )
+        if out:
+            _ok(f"Session 已歸檔：{out}")
+        else:
+            _info("當前 session 無條目可歸檔")
+    elif sub == 'list':
+        entries = store.list_all()
+        if not entries:
+            _info("L1a 工作記憶為空"); return
+        print(f"\n{C}{B}🧠  L1a 工作記憶（{len(entries)} 筆）{R}")
+        for e in entries[:20]:
+            cat = e.category
+            print(f"  {GR}{cat:10}{R}  {e.key[:30]:30}  {e.value[:60]}")
+        print()
+    else:
+        _err(f"未知子命令：{sub}（可用：list, archive）")
 
 
 def cmd_serve(args):
@@ -2840,7 +2877,7 @@ def main():
     # VISION-03: Federation
     p = mkp('fed', 'VISION-03：跨專案聯邦知識共享（export / import / sync / subscribe）')
     p.add_argument('fed_sub', nargs='?', default='list',
-                   choices=['export','import','sync','subscribe','unsubscribe','list'],
+                   choices=['export','import','sync','imports','subscribe','unsubscribe','list'],
                    help='子命令（預設：list）')
     p.add_argument('--output',    '-o', default=None, help='匯出路徑（export 時使用）')
     p.add_argument('--scope',     default='global',   help='匯出 scope（預設 global）')
@@ -2861,6 +2898,13 @@ def main():
 
     p = mkp('webui', 'D3.js 視覺化（驗證知識庫）')
     p.add_argument('--port', type=int, default=7890)
+
+    p = mkp('session', 'FEAT-04：管理 L1a 工作記憶（list / archive）')
+    p.add_argument('session_sub', nargs='?', default='list',
+                   choices=['list', 'archive'], help='子命令（預設：list）')
+    p.add_argument('--session', default='', help='archive：指定 session ID（預設：當前）')
+    p.add_argument('--older-than', dest='older_than', type=int, default=0,
+                   help='archive：同時清理超過 N 天的歸檔')
 
     p = mkp('serve', '啟動 OpenAI 相容 API（讓 Ollama/LM Studio/Cursor 查詢知識）')
     p.add_argument('--port',           type=int,   default=7891,  help='監聽 port（預設：7891）')
@@ -2943,6 +2987,7 @@ def main():
         'review':        cmd_review,
         'scan':          cmd_scan,
         'serve':         cmd_serve,
+        'session':       cmd_session,
         'index':         cmd_index,
         'webui':         cmd_webui,
         'health-report': cmd_health_report,
