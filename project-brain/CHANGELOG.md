@@ -110,11 +110,13 @@
 ### UNQ-03 基準測試資料集與召回率量測（2026-04-04）
 
 - **`tests/benchmarks/benchmark_recall.py`**：建立 50 節點測試知識庫（10 個 SE 領域 × 5 節點）+ 20 個有已知正確答案的查詢，量測 `get_context` 召回率：
-  - **召回率：45%（9/20 命中）**，embedder 為 FTS5 模式（`brain_db=None`，無向量搜尋路徑）
-  - 平均查詢延遲：6 ms / query（純 SQLite FTS5，無向量計算）
-  - 目標 ≥ 60%（sentence-transformers）：❌ 未達標；目標 ≥ 40%（LocalTFIDF）：✅ 達標
-  - **結論：補充參考工具**。FTS5 模式下可作為 context 補充來源；若需成為主要 context 來源，需安裝 `sentence-transformers` 並接入 `brain_db` 啟用混合向量搜尋，預期可提升至 60%+
-  - 主要失效模式：50 節點密集庫中 FTS5 關鍵字排名不穩定，11 個 miss 中多數返回 `arch-02`（分散式系統本地事務節點）作為錯誤命中
+  - **v1（FTS5 模式）**：45%（9/20）。節點只加入 `KnowledgeGraph`，`BrainDB` 空，向量路徑無法啟用
+  - **v2（hybrid search 模式）**：**95%（19/20）**，embedder=`MultilingualEmbedder`，82 ms/query
+    - 修復 1：`setup_test_brain()` 同時加入 `BrainDB` + 建立向量索引（`brain_db.add_vector()`）
+    - 修復 2：`embedder.py` 加入 `_embedder_cache` module-level singleton，消除每次 `build()` 重複載入模型的效能問題
+  - 目標 ≥ 60%（sentence-transformers）：✅ 達標；目標 ≥ 40%（LocalTFIDF）：✅ 達標
+  - **結論：主要 context 來源**。hybrid search 模式下召回率 95%，可信賴作為 Agent 的主要知識注入
+  - 唯一 miss：`api-01`（API 版本號），查詢語意與節點標題向量距離差距較遠，屬邊界案例
 
 ---
 

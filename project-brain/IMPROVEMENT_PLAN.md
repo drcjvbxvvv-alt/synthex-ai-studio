@@ -121,7 +121,7 @@
 | 知識庫自然成長率           | 7 天內 ≥ 5 節點（自動寫入）    | `SELECT COUNT(*) FROM nodes WHERE tags LIKE '%auto:complete_task%' AND created_at >= datetime('now','-7 days')` | ❌ 0（未開始） |
 | NudgeEngine 命中率         | ≥ 30%（> 20 節點後）           | events 表 `nudge_triggered` 事件數 ÷ `get_context` 總呼叫數                                            | ❌ 0（未量測，FLY-04） |
 | REV-01 對照實驗完成        | 有可量化輸出（Gate v0.6.0）    | Agent 重複犯錯次數（無 Brain）vs（有 Brain）的差值                                                     | ❌ 尚未開始 |
-| `get_context` 召回率       | ≥ 60%（sentence-transformers）| UNQ-03 基準測試資料集，50 節點 + 20 查詢 + 已知正確答案                                                | ⚠️ 45%（FTS5 模式，2026-04-04）詳見 `tests/benchmarks/benchmark_recall.py` |
+| `get_context` 召回率       | ≥ 60%（sentence-transformers）| UNQ-03 基準測試資料集，50 節點 + 20 查詢 + 已知正確答案                                                | ✅ 95%（MultilingualEmbedder + hybrid search，2026-04-04）詳見 `tests/benchmarks/benchmark_recall.py` |
 | Time to First Value        | ≤ 48 小時（v1.0.0）            | `brain setup` → 第一次 `get_context` 返回有效 Pitfall 的時間                                          | ❌ bundle 未建立（FLY-06） |
 
 ### 五、壟斷策略（Moat）

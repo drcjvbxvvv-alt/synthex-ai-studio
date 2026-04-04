@@ -25,8 +25,10 @@ from typing import NamedTuple
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from project_brain.graph   import KnowledgeGraph
-from project_brain.context import ContextEngineer
+from project_brain.graph    import KnowledgeGraph
+from project_brain.context  import ContextEngineer
+from project_brain.brain_db import BrainDB
+from project_brain.embedder import get_embedder
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -310,23 +312,42 @@ class QueryResult(NamedTuple):
 
 
 def setup_test_brain() -> tuple[KnowledgeGraph, ContextEngineer, Path]:
-    """建立含 50 個節點的測試知識庫。"""
+    """建立含 50 個節點的測試知識庫（KnowledgeGraph + BrainDB + 向量索引）。"""
     tmp = Path(tempfile.mkdtemp())
     brain_dir = tmp / ".brain"
     brain_dir.mkdir()
 
-    graph = KnowledgeGraph(tmp)
+    graph    = KnowledgeGraph(tmp)
+    brain_db = BrainDB(brain_dir)
+    embedder = get_embedder()
 
     for node_id, node_type, title, content, tags, conf in NODES:
+        # FTS5 路徑
         graph.add_node(
             node_id, node_type, title,
             content=content,
             tags=tags,
             meta={"confidence": conf},
         )
+        # BrainDB hybrid search 路徑
+        brain_db.add_node(
+            node_id, node_type, title,
+            content=content,
+            tags=tags,
+            confidence=conf,
+        )
+        # 向量索引（有 embedder 才建）
+        if embedder:
+            try:
+                vec = embedder.embed(title + " " + content)
+                if vec:
+                    brain_db.add_vector(node_id, vec)
+            except Exception:
+                pass
+
     graph._conn.commit()
 
-    engine = ContextEngineer(graph, brain_dir=brain_dir)
+    engine = ContextEngineer(graph, brain_dir=brain_dir, brain_db=brain_db)
     return graph, engine, tmp
 
 
@@ -357,26 +378,11 @@ def run_benchmark() -> list[QueryResult]:
 
 
 def detect_embedder() -> str:
-    """偵測當前使用的 embedder。"""
-    try:
-        import sentence_transformers  # noqa: F401
-        return "sentence-transformers (MultilingualEmbedder)"
-    except ImportError:
-        pass
-    try:
-        import urllib.request
-        urllib.request.urlopen("http://localhost:11434/api/tags", timeout=1)
-        return "ollama (OllamaEmbedder)"
-    except Exception:
-        pass
-    try:
-        import openai  # noqa: F401
-        import os
-        if os.environ.get("OPENAI_API_KEY"):
-            return "openai (OpenAIEmbedder)"
-    except ImportError:
-        pass
-    return "LocalTFIDF (zero-dep fallback)"
+    """偵測 ContextEngineer 實際使用的 embedder。"""
+    emb = get_embedder()
+    if emb is None:
+        return "None（純 FTS5 模式）"
+    return type(emb).__name__
 
 
 def print_report(results: list[QueryResult]) -> None:

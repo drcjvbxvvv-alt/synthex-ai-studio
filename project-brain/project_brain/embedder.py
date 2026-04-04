@@ -302,6 +302,9 @@ class LocalTFIDFEmbedder:
         return True  # always available
 
 
+_embedder_cache: dict = {}  # provider → embedder instance (module-level singleton)
+
+
 def get_embedder():
     """
     Return the best available embedder.
@@ -322,6 +325,9 @@ def get_embedder():
     """
     provider = os.environ.get("BRAIN_EMBED_PROVIDER", "").lower()
 
+    if provider in _embedder_cache:
+        return _embedder_cache[provider]
+
     if provider == "none":
         logger.debug("Embedder disabled via BRAIN_EMBED_PROVIDER=none")
         return None
@@ -335,6 +341,7 @@ def get_embedder():
                 "Embedder: MultilingualEmbedder %s (%d dim)", e.model_name, len(vec)
             )
             e.dim = len(vec)
+            _embedder_cache[provider] = e
             return e
         if provider == "multilingual":
             logger.warning(
@@ -349,19 +356,23 @@ def get_embedder():
         if vec and len(vec) > 0:
             logger.info("Embedder: Ollama %s (%d dim)", e.model, len(vec))
             e.dim = len(vec)
+            _embedder_cache[provider] = e
             return e
 
     # ── 3. OpenAI-compatible ─────────────────────────────────────
     if provider == "openai" or (not provider and OpenAIEmbedder.is_available()):
         e = OpenAIEmbedder()
         logger.info("Embedder: OpenAI %s (%d dim)", e.MODEL, e.dim)
+        _embedder_cache[provider] = e
         return e
 
     # ── 4. LocalTFIDF (zero-dep fallback) ────────────────────────
     if provider in ("local", "tfidf", ""):
         e = LocalTFIDFEmbedder()
         logger.info("Embedder: LocalTFIDF (%d dim, zero-dep fallback)", e.DIM)
+        _embedder_cache[provider] = e
         return e
 
     logger.debug("No embedder available — using FTS5 only")
+    _embedder_cache[provider] = None
     return None
