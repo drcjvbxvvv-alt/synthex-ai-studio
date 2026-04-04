@@ -847,6 +847,16 @@ def create_server(workdir: str) -> Any:
             db      = b.db
             delta   = 0.03 if was_useful else -0.05
             new_conf = db.record_feedback(node_id_clean, helpful=bool(was_useful))
+            # BUG-C fix: emit event so analytics_engine.useful_knowledge_rate() works
+            try:
+                db.emit("knowledge_outcome", {
+                    "node_id":    node_id_clean,
+                    "was_useful": was_useful,
+                    "notes":      notes_clean,
+                    "confidence": round(new_conf, 3),
+                })
+            except Exception:
+                pass
             # DEEP-05: update adoption_count in knowledge_graph so F6 decay factor can use it
             if was_useful:
                 try:

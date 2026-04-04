@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 19          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 20          # DEF-04: bump on every schema change
 
 # REF-02: single source of truth in synonyms.py
 from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -257,6 +257,9 @@ class BrainDB:
             # v19: FEAT-03 — valid_from on nodes for temporal query
             ("valid_from column on nodes",
              "ALTER TABLE nodes ADD COLUMN valid_from TEXT DEFAULT NULL"),
+            # v20: BUG-B — result_count on traces so query_hit_rate() works correctly
+            ("result_count column on traces",
+             "ALTER TABLE traces ADD COLUMN result_count INTEGER NOT NULL DEFAULT 0"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -536,6 +539,8 @@ class BrainDB:
         return dict(r) if r else None
 
     def search_nodes(self, query: str, node_type=None, limit: int = 8, scope: str = None) -> list:
+        import time as _time
+        _t0 = _time.monotonic()
         # SEC-01: whitelist scope to prevent injection via dynamic SQL clause
         import re as _re
         if scope is not None and not _re.match(r'^[a-z0-9_-]+$', scope):
@@ -587,6 +592,16 @@ class BrainDB:
                 key=lambda x: (x.get("is_pinned", 0), x["effective_confidence"]),
                 reverse=True,
             )
+            # BUG-B fix: record trace with result_count so query_hit_rate() works
+            try:
+                _ms = (_time.monotonic() - _t0) * 1000
+                self.conn.execute(
+                    "INSERT INTO traces(query, result_count, latency_ms) VALUES(?,?,?)",
+                    (query[:500], len(results), round(_ms, 2)),
+                )
+                self.conn.commit()
+            except Exception:
+                pass
             return results
         except Exception:
             return []
