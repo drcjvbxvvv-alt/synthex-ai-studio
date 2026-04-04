@@ -7,10 +7,17 @@
 - Keep solutions simple and direct.
 - User instructions always override this file.
 
+## Task Start Protocol
+
+Before beginning any task, call `get_context` with the task description.
+If Brain returns Pitfall entries, read them before writing code.
+If Brain returns Rule entries, treat them as mandatory constraints.
+
 ## Knowledge Summary Protocol
 
 After completing any non-trivial task in this project, call the
 `complete_task` MCP tool (project-brain MCP server) with:
+
 - `task_description`: one-sentence summary of what was done
 - `decisions`: architectural choices made (may be empty list)
 - `lessons`: non-obvious things learned that help future work
