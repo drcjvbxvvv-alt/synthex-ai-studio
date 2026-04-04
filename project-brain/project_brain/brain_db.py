@@ -5,7 +5,8 @@ Single brain.db replaces 6 scattered SQLite files.
 L2 temporal memory replaces FalkorDB with pure SQLite.
 """
 from __future__ import annotations
-import contextlib, hashlib, json, logging, math, sqlite3, threading
+import logging
+import contextlib, hashlib, json, math, sqlite3, threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,10 @@ SCHEMA_VERSION = 18          # DEF-04: bump on every schema change
 # REF-02: single source of truth in synonyms.py
 from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
 from . import constants as _constants               # REF-04: module ref so monkeypatch works
+
+# REF-01: extracted sub-modules
+from project_brain.vector_store    import VectorStore
+from project_brain.feedback_tracker import FeedbackTracker
 
 
 class BrainDB:
@@ -134,6 +139,10 @@ class BrainDB:
         self.conn.commit()
         # DEF-04: run versioned migrations (idempotent, replaces scattered ALTER TABLE blocks)
         self._run_migrations()
+
+        # REF-01: instantiate extracted sub-modules
+        self._vector_store     = VectorStore(self.conn)
+        self._feedback_tracker = FeedbackTracker(self.conn)
 
         # BUG-A02 fix: FTS5 triggers removed — all write paths use manual sync.
         # Migration v12 drops existing triggers on upgrade.
@@ -591,55 +600,16 @@ class BrainDB:
         return deleted
 
     def record_access(self, node_id: str) -> None:
-        self.conn.execute(
-            "UPDATE nodes SET access_count=access_count+1,"
-            " last_accessed=datetime('now') WHERE id=?", (node_id,)
-        )
-        self.conn.commit()
+        """REF-01: delegated to FeedbackTracker"""
+        self._feedback_tracker.record_access(node_id)
 
     def record_feedback(self, node_id: str, helpful: bool) -> float:
-        """
-        Confidence feedback loop — called after an Agent actually uses a node.
-
-        helpful=True  → confidence += BOOST   (capped at 1.0)
-        helpful=False → confidence -= PENALTY  (floored at DECAY_FLOOR=0.05)
-
-        Returns the updated confidence value.
-        """
-        BOOST   = 0.03   # +3% per positive signal
-        PENALTY = 0.05   # -5% per negative signal
-        FLOOR   = 0.05
-
-        row = self.conn.execute(
-            "SELECT confidence FROM nodes WHERE id=?", (node_id,)
-        ).fetchone()
-        if not row:
-            return 0.0
-
-        current = float(row[0])
-        if helpful:
-            new_conf = min(1.0, current + BOOST)
-        else:
-            new_conf = max(FLOOR, current - PENALTY)
-
-        if helpful:
-            # DEEP-05: increment adoption_count for F6 factor
-            self.conn.execute(
-                "UPDATE nodes SET confidence=?, updated_at=datetime('now'),"
-                " adoption_count=COALESCE(adoption_count,0)+1 WHERE id=?",
-                (new_conf, node_id)
-            )
-        else:
-            self.conn.execute(
-                "UPDATE nodes SET confidence=?, updated_at=datetime('now') WHERE id=?",
-                (new_conf, node_id)
-            )
-        self.conn.commit()
-        return new_conf
+        """REF-01: delegated to FeedbackTracker"""
+        return self._feedback_tracker.record_feedback(node_id, helpful)
 
     def record_outcome(self, node_id: str, was_useful: bool) -> float:
-        """DEEP-05: alias for record_feedback — named for MCP/REST clarity."""
-        return self.record_feedback(node_id, helpful=was_useful)
+        """REF-01: delegated to FeedbackTracker"""
+        return self._feedback_tracker.record_outcome(node_id, was_useful)
 
     def pin_node(self, node_id: str, pinned: bool = True) -> bool:
         r = self.conn.execute(
@@ -951,114 +921,18 @@ class BrainDB:
     # ── Phase 1: Vector Storage ───────────────────────────────────
 
     def add_vector(self, node_id: str, vector: list, model: str = 'nomic-embed-text') -> bool:
-        """Store embedding vector for a node (Phase 1)."""
-        try:
-            import struct
-            blob = struct.pack(f'{len(vector)}f', *vector)
-            self.conn.execute(
-                "INSERT OR REPLACE INTO node_vectors(node_id,vector,dim,model) VALUES(?,?,?,?)",
-                (node_id, blob, len(vector), model)
-            )
-            self.conn.commit()
-            return True
-        except Exception as e:
-            import logging; logging.getLogger(__name__).debug('add_vector failed: %s', e)
-            return False
+        """REF-01: delegated to VectorStore"""
+        return self._vector_store.add_vector(node_id, vector, model)
 
     @staticmethod
     def _cosine_similarity(a: list, b: list) -> float:
-        """Pure-Python cosine similarity between two equal-length float lists."""
-        import math
-        dot  = sum(x * y for x, y in zip(a, b))
-        mag_a = math.sqrt(sum(x * x for x in a))
-        mag_b = math.sqrt(sum(x * x for x in b))
-        if mag_a == 0 or mag_b == 0:
-            return 0.0
-        return dot / (mag_a * mag_b)
+        """REF-01: delegated to VectorStore (static)"""
+        return VectorStore._cosine_similarity(a, b)
 
     def search_nodes_by_vector(self, query_vector: list, threshold: float = 0.30,
                                limit: int = 8, scope: str = None) -> list:
-        """
-        Phase 1: Semantic search via cosine similarity.
-
-        Tries sqlite-vec C extension first (faster), then falls back to
-        pure-Python cosine similarity (always works, zero extra deps).
-
-        threshold: cosine *similarity* threshold (higher = more similar)
-                   0.0 = orthogonal, 1.0 = identical
-                   good practical values: 0.3 (loose) to 0.7 (tight)
-        """
-        if not query_vector:
-            return []
-
-        # ── Path A: sqlite-vec C extension ────────────────────────
-        try:
-            import struct, sqlite_vec as sv
-            conn2 = self.conn
-            conn2.enable_load_extension(True)
-            sv.load(conn2)
-            conn2.enable_load_extension(False)
-
-            dim  = len(query_vector)
-            blob = struct.pack(f'{dim}f', *query_vector)
-
-            # sqlite-vec uses cosine *distance* (0=identical, 2=opposite)
-            # convert our similarity threshold: dist_max = 1 - threshold
-            dist_threshold = 1.0 - threshold
-
-            rows = conn2.execute("""
-                SELECT n.*, vec_distance_cosine(nv.vector, ?) as dist
-                FROM node_vectors nv
-                JOIN nodes n ON nv.node_id = n.id
-                WHERE nv.dim = ?
-                ORDER BY dist ASC
-                LIMIT ?
-            """, (blob, dim, limit * 2)).fetchall()
-
-            results = []
-            for r in rows:
-                if r['dist'] > dist_threshold:
-                    continue
-                if scope and scope != 'global':
-                    if r['scope'] not in (scope, 'global'):
-                        continue
-                results.append(dict(r))
-                if len(results) >= limit:
-                    break
-            return results
-
-        except Exception:
-            pass  # fall through to pure-Python path
-
-        # ── Path B: pure-Python cosine similarity ─────────────────
-        try:
-            import struct
-            dim  = len(query_vector)
-
-            rows = self.conn.execute("""
-                SELECT n.*, nv.vector, nv.dim
-                FROM node_vectors nv
-                JOIN nodes n ON nv.node_id = n.id
-                WHERE nv.dim = ?
-            """, (dim,)).fetchall()
-
-            scored = []
-            for r in rows:
-                stored = list(struct.unpack(f'{dim}f', r['vector']))
-                sim    = self._cosine_similarity(query_vector, stored)
-                if sim < threshold:
-                    continue
-                if scope and scope != 'global':
-                    if r['scope'] not in (scope, 'global'):
-                        continue
-                scored.append((sim, dict(r)))
-
-            scored.sort(key=lambda x: x[0], reverse=True)
-            return [n for _, n in scored[:limit]]
-
-        except Exception as e:
-            import logging; logging.getLogger(__name__).debug('vector search failed: %s', e)
-            return []
+        """REF-01: delegated to VectorStore"""
+        return self._vector_store.search_by_vector(query_vector, threshold, limit, scope)
 
     def hybrid_search(self, query: str, query_vector: list = None,
                       scope: str = None, limit: int = 8) -> list:
@@ -1104,14 +978,8 @@ class BrainDB:
         return [n for n, _ in merged[:limit]]
 
     def get_nodes_without_vectors(self, limit: int = 100) -> list:
-        """Return nodes that don't have embeddings yet (for batch indexing)."""
-        rows = self.conn.execute("""
-            SELECT n.id, n.title, n.content FROM nodes n
-            LEFT JOIN node_vectors nv ON n.id = nv.node_id
-            WHERE nv.node_id IS NULL
-            LIMIT ?
-        """, (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        """REF-01: delegated to VectorStore"""
+        return self._vector_store.get_nodes_without_vectors(limit)
 
     def link_episode_to_nodes(self, episode_id: str,
                               episode_content: str,
