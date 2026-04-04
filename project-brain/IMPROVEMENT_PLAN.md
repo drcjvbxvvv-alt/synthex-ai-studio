@@ -10,7 +10,7 @@
 | 等級 | 說明 | 目標版本 |
 |------|------|---------|
 | **P1** | 明確影響正確性，應優先處理 | 下一個 minor |
-| **P2** | 值得做但可計劃排入 | 計劃中 |
+| **P2** | 影響核心功能價值，計劃排入 | 計劃中 |
 | **P3** | 長期願景、低頻路徑、實驗性 | 評估中 |
 
 ---
@@ -23,9 +23,11 @@
 
 ---
 
-## P2 — 已知缺陷
+## P2 — 核心功能缺口
 
 ~~BUG-B01~~ ✅ **已修復（2026-04-04）**：移除 `BrainDB.session_set/get/list/clear` 四個方法及 `ReadBrainDB` 中的 2 個 override；`import_json` 改用直接 SQL INSERT 替代 `session_set()`；移除 `MAX_SESSION_ENTRIES` 常數及 `TestDef06SessionLRU` 測試。`SessionStore`（`session_store.py`）是 L1a 的唯一入口，brain.db 的 `sessions` 表格仍保留供舊資料統計用（`stats()` / `health_report()`）。
+
+---
 
 ### REV-02 — Decay 實際效用未量測
 
@@ -35,7 +37,103 @@
 
 ---
 
+### DEEP-05 — Decay F6 採用率反饋缺失（知識自學習閉環）
+
+**問題**：`decay_engine.py` 設計了 F1–F7 共 7 個衰減因子，但 **F6（採用率反饋）完全未實裝**。每次 Agent 使用知識後，系統無法知道這條知識是否有幫助；有用的知識無法被獎勵，無效知識無法被懲罰，整個知識庫是「靜態評分」而非「自適應評分」。
+
+**實際影響**：
+- `report_knowledge_outcome(node_id, was_useful)` 的 MCP 呼叫結果未被 Decay Engine 消費
+- 長期使用後，高品質知識和低品質知識的 confidence 分佈無差異
+- 知識庫喪失「越用越聰明」的核心能力
+
+**修復方案**：
+1. `brain_db.py` 新增 `record_outcome(node_id, was_useful: bool)`：`was_useful=True` → `meta.adoption_count += 1`，`confidence = min(1.0, confidence + 0.03)`；`was_useful=False` → `confidence = max(DECAY_FLOOR, confidence - 0.05)`
+2. `decay_engine.py` 新增 `_factor_adoption(node)` → `F6 = min(1.2, 1 + adoption_count * 0.02)`（最多 +20% 加成）
+3. `mcp_server.py` 確認 `report_knowledge_outcome` tool 正確呼叫 `record_outcome()`（現在只呼叫 `mark_helpful`）
+4. REST 端點補充：`POST /v1/knowledge/<node_id>/outcome`
+
+**工時**：1.5 天
+
+---
+
+### ARCH-05 — 弃用流程缺失（deprecated 節點無通知 / 清理路徑）
+
+**問題**：`decay_engine.py` 當節點 confidence < 0.20 時標記 `meta.deprecated=True`，但此後完全沒有業務流程：
+- 弃用節點仍被 `get_context` 正常推薦（Pitfall 類型節點甚至衰減後更危險，因為它們是錯誤建議）
+- 無任何通知機制（webhook / nudge）
+- 無保留期（deprecated → 軟刪除 → 硬刪除），節點永不被清理
+
+**實際影響**：
+- 使用者不知道知識庫有多少「殭屍節點」（框架為 deprecated 但仍活躍推薦）
+- `brain status` 的健康分數無法反映實際品質
+
+**修復方案**：
+1. **context.py** 推薦 deprecated 節點時加 `[已棄用]` 標記（不過濾，但明示）
+2. **nudge_engine.py** 每次衰減執行後，對新增的 deprecated 節點觸發 `deprecated_node` 事件到 `events` 表
+3. **brain_db.py** 新增 `deprecated_at` 欄位（v14 migration）；`_apply_decay()` 同步設置
+4. **CLI** 新增 `brain deprecated list`（顯示所有 deprecated 節點及棄用時間）和 `brain deprecated purge --older-than <days>`（硬刪除超過指定天數的 deprecated 節點）
+5. **api_server.py** 新增 `GET /v1/knowledge/deprecated` 端點
+
+**工時**：2 天
+
+---
+
+### ARCH-06 — ConflictResolver 實裝（VISION-02 矛盾仲裁）
+
+**問題**：`decay_engine.py` 中已有完整的呼叫骨架：
+
+```python
+if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
+    from project_brain.conflict_resolver import ConflictResolver
+    _resolver = ConflictResolver(_bdb_cr, self.graph)
+```
+
+但 `project_brain/conflict_resolver.py` **完全不存在**。F4（矛盾檢測）只做關鍵字集合匹配（`contradicts`、`deprecated` 等詞），無法判斷語義層面的矛盾（「永遠使用 RS256」vs「支援 HS256」）。
+
+**實際影響**：
+- 知識庫規模 > 200 個節點後，矛盾節點比例顯著上升
+- 矛盾節點對稱扣分（兩者均衰減），優勝劣汰機制失效
+- `BRAIN_CONFLICT_RESOLVE=1` 的環境變數設置會導致 `ImportError`
+
+**修復方案**：
+1. 建立 `project_brain/conflict_resolver.py`：
+   - `ConflictResolver(db, graph, llm_client=None)`
+   - `resolve(node_a, node_b) → ArbitrationResult(winner_id, reason, confidence)`
+   - 無 LLM：基於 confidence、created_at、adoption_count 數值仲裁（保守策略）
+   - 有 LLM：呼叫 Claude 進行語義仲裁（需配置 `BRAIN_LLM_KEY`）
+2. `edges` 表新增 `CONFLICTS_WITH` 關係類型，記錄矛盾對
+3. F4 升級：偵測到矛盾後寫入 edges，仲裁後非對稱調整 confidence（winner 不懲罰，loser 乘 0.5）
+4. `brain doctor` 新增矛盾節點數量報告
+
+**工時**：3 天（保守策略版）；+2 天（LLM 仲裁版）
+
+---
+
+### FEAT-01 — 知識版本控制（節點歷史追蹤）
+
+**問題**：`nodes` 表無版本欄位，`update_node()` 直接覆寫。修改一個節點後，歷史內容、原始信心值、修改原因全部消失。無法回答：「這條決策是從什麼時候開始說要用 JWT RS256 的？」
+
+**實際影響**：
+- 知識演變不可追溯
+- 衰減到底是因為時間久還是因為主動降低？無法區分
+- `brain restore` 指令無法實作（沒有歷史）
+
+**注意**：`node_history` 表已存在（`DATA-01` 實作了刪除前的快照），但 **更新操作不寫歷史**，且無 version 欄位。
+
+**修復方案**：
+1. `nodes` 表新增 `version INTEGER DEFAULT 1`（v14 migration）
+2. `update_node()` 改為：先插入 `node_history`（完整快照），再 UPDATE `nodes`，version +1
+3. `node_history` 補充 `change_type TEXT`（`update` / `decay` / `feedback`）和 `change_note TEXT`
+4. CLI 新增 `brain history <node_title_or_id>` 顯示版本清單
+5. CLI 新增 `brain restore <node_id> --version <N>` 還原到指定版本
+
+**工時**：1.5 天
+
+---
+
 ## P3 — 長期 / 低頻 / 實驗性
+
+### 重構類
 
 | ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
 |----|------|------|---------|------|------|
@@ -43,8 +141,31 @@
 | CLI-01 | `cli.py` 2864 行，31 個 `cmd_*` 函數全在同一檔案 | 比 BrainDB 更大；每個命令函數重複 `_workdir + brain_dir.exists()` 樣板；`cmd_serve` 240 行、`cmd_doctor` 378 行 | 按功能群組拆分：`cli_serve.py`、`cli_admin.py`、`cli_knowledge.py` 等；抽取 `@require_brain_dir` 裝飾器消除樣板 | 1.5 週 | 先補整合測試覆蓋率，再拆分 |
 | ARCH-04 | scope 三路控制流（`--global` / `--scope` / 自動推斷）讓使用者困惑 | UX 複雜，Breaking change | 合併 `--global` / `--scope` 為單一 `--scope global`；保留自動推斷 | 1 週 | Breaking change，需 major 版本 |
 | REF-04 | 魔法數字散落（`0.003`、`800`、`400`、`limit=8`） | 維護時難以追蹤意圖，修改需同步多處 | 新增 `project_brain/constants.py`，遷入四個常數 | 半天 | 📋 `tests/unit/test_ref04_constants.py` |
+
+### 修正類
+
+| ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
+|----|------|------|---------|------|------|
 | PERF-03 | CJK token 計數逐字迭代，無快取 | 高頻呼叫時浪費 CPU（800+ 次/request） | `_count_tokens()` 加 `@lru_cache(maxsize=1024)` | 30 分 | 📋 `tests/unit/test_perf03_token_cache.py` |
 | BUG-A03 | `engine.py` 6 個懶加載屬性共用 `_init_lock`（非可重入）| 極低概率競態：雙重初始化 + 鏈式呼叫死鎖 | 拆分為各屬性獨立 `threading.Lock()` | 1 小時 | 📋 `tests/unit/test_bug_a03_locking.py` |
+| PERF-04 | Synonym 擴展 `EXPAND_LIMIT=15` 為固定值 | 短查詢過度擴展引入噪音；長查詢不足遺漏知識 | 動態調整：詞數 < 3 → 上限 10；3–5 詞 → 15；> 5 詞 → 20；`BRAIN_EXPAND_MODE` env var 控制 | 半天 | context.py `_expand_query()` |
+| FEAT-03 | `temporal_query` MCP 工具有框架，無有效時間過濾邏輯 | 無法回答「v0.3.0 時這條知識是否有效」 | 從 git log 推斷節點有效期；實作 `valid_from`/`valid_until` 過濾；`brain history --at <date>` 時間機器 | 4 天 | 需 git 整合 |
+
+### 功能深化類
+
+| ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
+|----|------|------|---------|------|------|
+| DEEP-04 | `nudge_engine.generate_questions()` 框架完成但未集成到 MCP / context 流程 | 主動學習環節中斷：信心 < 0.5 的節點缺乏人工確認機制 | `context.build()` 中對 confidence < 0.5 的節點附加 QUESTIONS 區塊；MCP 新增 `answer_question(node_id, answer, new_confidence)` tool；REST `POST /v1/knowledge/<id>/feedback` | 4 天 | 與 DEEP-05 協作 |
+| FED-01 | Federation 導入無審計日誌，無法溯源「哪個專案、何時、匯入了什麼」 | 多知識庫聯邦場景下責任不清晰 | 新增 `federation_imports` 表（source / node_id / imported_at / status）；`brain fed imports list/approve/reject`；REST `GET /v1/federation/imports` | 3 天 | 前提：Federation 被積極使用 |
+| FED-02 | Federation 去重只用 Jaccard 集合匹配，無法偵測語義重複 | 批量匯入造成語義近似的知識膨脹（「JWT RS256」vs「RS256 JWT 驗證」） | chromadb 可用時加語義相似度比對（threshold=0.9）；`FederationImporter._is_duplicate()` 組合 Jaccard OR 向量相似度 | 2 天 | 需向量化依賴可用 |
+| CLI-02 | `federation.py` 的 `sync_all()` 完成，CLI `brain fed sync` 未實裝 | Federation 自動同步功能（VISION-03）無入口 | `cmd_fed_sync()`：`brain fed sync [--dry-run] [--confidence 0.5]`；`brain fed export/import/subscribe/unsubscribe` | 2 天 | 搭配 FED-01 |
+| FEAT-04 | Session 結束時 L1a 全部清空，可能丟失工作階段洞察 | 長時間工作的中間結論無法保留 | `SessionStore.archive()`：導出當前 session 為 `.brain/sessions/<id>.md`；`brain session archive [--session <id>]`；90 天後自動清理 | 1.5 天 | 低頻場景 |
+
+### 可觀測性類
+
+| ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
+|----|------|------|---------|------|------|
+| OBS-01 | 系統運行時難以觀察：Decay 為何降低信心？Context 為何沒推薦某知識？Nudge 的觸發率是多少？ | 問題難重現，調優無依據 | 結構化日誌（structlog）記錄 `{event, node_id, reason, old_val, new_val}`；新增 `GET /v1/metrics`（Prometheus 格式）涵蓋 `brain_nodes_total`、`brain_decay_count`、`brain_nudge_trigger_rate`、`brain_context_tokens_avg` | 3 天 | 可分兩步：先 structlog，再 Prometheus |
 
 ---
 
@@ -53,4 +174,28 @@
 | 版本 | 主題 | 主要工作 | 發布 Gate |
 |------|------|---------|----------|
 | **v0.7.0** | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、REF-04、PERF-03、BUG-A03 | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
+| **v0.8.0** | 知識自適應 | DEEP-05（F6 採用率）、ARCH-05（弃用流程）、ARCH-06（ConflictResolver）、FEAT-01（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
+| **v0.9.0** | 深化功能 | DEEP-04（主動學習）、FED-01+FED-02（Federation 強化）、OBS-01（可觀測性）、PERF-04（動態擴展）| nudge 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
 | **v1.0.0** | 長期穩定 | REF-01（BrainDB 拆分）、CLI-01（cli.py 拆分）、ARCH-04（scope UX）| 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |
+
+---
+
+## 架構診斷摘要（2026-04-04）
+
+基於完整原始碼分析，系統各層實作完整度：
+
+| 層 / 模組 | 實作完整度 | 最大缺口 |
+|----------|-----------|---------|
+| L1a SessionStore | ✅ 完整 | Session → L3 升級路徑缺失（FEAT-04）|
+| L2 Episodes / Temporal | ⚠️ 框架完成 | temporal_query 邏輯空缺（FEAT-03）|
+| L3 KnowledgeGraph | ✅ 完整 | — |
+| BrainDB（統一儲存） | ✅ 完整 | 更新操作不寫版本歷史（FEAT-01）|
+| DecayEngine（衰減） | ⚠️ 6/7 因子 | F6 採用率缺失；弃用後無流程（DEEP-05、ARCH-05）|
+| ContextEngineer | ✅ 完整 | 主動學習未集成（DEEP-04）|
+| NudgeEngine | ⚠️ 集成有限 | 問題生成未掛接；採纳率未追蹤（DEEP-04）|
+| ConflictResolver | ❌ 模組缺失 | 完全需新建（ARCH-06）|
+| Federation | ⚠️ 導出/導入完成 | 去重弱；無審計；CLI 缺 sync（FED-01/02、CLI-02）|
+| MCP Server | ✅ 完整 | report_outcome 路徑未完整串聯（DEEP-05）|
+| API Server | ✅ 完整 | — |
+| CLI | ⚠️ 主命令完整 | fed sync 缺失；deprecated 管理缺失（CLI-02、ARCH-05）|
+| 可觀測性 | ⚠️ logger.debug 有 | 無結構化日誌；無指標端點（OBS-01）|
