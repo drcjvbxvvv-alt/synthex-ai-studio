@@ -25,6 +25,7 @@
 | **P1** | BUG-D02 | `embedder.py._embedder_cache` 無鎖，多執行緒競態 | 加 `threading.Lock()` 保護 dict read/write | 無 | ⚡ 快速獲益 |
 | **P1** | TEST-01 | 15 個測試失敗（chaos 路徑、web_ui AttributeError、lora、embedding cache） | 修復或標記 skip；確保 CI 全綠 | 無 | 🎯 高價值 |
 | **P1** | PERF-05 | Decay `_detect_contradictions()` N+1 查詢：每對矛盾各一次 `SELECT confidence` | 批次預取所有節點信心值至 dict | 無 | ⚡ 快速獲益 |
+| **P1** | BUG-E01 | `_search_batch(terms[:8])` 截斷使「版本號」「路徑」等關鍵詞被丟棄，Rule 類 False Negative | ① 改 `terms[:15]`；② 補 API 同義詞；③ Rule 配額 2→3 | 無 | 🎯 高價值 |
 | **P2** | PERF-06 | 缺少 `nodes(type, confidence DESC)` 複合索引，type 過濾搜尋全表掃描 | SCHEMA_VERSION=21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)` | 無 | ⚡ 快速獲益 |
 | **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 24h） | 無 | 🔵 填空 |
 | **P2** | BUG-D04 | `session_store.py` per-thread 連線從未關閉，長執行伺服器 FD 洩漏 | 在 `threading.local` 清除時呼叫 `conn.close()`；或改用單一共享連線 | 無 | 📋 計劃執行 |
@@ -172,6 +173,130 @@ conf_map = {r["id"]: r["confidence"] for r in db.conn.execute(
 ```
 
 **工時**：1 小時。
+
+---
+
+### BUG-E01 — `_search_batch` 截斷導致 Rule 召回 False Negative
+
+**觀察現象**：`benchmark_recall.py` 第 5 筆查詢 ❌：
+
+```
+query    : "如何設計 API 版本號，放路徑還是 Header"
+expected : api-01  "API 版本號在路徑中，非 Header"
+result   : 未出現在 get_context 回傳中
+```
+
+#### 根因分析（三層）
+
+**根因 A（主要）：`_search_batch` 只用 `terms[:8]`，關鍵詞被截斷**
+
+`_expand_query` 產生的 `expanded_terms`（15 個）按字面順序排列：
+
+| 位置 | 詞 | 說明 |
+|------|----|------|
+| 1 | `api` | 英文詞 |
+| 2 | `header` | 英文詞 |
+| 3–8 | `如何` `何設` `設計` `如何設` `何設計` `如何設計` | "如何設計" 的所有 n-gram |
+| **9–11** | **`版本` `本號` `版本號`** | **api-01 的核心辨別詞** |
+| **12–13** | **`放路` `路徑`** | **api-01 的另一辨別詞** |
+| 14–15 | `徑還` `還是` | 低信號詞 |
+
+`_search_batch` 呼叫時：`" ".join(terms[:8])` → 只送入前 8 個詞，**位置 9–13 的 `版本`、`版本號`、`路徑` 全部被丟棄**。
+
+FTS5 搜尋字串實際為：
+```
+"api header 如何 何設 設計 如何設 何設計 如何設計"
+```
+
+`api-01` 雖有 "api" 匹配，但其他 Rule 節點（如 `db-04`：「HTTP 呼叫或外部 API 不可放在資料庫 transaction 內部」）也有 "api" 且 BM25 不低，在 `limit=2` 下可能把 `api-01` 擠出。
+
+**根因 B（次要）：Rule 類型配額過低（`limit=2`）**
+
+`context.py:227`：
+```python
+rules = _search_batch(expanded_terms, node_type="Rule", limit=2)
+```
+50 個測試節點中 Rule 型節點共 12+ 個。只取前 2，任何 BM25 排名失準都會造成 False Negative。
+
+**根因 C（加劇）：查詢前綴 n-gram 佔用擴展配額**
+
+"如何設計" 產生 6 個 n-gram（如何, 何設, 設計, 如何設, 何設計, 如何設計），本質上都是「如何設計＝how to design」的噪音詞，消耗了 6 個名額，把有語義的「版本號」擠出 `[:8]` 視窗。
+
+同時 `synonyms.py` 完全缺少 API 版本化領域的同義詞：
+
+| 缺失詞 | 應擴展至 |
+|--------|---------|
+| `版本` | `versioning`, `v1`, `url`, `path`, `routing` |
+| `版本號` | `versioning`, `api version`, `url`, `v1` |
+| `路徑` (URL 語境) | `url`, `path`, `endpoint`, `route` |
+| `header` (HTTP 語境) | `accept`, `content-type`, `api versioning` |
+
+---
+
+#### 修復方案
+
+**Fix-1：`context.py` — 改 `terms[:8]` → `terms[:15]`**（15 分鐘）
+
+`context.py:199` 的 `_search_batch` 內部：
+```python
+# 現行
+_q_vec = _emb.embed(" ".join(terms[:8]))
+...
+db_results = self._brain_db.hybrid_search(
+    " ".join(terms[:8]), ...
+)
+...
+db_results = self._brain_db.search_nodes(
+    " ".join(terms[:8]), ...
+)
+```
+
+改為：
+```python
+_SEARCH_TERMS_CAP = 15          # 與 EXPAND_LIMIT 對齊，不再早截斷
+_q_vec = _emb.embed(" ".join(terms[:_SEARCH_TERMS_CAP]))
+...
+db_results = self._brain_db.hybrid_search(
+    " ".join(terms[:_SEARCH_TERMS_CAP]), ...
+)
+...
+db_results = self._brain_db.search_nodes(
+    " ".join(terms[:_SEARCH_TERMS_CAP]), ...
+)
+```
+
+**Fix-2：`synonyms.py` — 補充 API 版本化領域同義詞**（30 分鐘）
+
+```python
+# API 版本化
+"版本":    ["versioning", "v1", "url", "path", "routing", "api version"],
+"版本號":  ["versioning", "api version", "url", "path", "v1"],
+"路徑":    ["url", "path", "endpoint", "route", "routing"],
+"header":  ["http header", "accept", "content-type", "versioning"],
+"versioning": ["版本", "版本號", "url", "path", "v1"],
+```
+
+**Fix-3：`context.py` — Rule 配額 2 → 3**（5 分鐘）
+
+```python
+# context.py:227
+rules = _search_batch(expanded_terms, node_type="Rule", limit=3)   # 2 → 3
+```
+
+---
+
+#### 驗收標準
+
+修復後執行：
+```bash
+python tests/benchmarks/benchmark_recall.py
+```
+
+- 第 5 筆查詢：`api-01` ✅（由 ❌ 變 ✅）
+- 整體召回率不下降（Fix 可能順帶修復其他 False Negative）
+- `benchmark_recall.py` 每個 FTS5 模式下召回率 ≥ 50%（無 sentence-transformers）
+
+**工時**：Fix-1 + Fix-2 + Fix-3 合計 < 1 小時；加測試驗收共 2 小時。
 
 ---
 
@@ -342,7 +467,7 @@ db.emit("decay_run", {
 
 | 版本 | 主題 | 主要工作 | Gate |
 |------|------|---------|------|
-| **v0.12.0** | 正確性修復 | SEC-03, BUG-D01, BUG-D02, TEST-01, PERF-05, TEST-03 | 0 failing tests；所有 P1 修復通過 |
+| **v0.12.0** | 正確性修復 | SEC-03, BUG-D01, BUG-D02, BUG-E01, TEST-01, PERF-05, TEST-03 | 0 failing tests；所有 P1 修復通過；benchmark 召回率 ≥ 50%（FTS5 only） |
 | **v0.13.0** | 品質強化 | PERF-06, BUG-D03, BUG-D04, ARCH-07, OBS-02, OBS-03, SEC-04 | 無 bare except/pass（高危路徑）；index 效能驗收 |
 | **v0.14.0** | 長期改善 | FEAT-06, ARCH-08, TEST-02, FEAT-05（視餘力） | REV-02 90天數據就位後 |
 | **v0.15.0** | 量測驗收 | REV-02 decay 效用量測與報告 | `brain report` 顯示衰減效用指標 |
@@ -358,7 +483,7 @@ db.emit("decay_run", {
 | L3 KnowledgeGraph | ✅ | — |
 | BrainDB | ✅ SCHEMA v20 | PERF-06 缺 type+conf 索引（v21）|
 | DecayEngine | ✅ 7/7 因子 | PERF-05 N+1；OBS-02 因子量測缺失 |
-| ContextEngineer | ✅ | BUG-D01 部分 except/pass |
+| ContextEngineer | ⚠️ | BUG-E01 `_search_batch[:8]` 截斷；BUG-D01 部分 except/pass |
 | NudgeEngine | ✅ | — |
 | ConflictResolver | ✅ | ARCH-08 快取無 TTL 淘汰 |
 | Federation | ✅ | SEC-04 PII 過濾不完整 |
