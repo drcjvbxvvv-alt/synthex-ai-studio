@@ -195,8 +195,57 @@ export BRAIN_SKIP_LLM=1
 
 主要約束：
 - **SQLite 單寫者**：不使用多進程寫入，用 WAL + busy_timeout 處理並行
-- **per-thread connections**：graph.py 和 session_store.py 均使用 `threading.local()`
+- **單一共享連線**：`brain_db.py` 和 `graph.py` 使用單一 `_conn_obj`（`check_same_thread=False`）+ `threading.RLock` 寫入鎖，不再使用 `threading.local()`（ARCH-02）
 - **懶加載 graphiti**：`project_brain/__init__.py` 不匯入 graphiti，避免冷啟動代價
 - **KRB 人工把關**：所有 AI 自動提取的知識必須先進 Staging，不直接入庫
 - **鎖重入禁止**：`engine.py` 的 `_init_lock` 是非可重入鎖，不得在持鎖狀態下呼叫其他需要同一鎖的屬性（見 BUG-01 根因）
 - **core/ 不含業務邏輯**：`core/brain/` 每個檔案只能是 2 行 re-export shim，不得包含任何邏輯
+
+---
+
+## 品質門檻與驗收標準（DIR-01）
+
+每個 minor 版本發布前，以下指標必須達標：
+
+| 指標 | 門檻 | 量測方法 |
+|------|------|---------|
+| `get_context` 召回率 | ≥ 60%（sentence-transformers 環境）| `python -m pytest tests/benchmarks/benchmark_recall.py` |
+| Chaos test 通過率 | 100% | `python -m pytest -m chaos` |
+| 靜默失效路徑 | 0 | `grep -rn 'except' project_brain/ --include='*.py' \| grep -v logger` |
+| Migration 可觀察率 | 100% | 故意設定錯誤 schema 後執行 `brain doctor`，確認有 warning |
+
+---
+
+## 發布前隨機審計清單（DIR-03）
+
+每次版本發布前執行：
+
+1. **隨機抽查 3 個 CHANGELOG 中標記「完成」的項目**
+   - 找到對應的 commit hash（`git log --oneline | grep <item>`）
+   - 找到對應的程式碼行號（`grep -n <function> project_brain/`）
+   - 確認行為符合描述
+
+2. **執行四維指標核查**
+
+   ```bash
+   # 飛輪：知識庫自然成長率（目標 ≥ 5 節點/7天）
+   sqlite3 .brain/brain.db \
+     "SELECT COUNT(*) FROM nodes WHERE tags LIKE '%auto:complete_task%' \
+      AND created_at >= datetime('now','-7 days')"
+
+   # 飛輪：NudgeEngine 命中率（目標 ≥ 30%）
+   sqlite3 .brain/brain.db \
+     "SELECT
+       CAST(SUM(CASE WHEN event_type='nudge_triggered' THEN 1 ELSE 0 END) AS REAL)
+       / NULLIF(SUM(CASE WHEN event_type='get_context' THEN 1 ELSE 0 END),0) AS hit_rate
+     FROM events"
+
+   # 技術誠實性：召回率
+   python -m pytest tests/benchmarks/benchmark_recall.py -v
+   ```
+
+3. **發布 Gate 核對**
+   - [ ] 所有 P0/P1 項目已 ✅
+   - [ ] Chaos test 100% 通過
+   - [ ] CHANGELOG 版本條目已更新
+   - [ ] `pyproject.toml` 版本號已 bump

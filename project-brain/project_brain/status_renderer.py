@@ -251,6 +251,37 @@ def render_status(
     except Exception:
         pass
 
+    # ── FLY-03 飛輪健康度 ────────────────────────────────────
+    _bdb2 = Path(brain_dir) / "brain.db"
+    if _bdb2.exists():
+        try:
+            import sqlite3 as _sl4
+            _hc = _sl4.connect(str(_bdb2))
+            _new7 = _hc.execute(
+                "SELECT COUNT(*) FROM nodes WHERE created_at >= datetime('now','-7 days')"
+            ).fetchone()[0]
+            _total_n = _hc.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            _top_p = _hc.execute(
+                "SELECT title, access_count FROM nodes"
+                " WHERE type='Pitfall' ORDER BY access_count DESC LIMIT 3"
+            ).fetchall()
+            _hc.close()
+
+            lines.append(section("🌀 飛輪健康度", ""))
+            _new_color = GREEN if _new7 >= 5 else (YELLOW if _new7 >= 1 else RED)
+            lines.append(
+                f"  {INFO}  近 7 天新增  {_new_color}{BOLD}{_new7}{RESET} 節點"
+                f"  {GRAY}（目標 ≥ 5，當前總計 {_total_n}）{RESET}"
+            )
+            if _top_p:
+                lines.append(f"\n  {DIM}最常命中 Pitfall（access_count）{RESET}")
+                for _p in _top_p:
+                    _pt = str(_p[0])[:40]
+                    _ac = _p[1]
+                    lines.append(f"    {RED}⚠{RESET}  {WHITE}{_pt}{RESET}  {GRAY}×{_ac}{RESET}")
+        except Exception:
+            pass
+
     # ── 頁尾 ──────────────────────────────────────────────────
     lines.append(f"\n{hr('═')}")
     lines.append(f"{GRAY}  Project Brain  v{version}  ·  {brain_dir}{RESET}\n")

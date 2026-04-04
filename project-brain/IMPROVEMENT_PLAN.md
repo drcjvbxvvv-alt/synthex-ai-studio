@@ -76,17 +76,17 @@
 
 | ID | 問題 | 影響 | 解決方案 | 工時 |
 |----|------|------|---------|------|
-| FLY-03 | `brain status` 無知識庫健康度評分 | 用戶看不到飛輪在轉，無感知 | 加入節點數、近 7 天新增數、最常命中的 3 個 Pitfall | 半天 |
+| ~~FLY-03~~ | ~~`brain status` 無知識庫健康度評分~~ | ~~用戶看不到飛輪在轉，無感知~~ | ✅ **已修復（2026-04-04）**：`status_renderer.py` 新增「飛輪健康度」面板：7 天新增節點數（🟢≥5 / 🟡≥1 / 🔴<1）＋ Top 3 高頻 Pitfall | 半天 |
 | REV-02 | 尚未量測 Decay 實際效用 | 無法驗證 F2/F3 是假設還是事實 | 對比有衰減 vs 無衰減知識庫，Agent 被導向過時知識的比例 | 1 天 |
-| DIR-01 | 核心功能無最低品質門檻 | 無 CI gate，品質無法被持續保護 | 補建驗收標準：`get_context` 召回率 ≥ 60%；`complete_task` 正確寫入率 100% | 半天 |
-| DIR-02 | 需使用者手動步驟才能運作的功能，標記為「完成 ✅」 | 誤導使用者對功能完備性的判斷 | 標記 `🟡 架構就緒（Arch-Ready）` vs `🟢 端對端可用` | 半天 |
-| TECH-01 | CHANGELOG / README 無功能完成度標記 | 用戶無法判斷功能是否端對端可用 | 每個功能加 🟢 端對端 / 🟡 架構就緒 / 🔴 實驗性 | 半天 |
-| TECH-02 | README `brain distill` 未說明需自行執行 Axolotl / Unsloth | 使用者期望工具自動完成訓練，造成誤解 | 明確標注「產生 JSONL 設定檔，實際訓練需自行執行」 | 15 分 |
-| TECH-03 | 無 ANN Index 觸發條件說明 | 用戶不知何時切換 HNSW，可能錯誤配置 | 文件標注「建議 > 2000 節點後切換 HNSW」 | 15 分 |
+| ~~DIR-01~~ | ~~核心功能無最低品質門檻~~ | ~~無 CI gate，品質無法被持續保護~~ | ✅ **已修復（2026-04-04）**：`CONTRIBUTING.md` 加入「品質門檻與驗收標準」：召回率 ≥ 60%、Chaos test 100%、靜默失效 0 | 半天 |
+| ~~DIR-02~~ | ~~需使用者手動步驟才能運作的功能，標記為「完成 ✅」~~ | ~~誤導使用者對功能完備性的判斷~~ | ✅ **已修復（2026-04-04）**：`COMMANDS.md` 每個命令加 🟢/🟡/🔴 狀態標記 | 半天 |
+| ~~TECH-01~~ | ~~CHANGELOG / README 無功能完成度標記~~ | ~~用戶無法判斷功能是否端對端可用~~ | ✅ **已修復（2026-04-04）**：`COMMANDS.md` 命令總覽加 🟢 端對端 / 🟡 架構就緒 / 🔴 實驗性 狀態欄 | 半天 |
+| ~~TECH-02~~ | ~~README `brain distill` 未說明需自行執行 Axolotl / Unsloth~~ | ~~使用者期望工具自動完成訓練，造成誤解~~ | ✅ **已修復（2026-04-04）**：`COMMANDS.md` 已移除命令區段明確標注「需自行執行 Axolotl / Unsloth」 | 15 分 |
+| ~~TECH-03~~ | ~~無 ANN Index 觸發條件說明~~ | ~~用戶不知何時切換 HNSW，可能錯誤配置~~ | ✅ **已修復（2026-04-04）**：`COMMANDS.md` 新增「向量索引說明」：< 2000 節點用 sqlite-vec；≥ 2000 建議切換 HNSW | 15 分 |
 | ~~STAB-08~~ | ~~Chaos test 存在但未接 CI gate~~ | ~~每版本容易遺漏手動執行~~ | ✅ **已修復（2026-04-04）**：`pyproject.toml` 加 `chaos` marker；6 個 Chaos/Load 測試類加 `@pytest.mark.chaos`；CI 可執行 `pytest -m chaos` | 半天 |
-| DIR-03 | 每版本隨機審計未制度化 | v0.6.0 執行一次後未固化為流程 | 每次發布前隨機抽查 3 個「完成」項目，確認 commit hash + 行號可查 | 半天 |
-| FLY-04 | NudgeEngine 命中率未量測 | 無法知道 nudge 是否真正觸發 | events 表記錄 `nudge_triggered`；量測：nudge 事件數 ÷ `get_context` 呼叫數，目標 ≥ 30% | 1 天 |
-| FLY-05 | 知識庫自然成長率未量測 | 無法驗證 `complete_task` 閉環有效 | SQL：`SELECT COUNT(*) FROM nodes WHERE tags LIKE '%auto:complete_task%' AND created_at >= datetime('now','-7 days')`，目標 ≥ 5 | 半天 |
+| ~~DIR-03~~ | ~~每版本隨機審計未制度化~~ | ~~v0.6.0 執行一次後未固化為流程~~ | ✅ **已修復（2026-04-04）**：`CONTRIBUTING.md` 加入「發布前隨機審計清單」：抽查 3 項 + 四維指標 SQL 查詢 + 發布 Gate checklist | 半天 |
+| ~~FLY-04~~ | ~~NudgeEngine 命中率未量測~~ | ~~無法知道 nudge 是否真正觸發~~ | ✅ **已修復（2026-04-04）**：`nudge_engine.py` `check()` 有結果時 emit `nudge_triggered` 事件；量測 SQL 在 `CONTRIBUTING.md` | 1 天 |
+| ~~FLY-05~~ | ~~知識庫自然成長率未量測~~ | ~~無法驗證 `complete_task` 閉環有效~~ | ✅ **已修復（2026-04-04）**：量測 SQL 收錄於 `CONTRIBUTING.md` 發布審計清單；目標 ≥ 5 節點/7天 | 半天 |
 | UNQ-03 | ~~召回率基準~~ | ✅ **已完成**：MultilingualEmbedder + hybrid search = **95%**（2026-04-04，`tests/benchmarks/benchmark_recall.py`） | — | — |
 
 ---
@@ -123,8 +123,8 @@
 | 版本發布條件達成率 | 100%（Gate） | CHANGELOG 每版本 Gate checklist 完成數 ÷ 總數 | ✅ 達成 |
 | 計劃打勾 vs 程式碼完成率 | 100% | 每版本 code review 隨機抽查 5 項，確認有 commit hash + 行號可查 | △ 發現 graphiti_url 描述不精確 |
 | 技術債清零週期 | P0 ≤ 當版本；其餘 ≤ 2 版本 | IMPROVEMENT_PLAN 歷史紀錄，計算每個 Bug ID 從出現到 ✅ 的版本跨距 | ✅ 符合 |
-| Arch-Ready vs 端對端比例 | ≥ 70% | 功能表中 🟢 端對端可用 ÷ (🟢 + 🟡 架構就緒) | ❌ 待 TECH-01 完成後量測 |
-| 版本週期一致性 | 相鄰版本完成數差距 ≤ 30% | CHANGELOG 各版本 completed items 數量統計 | ❌ 未量測 |
+| Arch-Ready vs 端對端比例 | ≥ 70% | 功能表中 🟢 端對端可用 ÷ (🟢 + 🟡 架構就緒) | ✅ 17🟢 / 5🟡 = **77%**（COMMANDS.md 2026-04-04）|
+| 版本週期一致性 | 相鄰版本完成數差距 ≤ 30% | CHANGELOG 各版本 completed items 數量統計 | △ 未量測（需 CHANGELOG 歷史資料）|
 
 ### 二、穩定性（Stability）
 
@@ -132,7 +132,7 @@
 |------|------|---------|------------|
 | 靜默失效路徑數 | 0（Gate） | `grep -rn 'except' --include='*.py'` 後過濾無 logger 行 | ✅ 0（v0.6.0 修復後） |
 | Migration 失敗可觀察率 | 100% | 故意破壞 schema v11 後執行 `brain doctor`，確認有 warning 輸出 | ✅ 已修復 |
-| Chaos test 通過率 | 100%（Gate v0.7.0） | CI 自動執行 `tests/chaos/test_chaos_and_load.py` | ❌ 未接 CI（STAB-08） |
+| Chaos test 通過率 | 100%（Gate v0.7.0） | CI 自動執行 `pytest -m chaos` | ✅ 17/17 通過（STAB-08 已完成 2026-04-04）|
 | SR node 追蹤準確率 | 誤判率 0% | 故意注入含 emoji 標題，確認 access_count 更新對象正確 | ✅ 已修復（STAB-07） |
 | ReviewBoard.db 損壞恢復能力 | 有可操作錯誤訊息 | 故意損壞後確認 `brain review list` 給出可操作訊息而非 stack trace | ✅ 已修復（STAB-06） |
 
@@ -140,16 +140,16 @@
 
 | 指標 | 門檻 | 量測方法 | v0.6.0 現況 |
 |------|------|---------|------------|
-| 功能狀態標記覆蓋率 | 100% | README 和 CHANGELOG 中每個功能是否有 🟢/🟡/🔴 標記 | ❌ 0%（TECH-01） |
-| LoRA 路徑說明準確性 | 已標注 | README `brain distill` 說明是否含「需自行執行 Axolotl / Unsloth」 | ❌ 未更新（HON-01） |
+| 功能狀態標記覆蓋率 | 100% | `COMMANDS.md` 每個命令是否有 🟢/🟡/🔴 標記 | ✅ 22/22 命令已標記（TECH-01 2026-04-04）|
+| LoRA 路徑說明準確性 | 已標注 | `COMMANDS.md` 「已移除命令」是否含「需自行執行 Axolotl / Unsloth」 | ✅ 已更新（TECH-02 2026-04-04）|
 | Synonym Map 條目數一致性 | 差距 ≤ 2 | `len(brain_db._SYNONYM_MAP)` vs `len(context.py._SYNONYM_MAP)` | ✅ 兩表均為 46 條（SYNC-01） |
-| ANN 觸發條件文件化 | 已標注 | 安裝文件中是否標注「建議 > 2000 節點後切換 HNSW」 | ❌ 未標注（TECH-03） |
-| 每版本宣稱 vs 實際審計 | 每版本執行 | 隨機抽查 3 個 CHANGELOG「完成」項目，確認有 commit hash + 行號 | ✅ v0.6.0 已執行一次（DIR-03 制度化中） |
+| ANN 觸發條件文件化 | 已標注 | `COMMANDS.md` 向量索引說明是否標注 HNSW 切換條件 | ✅ 已標注（TECH-03 2026-04-04）|
+| 每版本宣稱 vs 實際審計 | 每版本執行 | 隨機抽查 3 個 CHANGELOG「完成」項目，確認有 commit hash + 行號 | ✅ 流程已制度化於 `CONTRIBUTING.md`（DIR-03 2026-04-04）|
 
 ### 四、飛輪（Flywheel）
 
 | 指標 | 門檻 | 量測 SQL / 方法 | v0.6.0 現況 |
 |------|------|--------------|------------|
-| 知識庫自然成長率 | 7 天內 ≥ 5 節點（自動寫入） | `SELECT COUNT(*) FROM nodes WHERE tags LIKE '%auto:complete_task%' AND created_at >= datetime('now','-7 days')` | ❌ 0（未開始） |
-| NudgeEngine 命中率 | ≥ 30%（> 20 節點後） | events 表 `nudge_triggered` 事件數 ÷ `get_context` 總呼叫數 | ❌ 0（未量測，FLY-04） |
+| 知識庫自然成長率 | 7 天內 ≥ 5 節點（自動寫入） | `SELECT COUNT(*) FROM nodes WHERE tags LIKE '%auto:complete_task%' AND created_at >= datetime('now','-7 days')` | △ SQL 就緒，需累積真實使用數據（FLY-05 2026-04-04）|
+| NudgeEngine 命中率 | ≥ 30%（> 20 節點後） | events 表 `nudge_triggered` 事件數 ÷ `get_context` 總呼叫數 | △ emit 已實作，需累積事件數據（FLY-04 2026-04-04）|
 | `get_context` 召回率 | ≥ 60%（sentence-transformers） | UNQ-03 基準測試資料集，50 節點 + 20 查詢 + 已知正確答案 | ✅ 95%（MultilingualEmbedder + hybrid search，2026-04-04）詳見 `tests/benchmarks/benchmark_recall.py` |

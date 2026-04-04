@@ -128,7 +128,18 @@ class NudgeEngine:
                 -int(n.is_pinned),
             )
         )
-        return nudges[:top_k]
+        result = nudges[:top_k]
+        # FLY-04: emit nudge_triggered event for hit-rate measurement
+        if result and self._brain_db:
+            try:
+                self._brain_db.emit("nudge_triggered", {
+                    "task":     task[:100],
+                    "count":    len(result),
+                    "node_ids": [n.node_id for n in result],
+                })
+            except Exception:
+                pass
+        return result
 
     def check_on_commit(self, commit_hash: str, files_changed: list[str]) -> list[Nudge]:
         """

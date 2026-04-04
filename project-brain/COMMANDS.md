@@ -5,31 +5,33 @@
 
 ## 命令總覽
 
-| 命令 | 說明 | 例子 |
-|------|------|------|
-| `brain setup` | 一鍵初始化（建 db + git hook + MCP）| `brain setup` |
-| `brain add` | 加入知識 | `brain add "JWT 必須用 RS256"` |
-| `brain ask` | 查詢知識 | `brain ask "JWT 設定"` |
-| `brain status` | 記憶庫狀態 | `brain status` |
-| `brain sync` | 從最新 commit 自動學習 | `brain sync --quiet` |
-| `brain scan` | 掃描 git 歷史提取知識 | `brain scan --all` |
-| `brain review` | 審查 KRB 暫存區知識 | `brain review list` |
-| `brain serve` | REST API / MCP Server | `brain serve --mcp` |
-| `brain webui` | D3.js 瀏覽器視覺化 | `brain webui --port 7890` |
-| `brain context` | 查詢（技術名，同 ask）| `brain context "JWT"` |
-| `brain index` | 建立向量索引（含進度條）| `brain index` |
-| `brain optimize` | VACUUM + ANALYZE + FTS5 rebuild | `brain optimize` |
-| `brain clear` | 清除 session 工作記憶 | `brain clear` |
-| `brain export` | 匯出知識庫 | `brain export --format neo4j` |
-| `brain import` | 匯入知識庫 | `brain import data.json` |
-| `brain analytics` | 使用率分析 | `brain analytics --export csv` |
-| `brain deprecate` | 廢棄知識節點 | `brain deprecate <id>` |
-| `brain lifecycle` | 節點生命週期 | `brain lifecycle <id>` |
-| `brain counterfactual` | 反事實影響分析 | `brain counterfactual "換掉 PostgreSQL"` |
-| `brain health-report` | 健康報告 | `brain health-report` |
-| `brain doctor` | 環境診斷與修復 | `brain doctor --fix` |
-| `brain init` | 低階初始化 | （一般用 setup 即可）|
-| `brain meta` | 後設知識管理 | `brain meta --list` |
+> **狀態說明**：🟢 端對端可用 · 🟡 架構就緒（需手動步驟）· 🔴 實驗性
+
+| 狀態 | 命令 | 說明 | 例子 |
+|------|------|------|------|
+| 🟢 | `brain setup` | 一鍵初始化（建 db + git hook + MCP）| `brain setup` |
+| 🟢 | `brain add` | 加入知識 | `brain add "JWT 必須用 RS256"` |
+| 🟢 | `brain ask` | 查詢知識 | `brain ask "JWT 設定"` |
+| 🟢 | `brain status` | 記憶庫狀態（含飛輪健康度）| `brain status` |
+| 🟢 | `brain sync` | 從最新 commit 自動學習 | `brain sync --quiet` |
+| 🟢 | `brain scan` | 掃描 git 歷史提取知識 | `brain scan --all` |
+| 🟢 | `brain review` | 審查 KRB 暫存區知識 | `brain review list` |
+| 🟢 | `brain serve` | REST API / MCP Server | `brain serve --mcp` |
+| 🟡 | `brain webui` | D3.js 瀏覽器視覺化 | `brain webui --port 7890` |
+| 🟢 | `brain context` | 查詢（技術名，同 ask）| `brain context "JWT"` |
+| 🟡 | `brain index` | 建立向量索引（需 sentence-transformers）| `brain index` |
+| 🟢 | `brain optimize` | VACUUM + ANALYZE + FTS5 rebuild | `brain optimize` |
+| 🟢 | `brain clear` | 清除 session 工作記憶 | `brain clear` |
+| 🟢 | `brain export` | 匯出知識庫 | `brain export --format neo4j` |
+| 🟢 | `brain import` | 匯入知識庫 | `brain import data.json` |
+| 🟢 | `brain analytics` | 使用率分析 | `brain analytics --export csv` |
+| 🟢 | `brain deprecate` | 廢棄知識節點 | `brain deprecate <id>` |
+| 🟢 | `brain lifecycle` | 節點生命週期 | `brain lifecycle <id>` |
+| 🟡 | `brain counterfactual` | 反事實影響分析 | `brain counterfactual "換掉 PostgreSQL"` |
+| 🟢 | `brain health-report` | 健康報告 | `brain health-report` |
+| 🟢 | `brain doctor` | 環境診斷與修復 | `brain doctor --fix` |
+| 🟢 | `brain init` | 低階初始化 | （一般用 setup 即可）|
+| 🟡 | `brain meta` | 後設知識管理 | `brain meta --list` |
 
 ---
 
@@ -243,4 +245,20 @@ brain counterfactual "如果我們用 NoSQL 代替 PostgreSQL"
 
 ## 已移除命令
 
-`learn`, `distill`, `validate`, `export-rules`, `daemon` 等已在 v10.x 清理。
+`learn`, `validate`, `export-rules`, `daemon` 等已在 v10.x 清理。
+
+`distill` — 已移除。此命令產生的是 **JSONL 訓練設定檔**，並不自動執行模型訓練。
+實際微調需自行搭配 [Axolotl](https://github.com/OpenAccess-AI-Collective/axolotl) 或 [Unsloth](https://github.com/unslothai/unsloth)。
+
+---
+
+## 向量索引說明（TECH-03）
+
+`brain index` 建立 dense vector 索引（sqlite-vec / HNSW）。
+
+| 節點數量 | 建議索引類型 | 說明 |
+|---------|------------|------|
+| < 2000 | sqlite-vec（預設）| 線性掃描，無需額外依賴 |
+| ≥ 2000 | HNSW（建議切換）| 大幅降低查詢延遲，需 `pip install hnswlib` |
+
+切換方式：在 `.brain/config.json` 設定 `"vector_backend": "hnsw"`。
