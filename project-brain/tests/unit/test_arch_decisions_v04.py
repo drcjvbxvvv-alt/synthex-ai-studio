@@ -239,12 +239,14 @@ class TestVision04ReadonlyMode(unittest.TestCase):
             )
 
     def test_brain_serve_has_readonly_flag_in_cli(self):
-        """cli.py brain serve 應支援 --readonly 旗標。"""
+        """cli.py / cli_utils.py brain serve 應支援 --readonly 旗標。"""
         from project_brain import cli as cli_mod
-        source = inspect.getsource(cli_mod)
+        import project_brain.cli_utils as cli_utils_mod
+        # CLI-01: parser moved to cli_utils._build_parser(); check both modules
+        source = inspect.getsource(cli_mod) + inspect.getsource(cli_utils_mod)
         self.assertIn(
             "--readonly", source,
-            "cli.py 應有 --readonly 旗標（v0.4.0 VISION-04：brain serve --readonly）",
+            "CLI codebase 應有 --readonly 旗標（v0.4.0 VISION-04：brain serve --readonly）",
         )
 
 

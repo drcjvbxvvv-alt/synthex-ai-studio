@@ -212,15 +212,15 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | ~~REF-01~~ ✅ | ~~BrainDB ~1800 行，承擔 10+ 職責（God Object）~~ | 已解決 | 抽離 `VectorStore`（`vector_store.py`）+ `FeedbackTracker`（`feedback_tracker.py`）；BrainDB 以 delegation 模式保持 backward compat | 完成 | — |
 | ~~CLI-01~~ ✅ | ~~`cli.py` 2864 行，31 個 `cmd_*` 函數全在同一檔案~~ | 已解決 | 拆分為 `cli_utils.py`、`cli_knowledge.py`、`cli_admin.py`、`cli_serve.py`、`cli_fed.py`；`cli.py` 精簡至 ≤500 行 | 完成 | — |
 | ~~ARCH-04~~ ✅ | ~~scope 三路控制流（`--global` / `--scope` / 自動推斷）讓使用者困惑~~ | 已解決 | `--global` 保留但印棄用警告（stderr），導引使用 `--scope global` | 完成 | — |
-| REF-04 | 魔法數字散落（`0.003`、`800`、`400`、`limit=8`） | 維護時難以追蹤意圖，修改需同步多處 | 新增 `project_brain/constants.py`，遷入四個常數 | 半天 | 📋 `tests/unit/test_ref04_constants.py` |
+| ~~REF-04~~ ✅ | ~~魔法數字散落（`0.003`、`800`、`400`、`limit=8`）~~ | 已解決 | `project_brain/constants.py`；四個常數集中定義 | 完成 | — |
 
 ### 修正類
 
 | ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
 |----|------|------|---------|------|------|
-| PERF-03 | CJK token 計數逐字迭代，無快取 | 高頻呼叫時浪費 CPU（800+ 次/request） | `_count_tokens()` 加 `@lru_cache(maxsize=1024)` | 30 分 | 📋 `tests/unit/test_perf03_token_cache.py` |
-| BUG-A03 | `engine.py` 6 個懶加載屬性共用 `_init_lock`（非可重入）| 極低概率競態：雙重初始化 + 鏈式呼叫死鎖 | 拆分為各屬性獨立 `threading.Lock()` | 1 小時 | 📋 `tests/unit/test_bug_a03_locking.py` |
-| PERF-04 | Synonym 擴展 `EXPAND_LIMIT=15` 為固定值 | 短查詢過度擴展引入噪音；長查詢不足遺漏知識 | 動態調整：詞數 < 3 → 上限 10；3–5 詞 → 15；> 5 詞 → 20；`BRAIN_EXPAND_MODE` env var 控制 | 半天 | context.py `_expand_query()` |
+| ~~PERF-03~~ ✅ | ~~CJK token 計數逐字迭代，無快取~~ | 已解決 | `@lru_cache(maxsize=1024)` 加到 `_count_tokens()` | 完成 | — |
+| ~~BUG-A03~~ ✅ | ~~`engine.py` 共用鎖競態死鎖~~ | 已解決 | 每個屬性獨立 `threading.Lock()` | 完成 | — |
+| ~~PERF-04~~ ✅ | ~~Synonym 擴展 `EXPAND_LIMIT=15` 為固定值~~ | 已解決 | 動態調整：詞數 < 3 → 10；3–5 → 15；> 5 → 20 | 完成 | — |
 | FEAT-03 | `temporal_query` MCP 工具有框架，無有效時間過濾邏輯 | 無法回答「v0.3.0 時這條知識是否有效」 | 從 git log 推斷節點有效期；實作 `valid_from`/`valid_until` 過濾；`brain history --at <date>` 時間機器 | 4 天 | 需 git 整合 |
 
 ### 功能深化類
@@ -248,7 +248,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | **v0.7.0** ✅ | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、~~REF-04~~✅、~~PERF-03~~✅、~~BUG-A03~~✅、~~PERF-04~~✅ | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
 | **v0.8.0** ✅ | 知識自適應 | ~~DEEP-05~~（F6 採用率）、~~ARCH-05~~（弃用流程）、~~ARCH-06~~（ConflictResolver）、~~FEAT-01~~（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
 | **v0.9.0** ✅ | 深化功能 | ~~DEEP-04~~（AI 自動裁決）✅、~~FED-01~~+~~FED-02~~（Federation 強化）✅、~~OBS-01~~（可觀測性）✅、~~CLI-02~~（fed sync CLI）✅、~~FEAT-04~~（session archive）✅ | auto-resolve 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
-| **v1.0.0** ✅ | 長期穩定 | ~~REF-01~~（BrainDB 拆分）✅、~~CLI-01~~（cli.py 拆分）✅、~~ARCH-04~~（scope UX）✅ | 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |
+| **v1.0.0** ✅ | 長期穩定 | ~~REF-01~~（BrainDB 拆分）✅、~~CLI-01~~（cli.py 拆分）✅、~~ARCH-04~~（scope UX）✅ | cli.py = 240 行 ✅（目標 ≤500）；parser 抽至 cli_utils._build_parser() |
 
 ---
 
