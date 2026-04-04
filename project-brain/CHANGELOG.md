@@ -103,6 +103,68 @@
   - **ANN LinearScan fallback 決策**（4 個測試）：`LinearScanIndex` 無外部依賴；`get_ann_index()` 在 sqlite-vec 不可用時回傳 `LinearScanIndex`；兩者共享相同介面；add/search 功能正確
   - 16/16 通過（0.53s）
 
+### P0 修復
+
+- **BUG-A01**：`engine.py` `add_knowledge` 以 `WHERE title=?` 更新 scope 造成同名節點全部被改寫（靜默資料損毀）。改用 `WHERE id=?`；直接使用 `b.db`，移除多餘的 `new BrainDB()`；`except` 改 `logger.warning`
+
+### P1 修復（BUG-A02 / ARCH-01）
+
+- **BUG-A02**：移除 FTS5 觸發器 `nodes_fts_au` / `nodes_fts_ad`（與手動同步並存造成重複索引風險）；`delete_node()` 補手動 FTS5 清理；v12 migration 執行 `DROP TRIGGER IF EXISTS`；補全測試 `TestDef02FTS5Triggers`（驗證觸發器已消失，API 仍維護 FTS5 同步）
+- **ARCH-01**：`mcp_server.py` 的 `temporal_query`、`mark_helpful`、`report_knowledge_outcome` 原直接 `BrainDB(_bdir)` 繞過 singleton，改用 `_resolve_brain().db`，消除多 WAL writer 鎖爭用
+
+### P2 修復（資安）
+
+- **SEC-01**：`brain_db.py` `search_nodes()` scope filter 原以 f-string 拼接 SQL（潛在注入路徑）。改在入口加 `re.match(r'^[a-z0-9_-]+$', scope)` 白名單驗證；非法值回退 `scope=None`
+- **SEC-02**：`mcp_server.py` `_validate_workdir()` 原在 `.resolve()` 後才驗 `..`，symlink 可繞過。改為在 `.resolve()` 前先驗 `".." in Path(raw).parts`
+- **BUG-A05**：`temporal_query` 的 `git_branch` 參數未驗證格式，使用者輸入直接傳入 subprocess（命令注入）。加入 `re.match(r'^[a-zA-Z0-9._\-/]+$', git_branch)` 驗證
+
+### P2 修復（資料一致性）
+
+- **DATA-01**：`brain_db.py` `delete_node()` 刪除前先 INSERT 到 `node_history`（記錄 title、content、confidence、`change_note='deleted'`），cascade 刪除的 edge 現在可回溯
+- **DATA-02**：`_run_migrations()` 失敗後 `schema_version` 仍 +1，導致失敗的 migration 下次啟動被跳過。引入 `_genuine_failure` flag；只有成功或 benign 錯誤（`already exists`）才遞增版本
+- **BUG-A04**：federation 匯出 scope fallback 忽略 scope 過濾，本地私有節點意外洩漏給接收方。fallback query 補上 `AND (scope IS NULL OR scope = 'global' OR scope = ?)`
+
+### P2 修復（架構）
+
+- **ARCH-02**：`BrainDB` / `KnowledgeGraph` 原使用 `threading.local()` 儲存 SQLite 連線，API server 每請求一執行緒造成 fd 洩漏。改用單一 `_conn_obj`（`check_same_thread=False`）；新增 `_make_connection()` 虛方法供 `ReadBrainDB` 覆寫（唯讀 URI）；新增 `close()` 方法明確釋放連線
+- **ARCH-03**：`search_nodes` / `search_nodes_multi` 簽名不一致、回傳結構不同。`search_nodes` 加入 `terms: list | None` 參數，內建 FTS5 fast-path；`search_nodes_multi` 改為 1 行 thin wrapper；`context.py` 改呼叫 `search_nodes(terms=terms)`
+
+### P2 修復（效能）
+
+- **PERF-01**：`context.py` 主迴圈內逐筆 `UPDATE access_count`（N+1 寫入）。移除迴圈內 UPDATE；Spaced Repetition `executemany` 區塊成為唯一的 access_count 更新路徑
+- **PERF-02**：FTS5 排序含 `CASE expression`，大資料集全掃後排序（> 5000 節點時明顯）。v13 migration 新增 `idx_nodes_pinned_conf ON nodes(is_pinned DESC, confidence DESC)`；SCHEMA_VERSION → 13
+
+### P2 修復（重構）
+
+- **REF-02**：`_SYNONYM_MAP` 複製於 `brain_db.py` 和 `context.py` 兩處，每次修改需同步兩處。新增 `project_brain/synonyms.py`；兩處改為 `from .synonyms import SYNONYM_MAP as _SYNONYM_MAP`
+- **REF-03**：`_write_guard()` 使用 `fcntl.flock()`（Windows 完全失效，每次寫入多 1–2ms syscall）。改用 `threading.RLock`（`self._write_lock`），移除所有 fcntl 相關程式碼
+
+### 功能 / 量測 / 文件
+
+- **FLY-03**：`status_renderer.py` 新增「🌀 飛輪健康度」面板：近 7 天新增節點數（🟢 ≥ 5 / 🟡 ≥ 1 / 🔴 < 1）＋ Top 3 高頻 Pitfall（依 access_count 排序）
+- **FLY-04**：`nudge_engine.py` `check()` 有結果時 emit `nudge_triggered` 事件到 brain.db；量測 SQL 收錄於 `CONTRIBUTING.md`，目標命中率 ≥ 30%
+- **FLY-05**：知識庫自然成長率量測 SQL 收錄於 `CONTRIBUTING.md`；`brain status` 飛輪面板顯示 7 天新增數；目標 ≥ 5 節點/7 天
+- **DIR-01**：`CONTRIBUTING.md` 加入「品質門檻與驗收標準」表：召回率 ≥ 60%、Chaos test 100%、靜默失效 0、Migration 可觀察率 100%
+- **DIR-02**：`COMMANDS.md` 每個命令加 🟢 / 🟡 / 🔴 狀態標記（22 個命令全覆蓋），🟡 = 架構就緒需手動步驟
+- **DIR-03**：`CONTRIBUTING.md` 加入「發布前隨機審計清單」：抽查 3 項 CHANGELOG 完成條目 + 四維指標 SQL + 發布 Gate checklist
+- **TECH-01**：`COMMANDS.md` 命令總覽加狀態欄（🟢 端對端可用 / 🟡 架構就緒 / 🔴 實驗性）
+- **TECH-02**：`COMMANDS.md` `brain distill` 已移除說明補充：輸出 JSONL 訓練設定檔，需自行搭配 Axolotl / Unsloth 執行微調
+- **TECH-03**：`COMMANDS.md` 新增「向量索引說明」：< 2000 節點用 sqlite-vec；≥ 2000 建議切換 HNSW（需 `pip install hnswlib`）
+- **STAB-08**：`pytest.ini` 加入 `chaos` marker 定義；`tests/chaos/test_chaos_and_load.py` 6 個 Chaos/Load 測試類加 `@pytest.mark.chaos`；CI 可執行 `pytest -m chaos` 作為 Gate
+
+### AI 輔助 KRB 審核（PH3-03）
+
+- **`krb_ai_assist.py` 完整實作**：三速道分流（auto-approve / manual / auto-reject）、24 小時快取、Prompt Injection 防護（拒絕含 `system:` / `ignore` / `<|` 等注入模式的 content）
+- **`brain review pre-screen`**：CLI 子命令，支援 `--limit N` / `--max-api-calls N` / `--dry-run`
+- **`krb_pre_screen` MCP 工具**：可在 Agent workflow 中呼叫，回傳分流結果與理由
+
+### 測試計劃（待實作項目）
+
+- **`tests/unit/test_ref04_constants.py`**：REF-04 魔法數字提取驗收測試（4 群組 / 11 個測試），等待 `project_brain/constants.py` 實作後執行
+- **`tests/unit/test_perf03_token_cache.py`**：PERF-03 lru_cache 驗收測試（4 群組 / 18 個測試），等待 `_count_tokens` 加 `@lru_cache` 後執行
+- **`tests/unit/test_bug_a03_locking.py`**：BUG-A03 雙重加鎖驗收測試（5 群組 / 15 個測試），等待 `engine.py` 拆分 `_init_lock` 後執行
+- **`tests/TEST_PLAN.md`**：完整測試計劃文件（9 章節）— 涵蓋測試套件全覽、待實作計劃、真實數據量測方案（FLY-04/05、REV-02）、品質門檻總表
+
 ### 文件更新（HON-01）
 
 - **HON-01 標記為 N/A**：`brain distill` 指令已於 v10.x 移除（COMMANDS.md 有記錄），README LoRA 說明已無對象。計劃中該項目標記為不適用並關閉
