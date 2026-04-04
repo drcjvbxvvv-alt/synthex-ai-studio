@@ -2,63 +2,369 @@
 
 > **當前版本**：v0.11.0（2026-04-04）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
+> **分析基準**：873 tests collected；15 failing；29 bare except/pass；完整原始碼靜態掃描。
 
 ---
 
-## 待辦項目
+## 優先等級
 
-| 優先 | ID | 影響 | 阻塞條件 | 狀態 |
-|------|----|------|---------|------|
-| ⏳ | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天真實使用數據 | 等待 |
-
-**所有其他改善項目已完成**，詳見 `CHANGELOG.md`（v0.7.0–v0.11.0）。
+| 等級 | 說明 | 目標版本 |
+|------|------|---------|
+| **P1** | 明確影響正確性或安全性，應優先處理 | v0.12.0 |
+| **P2** | 影響核心功能品質，計劃排入 | v0.13.0 |
+| **P3** | 長期願景、低頻路徑、實驗性 | 評估中 |
 
 ---
 
-## REV-02 — Decay 實際效用未量測
+## 矩陣優先總覽
 
-**問題**：無法驗證衰減是幫助還是傷害召回率。目前沒有基準數據可判斷 DecayEngine 是否讓「舊而有效」的知識被誤淘汰。
+| 優先 | ID | 影響 | 解決方案 | 阻塞依賴 | 象限 |
+|------|----|------|---------|---------|------|
+| **P1** | SEC-03 | API key 字串比對有 timing attack 漏洞 | `hmac.compare_digest()` 取代 `!=` | 無 | ⚡ 快速獲益 |
+| **P1** | BUG-D01 | 29 處 `except Exception: pass` 靜默吞錯 | 逐一加 `logger.warning`，critical 路徑改 `logger.error` | 無 | ⚡ 快速獲益 |
+| **P1** | BUG-D02 | `embedder.py._embedder_cache` 無鎖，多執行緒競態 | 加 `threading.Lock()` 保護 dict read/write | 無 | ⚡ 快速獲益 |
+| **P1** | TEST-01 | 15 個測試失敗（chaos 路徑、web_ui AttributeError、lora、embedding cache） | 修復或標記 skip；確保 CI 全綠 | 無 | 🎯 高價值 |
+| **P1** | PERF-05 | Decay `_detect_contradictions()` N+1 查詢：每對矛盾各一次 `SELECT confidence` | 批次預取所有節點信心值至 dict | 無 | ⚡ 快速獲益 |
+| **P2** | PERF-06 | 缺少 `nodes(type, confidence DESC)` 複合索引，type 過濾搜尋全表掃描 | SCHEMA_VERSION=21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)` | 無 | ⚡ 快速獲益 |
+| **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 24h） | 無 | 🔵 填空 |
+| **P2** | BUG-D04 | `session_store.py` per-thread 連線從未關閉，長執行伺服器 FD 洩漏 | 在 `threading.local` 清除時呼叫 `conn.close()`；或改用單一共享連線 | 無 | 📋 計劃執行 |
+| **P2** | ARCH-07 | `cli_utils._infer_scope()` 與 `brain_db.infer_scope()` 邏輯重複（兩套實作）| 保留 `brain_db.infer_scope()` 為單一來源，`cli_utils` 委派呼叫 | 無 | 📋 計劃執行 |
+| **P2** | OBS-02 | `decay_engine` 缺乏 F1–F7 各因子的量測輸出（無法調參） | 在 `_apply_decay()` 結束時 `db.emit("decay_factors", {f1, f2, ..., f7, final})`  | OBS-01 ✅ | 📋 計劃執行 |
+| **P2** | OBS-03 | `rollback_node()` 無審計記錄（誰在何時還原了什麼）| `node_history` 新增 `changed_by TEXT`；`rollback_node()` 寫入還原事件 | FEAT-01 ✅ | 📋 計劃執行 |
+| **P2** | SEC-04 | Federation PII 過濾缺失 IP（`192.168.x.x`）、Slack URL、Cloud service URL | 擴充 `_strip_pii()` regex 模式集 | 無 | 📋 計劃執行 |
+| **P2** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天數據後執行對比測試；`analytics_engine` 新增 `decay_impact_score()` | 90天數據 | ⏳ 等待 |
+| **P3** | FEAT-05 | `analytics_engine` 無時序圖表：知識庫成長曲線、信心分布遷移無法可視化 | `generate_timeseries()` 方法；`brain report --format html` 輸出 Chart.js 圖表 | OBS-01 ✅ | 🏗 長期 |
+| **P3** | FEAT-06 | `brain doctor` 只做基礎健康檢查，無法偵測矛盾節點比例、deprecated 比例 | 新增矛盾節點數量報告；deprecated 比例警告（> 20% 觸發 ⚠） | ARCH-06 ✅ | 📋 計劃執行 |
+| **P3** | ARCH-08 | `conflict_resolver.py` 快取無 TTL 淘汰，長執行記憶體持續增長 | 加入 TTL 驅逐（已有 `CACHE_SECONDS=86400` 常數，但無清理機制） | ARCH-06 ✅ | 🔵 填空 |
+| **P3** | TEST-02 | 缺乏針對 Decay Engine 的 100K 節點負載測試 | `tests/chaos/test_decay_load.py`：建立 100K 節點知識庫，量測衰減時間 | 無 | 🏗 長期 |
+| **P3** | TEST-03 | Chaos 測試有硬編碼 `/home/claude/synthex_v10/brain.py` 路徑（永遠失敗） | 用 `Path(__file__).parent` 或 fixture 取代硬編碼路徑 | 無 | ⚡ 快速獲益 |
+
+---
+
+## 依賴鏈
+
+```
+SEC-03 ──┐
+BUG-D01 ─┤ 無依賴，v0.12.0 可立即執行
+BUG-D02 ─┤
+PERF-05 ─┘
+
+PERF-06 ──→ 無依賴（schema migration）
+BUG-D03 ──→ 無依賴
+TEST-01 ──→ 無依賴（修復現有測試）
+TEST-03 ──→ 無依賴
+
+OBS-02 ──→ OBS-01 ✅（structlog 基礎設施已就位）
+OBS-03 ──→ FEAT-01 ✅（node_history 表已存在）
+
+FEAT-06 ──→ ARCH-06 ✅（ConflictResolver 已有矛盾偵測）
+ARCH-08 ──→ ARCH-06 ✅（conflict_resolver.py 已存在）
+
+REV-02 ──→ 90 天真實數據（不可提前執行）
+FEAT-05 ──→ OBS-01 ✅ + 充分的 events 數據
+```
+
+---
+
+## P1 — 正確性 / 安全性缺陷
+
+### SEC-03 — API Key Timing Attack
+
+**問題**：`api_server.py:154`：
+```python
+if auth[7:].strip() != key:   # 字串比對非恆定時間
+```
+透過計時差異可推算 key 長度與前綴，在本地網路環境下可量測。
+
+**修復**：
+```python
+import hmac
+if not hmac.compare_digest(auth[7:].strip(), key):
+```
+
+**工時**：1 行，< 15 分鐘。
+
+---
+
+### BUG-D01 — 靜默例外吞錯（29 處）
+
+**問題**：18 個檔案共 29 處 `except Exception: pass`，bug 和資料損毀完全不可見。
+
+高危路徑（依嚴重程度）：
+
+| 檔案 | 嚴重程度 | 危險原因 |
+|------|---------|---------|
+| `brain_db.py`（6 處） | 🔴 高 | migration 失敗、edge 寫入失敗靜默 |
+| `cli_knowledge.py`（7 處） | 🟡 中 | 使用者操作失敗無反饋 |
+| `graph.py`（5 處） | 🔴 高 | graph 操作失敗無記錄 |
+| `federation.py`（4 處） | 🟡 中 | 匯入失敗靜默 |
+| `engine.py`（3 處） | 🟡 中 | sync 失敗靜默 |
+
+**修復方針**：
+- 核心儲存路徑（`brain_db.py`、`graph.py`）：`except Exception as e: logger.error("...", e)`
+- CLI 路徑：`except Exception as e: logger.warning("...", e)`
+- 非關鍵輔助路徑（rich render、emoji）：`except Exception: logger.debug("...", exc_info=True)`
+
+**工時**：2 天（逐一審查每個路徑）。
+
+---
+
+### BUG-D02 — Embedder Cache 競態（多執行緒）
+
+**問題**：`embedder.py:305`：
+```python
+_embedder_cache: dict = {}   # 無 threading.Lock
+```
+FastMCP 在多執行緒環境下並發呼叫 `get_embedder()` 可能造成：
+1. 重複建立 embedder（浪費 300ms+）
+2. dict 寫入競態（CPython GIL 通常保護，但 Jython/PyPy 不保護）
+
+**修復**：
+```python
+_embedder_lock = threading.Lock()
+
+def get_embedder(provider: str = "") -> ...:
+    with _embedder_lock:
+        if provider in _embedder_cache:
+            return _embedder_cache[provider]
+        ...
+```
+
+**工時**：30 分鐘。
+
+---
+
+### TEST-01 — 修復 15 個失敗測試
+
+**分類**：
+
+| 類別 | 測試數 | 原因 | 修復方向 |
+|------|--------|------|---------|
+| `TestBug08WebUIPathConsistency`（4） | 4 | `generate_graph_html()` 函數已移除或簽名改變 | 更新測試以匹配現有 web_ui API |
+| `TestB24RealUserPath`（4） | 4 | setup wizard 產生的 CLAUDE.md 格式變動 | 更新 expected 字串 |
+| `TestEngineWithMockedLLM::test_add_knowledge_positional_cli`（2） | 2 | positional arg 順序改變 | 修正測試呼叫簽名 |
+| `TestKnowledgeDistiller::test_lora_dataset_creates_jsonl`（2） | 2 | LoRA dataset 功能狀態不確定 | 確認功能存在或 `@pytest.mark.skip` |
+| `TestOpt03EmbeddingCache::test_cache_hit_is_same_object`（1） | 1 | BUG-D02 競態造成每次回傳新實例 | 修復 BUG-D02 即可解決 |
+| Chaos `test_l2_health_check_function_exists`（1） | 1 | 硬編碼 `/home/claude/synthex_v10/brain.py` | 見 TEST-03 |
+
+**目標**：測試套件從 742/873 提升至 873/873（≥99% 通過率）。
+
+**工時**：1.5 天。
+
+---
+
+### PERF-05 — Decay N+1 矛盾信心查詢
+
+**問題**：`decay_engine.py` `_detect_contradictions()`：
+```python
+for node_a, node_b in contradiction_pairs:
+    conf_a = db.conn.execute("SELECT confidence FROM nodes WHERE id=?", (node_a,)).fetchone()
+    conf_b = db.conn.execute("SELECT confidence FROM nodes WHERE id=?", (node_b,)).fetchone()
+```
+100 對矛盾 = 200 次獨立 SELECT。
+
+**修復**：預取所有節點信心值：
+```python
+all_ids = {n for pair in contradiction_pairs for n in pair}
+conf_map = {r["id"]: r["confidence"] for r in db.conn.execute(
+    f"SELECT id, confidence FROM nodes WHERE id IN ({','.join('?'*len(all_ids))})",
+    list(all_ids)).fetchall()}
+```
+
+**工時**：1 小時。
+
+---
+
+## P2 — 核心功能品質
+
+### PERF-06 — 缺少 type+confidence 複合索引
+
+**問題**：`search_nodes(node_type=...)` 呼叫產生：
+```sql
+SELECT n.* FROM nodes_fts f JOIN nodes n ON f.id=n.id WHERE n.type=? ORDER BY confidence DESC
+```
+目前索引：`idx_nodes_scope_conf(scope, confidence)`、`idx_nodes_pinned_conf(is_pinned, confidence)`。
+**缺少**：`idx_nodes_type_conf(type, confidence DESC)`。10k 節點下 type 過濾全表掃描。
+
+**修復**：SCHEMA_VERSION=21 migration：
+```sql
+ALTER TABLE nodes ... -- no new column needed
+CREATE INDEX IF NOT EXISTS idx_nodes_type_conf ON nodes(type, confidence DESC)
+```
+
+**工時**：30 分鐘（純 migration）。
+
+---
+
+### BUG-D03 — KRB AI Assist Cache 永不 VACUUM
+
+**問題**：`krb_ai_assist.py` 的 `ai_screen_cache.db` lazy 刪除過期行但從不執行 `VACUUM`，SQLite 檔案只增不減。
+
+**修復**：在 `_init_db()` 末尾加條件性 VACUUM：
+```python
+last_vacuum = self._conn.execute(
+    "SELECT value FROM meta WHERE key='last_vacuum'").fetchone()
+if not last_vacuum or (datetime.now() - datetime.fromisoformat(last_vacuum[0])).days > 7:
+    self._conn.execute("VACUUM")
+    self._conn.execute("INSERT OR REPLACE INTO meta VALUES('last_vacuum', ?)",
+                       (datetime.now().isoformat(),))
+```
+
+**工時**：2 小時。
+
+---
+
+### BUG-D04 — SessionStore Per-Thread 連線洩漏
+
+**問題**：`session_store.py` 使用 `threading.local()` 儲存 SQLite 連線，執行緒結束時連線不關閉，長執行伺服器（`brain serve`）可能耗盡 FD。
+
+**修復方案 A（最小改動）**：改用單一共享連線 + `check_same_thread=False`（WAL 模式下安全）。
+**修復方案 B**：改用 `weakref.finalize()` 在執行緒 GC 時自動關閉。
+
+**建議**：採用方案 A，與 `brain_db.py` 的模式一致。
+
+**工時**：3 小時。
+
+---
+
+### ARCH-07 — 雙重 scope 推斷實作
+
+**問題**：`cli_utils._infer_scope()` 與 `brain_db.infer_scope()` 各自維護相同的推斷邏輯（git remote → 子目錄 → workdir → global）。兩者同步修改容易遺漏。
+
+**修復**：`cli_utils._infer_scope()` 改為：
+```python
+def _infer_scope(workdir: str, current_file: str = "") -> str:
+    from project_brain.brain_db import BrainDB
+    return BrainDB.infer_scope(workdir, current_file)
+```
+
+**工時**：1 小時 + 測試驗證。
+
+---
+
+### OBS-02 — Decay F1–F7 因子量測缺失
+
+**問題**：`decay_engine._apply_decay()` 計算 7 個因子的乘積但從不記錄各因子貢獻，無法診斷「為何這個節點信心從 0.85 降到 0.21」。
+
+**修復**：`_apply_decay()` 結尾加：
+```python
+db.emit("decay_run", {
+    "node_id": node_id,
+    "factors": {"f1_time": f1, "f2_access": f2, "f3_contra": f3,
+                "f4_cross": f4, "f5_version": f5, "f6_adoption": f6, "f7_freq": f7},
+    "old_conf": old_conf, "new_conf": new_conf,
+})
+```
+`analytics_engine` 新增 `decay_factor_breakdown(node_id)` 讀取 events 表。
+
+**工時**：1 天。
+
+---
+
+### OBS-03 — rollback_node() 無審計記錄
+
+**問題**：`brain restore <node_id> --version <N>` 執行後，`node_history` 中無法知道是誰在何時還原了什麼版本，違反知識演變可追溯性（FEAT-01 目標）。
+
+**修復**：
+1. `node_history` 加 `changed_by TEXT DEFAULT 'system'`（v22 migration，可為 null）
+2. `rollback_node()` 參數加 `changed_by: str = ""`，寫入 `node_history` 帶 `change_type='rollback'`
+
+**工時**：半天。
+
+---
+
+### SEC-04 — Federation PII 過濾不完整
+
+**問題**：`federation.py` `_strip_pii()` 目前過濾：email、`*.internal`、`.local` 域名。
+缺失：
+- IP 位址：`192.168.x.x`、`10.x.x.x`、`172.16-31.x.x`
+- Slack workspace URL：`*.slack.com`
+- 內部 Cloud 路徑：`s3.*/internal-bucket`
+- 內部 git URL：`github.corp.com/...`
+
+**修復**：擴充 regex 模式集（4 條新 pattern）。
+
+**工時**：2 小時 + 測試。
+
+---
+
+### REV-02 — Decay 實際效用未量測
+
+**問題**：無法驗證衰減是幫助還是傷害召回率。
 
 **量測方案**：
-1. 對比有/無衰減兩組知識庫的召回率
-2. 統計 `brain report` 中過時節點排前 3 的比例
-3. 追蹤 deprecated 節點在被清除前的 access_count
+1. 對比有/無衰減兩組知識庫的召回率（`tests/benchmarks/benchmark_recall.py` 已有基礎）
+2. 統計 deprecated 節點在清除前的 `access_count`（零 access = 衰減正確）
+3. `analytics_engine` 新增 `decay_impact_score()`
 
-**執行條件**：需 90 天以上真實使用數據（`brain_db.traces` + `analytics_engine`）。
+**執行條件**：需 90 天真實使用數據。目標：`brain report` 中顯示衰減效用指標。
 
-詳見 `tests/TEST_PLAN.md` § 7 — REV-02 衰減效用量測
+---
+
+## P3 — 長期 / 低頻 / 實驗性
+
+### FEAT-05 — analytics 時序報告 / HTML 儀表板
+
+`analytics_engine.generate_timeseries()` 方法 + `brain report --format html` 輸出 Chart.js 圖表（知識庫成長曲線、信心分布、decay 趨勢）。工時：3 天。
+
+---
+
+### FEAT-06 — brain doctor 矛盾 / deprecated 指標
+
+`brain doctor` 新增：
+- 矛盾節點比例（`CONFLICTS_WITH` edges 數量 / 總節點數）
+- Deprecated 比例（若 > 20% 觸發 ⚠ 警告）
+- Decay 未執行天數警告
+
+工時：1 天。
+
+---
+
+### ARCH-08 — ConflictResolver 快取 TTL 淘汰
+
+`conflict_resolver.py` 已有 `CACHE_SECONDS=86400` 常數，但快取永不清空（dict 只增不減）。加入 TTL 淘汰：在 `resolve()` 呼叫時清除超過 `CACHE_SECONDS` 的項目。工時：2 小時。
+
+---
+
+### TEST-02 — Decay Engine 100K 節點負載測試
+
+`tests/chaos/test_decay_load.py`：建立 100K 節點，執行完整 decay 週期，量測：時間 < 60s、記憶體 < 500MB、無 SQLite lock 錯誤。工時：1 天。
+
+---
+
+### TEST-03 — 修復 Chaos 測試硬編碼路徑
+
+`tests/chaos/test_chaos_and_load.py:380` 硬編碼 `/home/claude/synthex_v10/brain.py`，在任何其他環境永遠失敗。改用 `Path(__file__).parents[2] / "project_brain"` 或直接 import。工時：1 小時。
 
 ---
 
 ## 版本路線圖
 
-| 版本 | 主題 | 狀態 |
-|------|------|------|
-| **v0.7.0** | 正確性優先（PERF-03/04, BUG-A03, REF-04, BUG-B01/B02） | ✅ 完成 |
-| **v0.8.0** | 知識自適應（DEEP-05, ARCH-05, ARCH-06, FEAT-01） | ✅ 完成 |
-| **v0.9.0** | 深化功能（DEEP-04, FED-01/02, CLI-02, FEAT-04, OBS-01） | ✅ 完成 |
-| **v0.10.0** | 長期穩定（REF-01, CLI-01, ARCH-04） | ✅ 完成 |
-| **v0.11.0** | AI 全自主（KRB-01, FEAT-03, BUG-C01/02/03） | ✅ 完成 |
-| **v0.12.0** | 量測驗證（REV-02） | ⏳ 等待 90 天數據 |
+| 版本 | 主題 | 主要工作 | Gate |
+|------|------|---------|------|
+| **v0.12.0** | 正確性修復 | SEC-03, BUG-D01, BUG-D02, TEST-01, PERF-05, TEST-03 | 0 failing tests；所有 P1 修復通過 |
+| **v0.13.0** | 品質強化 | PERF-06, BUG-D03, BUG-D04, ARCH-07, OBS-02, OBS-03, SEC-04 | 無 bare except/pass（高危路徑）；index 效能驗收 |
+| **v0.14.0** | 長期改善 | FEAT-06, ARCH-08, TEST-02, FEAT-05（視餘力） | REV-02 90天數據就位後 |
+| **v0.15.0** | 量測驗收 | REV-02 decay 效用量測與報告 | `brain report` 顯示衰減效用指標 |
 
 ---
 
 ## 架構完整度（v0.11.0）
 
-| 層 / 模組 | 完整度 |
-|----------|--------|
-| L1a SessionStore | ✅ FEAT-04 session archive |
-| L2 Episodes / Temporal | ✅ FEAT-03 `nodes_at_time()`；`brain history --at` |
-| L3 KnowledgeGraph | ✅ |
-| BrainDB | ✅ SCHEMA_VERSION=20；v14–v20 遷移全數完成 |
-| DecayEngine | ✅ 7/7 因子（含 F6 採用率）；CONFLICTS_WITH edges |
-| ContextEngineer | ✅ `[已棄用]` 標記；即時衰減 |
-| NudgeEngine | ✅ `auto_resolve_batch()`；rule-based + LLM-assisted |
-| ConflictResolver | ✅ LLM/Ollama 仲裁；非對稱 confidence 調整 |
-| Federation | ✅ FED-01 審計；FED-02 語義去重；CLI-02 fed sync |
-| KRB | ✅ KRB-01 AI 全自動裁決；source-based confidence；audit log |
-| MCP Server | ✅ `report_knowledge_outcome` emit 閉環 |
-| API Server | ✅ `GET /v1/knowledge/deprecated`；`POST /v1/knowledge/<id>/outcome` |
-| CLI | ✅ history/restore/deprecated/session/fed/review 全部實裝 |
-| 可觀測性 | ✅ structlog + `GET /v1/metrics` Prometheus |
-| Analytics | ✅ `query_hit_rate()`（traces v20）；`useful_knowledge_rate()`（events emit） |
+| 層 / 模組 | 完整度 | 已知缺口 |
+|----------|--------|---------|
+| L1a SessionStore | ✅ | BUG-D04 FD 洩漏 |
+| L2 Episodes / Temporal | ✅ | — |
+| L3 KnowledgeGraph | ✅ | — |
+| BrainDB | ✅ SCHEMA v20 | PERF-06 缺 type+conf 索引（v21）|
+| DecayEngine | ✅ 7/7 因子 | PERF-05 N+1；OBS-02 因子量測缺失 |
+| ContextEngineer | ✅ | BUG-D01 部分 except/pass |
+| NudgeEngine | ✅ | — |
+| ConflictResolver | ✅ | ARCH-08 快取無 TTL 淘汰 |
+| Federation | ✅ | SEC-04 PII 過濾不完整 |
+| KRB | ✅ | BUG-D03 cache.db 永不 VACUUM |
+| MCP Server | ✅ | — |
+| API Server | ✅ | SEC-03 timing attack |
+| Embedder | ⚠️ | BUG-D02 cache 無鎖 |
+| Analytics | ✅ | OBS-02 decay 因子缺失；REV-02 待量測 |
+| Tests | ⚠️ | 15 failing；chaos 硬編碼路徑 |
