@@ -61,21 +61,183 @@
 
 ---
 
+## 技術審計發現（2026-04-04 深度分析）
+
+> 基於完整原始碼靜態分析（1797+ 行 brain_db.py、1100+ 行 mcp_server.py、900+ 行 context.py 等核心模組）。
+> 本節 ID 格式為 `BUG-`/`ARCH-`/`PERF-`/`SEC-`/`REF-`/`DATA-`，對應 IMPROVEMENT_PLAN 內其他項目以交叉引用。
+
+### 問題總覽
+
+| ID      | 等級   | 類別     | 問題摘要                                     | 涉及檔案                   |
+| ------- | ------ | -------- | -------------------------------------------- | -------------------------- |
+| BUG-A01 | **P0** | 資料一致性 | scope 更新以 title 比對（非唯一），多節點被誤改 | `mcp_server.py` L403-412 |
+| BUG-A02 | **P1** | 資料一致性 | FTS5 觸發器與手動同步並存，可能產生重複索引  | `brain_db.py` L507-514     |
+| BUG-A03 | P2     | 並發      | double-checked locking 無 volatile 語意      | `engine.py` L87-101        |
+| BUG-A04 | P2     | 資料一致性 | Federation 匯出 scope fallback 忽略 scope 過濾，可能洩漏本地節點 | `federation.py` L130-141 |
+| BUG-A05 | P2     | 資安     | git branch 參數未驗證格式（使用者輸入）      | `mcp_server.py` L485-487   |
+| ARCH-01 | **P1** | 架構耦合 | MCP server 直接 new BrainDB，繞過 ProjectBrain singleton | `mcp_server.py` L403 |
+| ARCH-02 | P2     | 資源管理 | thread-local SQLite 連線無清理，長跑伺服器洩漏 fd | `brain_db.py` L88-99  |
+| ARCH-03 | P2     | API 一致性 | `search_nodes` / `search_nodes_multi` 簽名不一致、回傳結構不同 | `graph.py` L400-547 |
+| ARCH-04 | P2     | API 一致性 | scope 三路控制流（`--global` / `--scope` / 自動推斷）讓使用者困惑 | `cli.py` L381-395 |
+| PERF-01 | P2     | 效能     | access_count 在迴圈內逐筆 UPDATE（N+1 寫入）  | `context.py` L297-303      |
+| PERF-02 | P2     | 效能     | FTS5 排序含 CASE expression，大資料集全掃後排序 | `brain_db.py` L607-617   |
+| PERF-03 | P3     | 效能     | CJK token 計數逐字迭代，無快取                | `context.py` L76-80        |
+| SEC-01  | P2     | 資安     | scope filter 以 f-string 拼接 SQL（潛在注入） | `brain_db.py` L607-617     |
+| SEC-02  | P2     | 資安     | symlink 不受路徑遍歷保護（`.resolve()` 後才驗證）| `mcp_server.py` L89-93  |
+| SEC-03  | P3     | 資安     | PII 正則過於簡陋，漏抓 / 誤抓               | `federation.py` L33-35     |
+| REF-01  | P2     | 重構     | BrainDB 1797 行，承擔 10+ 職責（God Object） | `brain_db.py`              |
+| REF-02  | P2     | 重構     | Synonym Map 複製於兩處，「master copy」說明矛盾 | `brain_db.py` + `context.py` |
+| REF-03  | P2     | 重構     | `_write_guard()` 使用 fcntl（不跨平台，已有 WAL 足夠） | `brain_db.py` L361-405 |
+| REF-04  | P3     | 重構     | Magic numbers 散落（`0.003`、`800`、`limit=8` 等）| 多個檔案            |
+| DATA-01 | P2     | 資料一致性 | 節點刪除時邊的 cascade 無審計日誌            | `brain_db.py` L125-129     |
+| DATA-02 | P2     | 資料一致性 | Migration 失敗後 schema version 仍遞增，破壞未來遷移 | `brain_db.py` L226-310 |
+
+---
+
+### 詳細分析
+
+#### BUG-A01：scope 更新以 title 比對（P0）
+
+**根本原因**：`mcp_server.py` 中 `add_knowledge` 新增節點後，以 `WHERE title=?` 更新 scope，但 title 不唯一——兩個相同標題的節點（不同 scope）會同時被改寫。
+
+```python
+# 現況（危險）
+_db.conn.execute("UPDATE nodes SET scope=? WHERE title=?", (scope, title_c))
+
+# 修法：add_node 回傳 node_id 後直接用 id 更新
+_db.conn.execute("UPDATE nodes SET scope=? WHERE id=?", (scope, node_id))
+```
+
+**解決方案**：`add_knowledge` 取得 `add_node()` 回傳的 `node_id`，改用 `WHERE id=?`；加入 `logger.warning` 取代 `except Exception: pass`。
+
+---
+
+#### BUG-A02：FTS5 觸發器 + 手動同步並存（P1）
+
+**根本原因**：`_setup()` 建立了 `nodes_fts_insert` / `nodes_fts_delete` 觸發器，但 `add_node()` 又手動執行 `DELETE FROM nodes_fts` + `INSERT INTO nodes_fts`。`INSERT OR REPLACE INTO nodes` 觸發 delete+insert 觸發器，再加上手動同步，可能產生重複 FTS5 row。
+
+**解決方案**：選一。建議保留手動同步（更可控），刪除觸發器，在 migration 中 `DROP TRIGGER IF EXISTS`。
+
+---
+
+#### ARCH-01：MCP Server 直接 new BrainDB（P1）
+
+**根本原因**：`add_knowledge`、`search_knowledge` 等 MCP 工具裡有 `_db = BrainDB(_bdir)` 直接實例化，繞過了 `ProjectBrain.db` singleton，造成多個 writer 同時持有 WAL lock。
+
+**解決方案**：統一透過 `b = _resolve_brain(workdir); db = b.db` 取得 BrainDB 實例，不在工具內自行 new。
+
+---
+
+#### ARCH-02：thread-local 連線無清理（P2）
+
+**根本原因**：`BrainDB.conn` 以 `threading.local()` 儲存每執行緒的連線，執行緒結束時 Python 不保證呼叫 `__del__`，file descriptor 不會釋放。在 `api_server.py` 每請求一執行緒的場景下，長跑會耗盡 fd。
+
+**解決方案**：改用單一 `check_same_thread=False` 連線加 `threading.RLock`（已有 `_write_guard`，套用即可），或在 `api_server.py` handler 完成後顯式 `close()`。
+
+---
+
+#### SEC-01：scope filter f-string SQL 拼接（P2）
+
+**根本原因**：`search_nodes()` 的 scope 過濾以字串拼接：
+
+```python
+sf = " AND n.scope=?" if scope else ""
+# ... f" WHERE nodes_fts MATCH ? {sf} ..."
+```
+
+`sf` 本身不含使用者輸入，但其他呼叫者傳入的 `scope` 值理論上可觸達。
+
+**解決方案**：改為完整參數化查詢；明確驗證 scope 只含 `[a-z0-9_]`，不接受任意字串。
+
+---
+
+#### REF-01：BrainDB God Object（P2）
+
+BrainDB（1797 行）承擔 schema 遷移、FTS5 tokenizer、同義詞展開、write lock、節點 CRUD、episode、feedback、歷史快照、衰減計算、vector 搜尋等超過 10 個職責，違反單一職責。
+
+**建議拆分方向**（不需一次做完，可逐步重構）：
+
+| 類別 | 職責 | 目標類別名 |
+|------|------|-----------|
+| Schema | `_setup()` + migrations | `BrainSchema` |
+| 文字處理 | `_ngram()` + `_sanitize_fts()` | `TextProcessor` |
+| 同義詞 | `_SYNONYM_MAP` + `build_synonym_index()` | `SynonymIndex`（獨立模組） |
+| Write lock | `_write_guard()` | 內聯至 `conn`，或刪除（WAL 足夠） |
+| Feedback | `record_feedback()` | `FeedbackTracker` |
+| Vector | `add_vector()` + `search_nodes_by_vector()` | `VectorStore` |
+
+---
+
+#### REF-02：Synonym Map 兩份（P2）
+
+`brain_db.py` 和 `context.py` 各有一份 `_SYNONYM_MAP`，注解相互指向對方為「master copy」，邏輯矛盾。SYNC-01 雖已同步至 46 條，但下次修改仍需同時改兩處。
+
+**解決方案**：新增 `project_brain/synonyms.py`，兩處改為 `from .synonyms import SYNONYM_MAP`。
+
+---
+
+#### REF-03：`_write_guard()` 的 fcntl 已非必要（P2）
+
+SQLite WAL 模式 + `PRAGMA busy_timeout` 已提供跨進程寫入串列化。`fcntl.flock()` 在 macOS 的 NFS / APFS 下行為不一致，且每次寫入增加 1-2ms syscall。
+
+**解決方案**：移除 `fcntl` 相關程式碼，依賴 SQLite WAL + busy_timeout（目前已設 5000ms）。
+
+---
+
+#### DATA-02：Migration version 在失敗後仍遞增（P2）
+
+`_run_migrations()` 的 except 區塊記 warning 後繼續執行，`schema_version` 照常 +1。下次啟動時，失敗的 migration 被視為已完成而跳過，導致 schema 永久損壞。
+
+**解決方案**：失敗的 migration 不遞增 version；可考慮引入 `migration_log` 表記錄每次遷移的實際結果（success / failure / skipped）。
+
+---
+
+### 修復優先順序（建議納入 v0.7.0）
+
+```
+P0（立即）：BUG-A01（title-based scope update）
+P1（v0.7.0）：BUG-A02（FTS5 dual sync）、ARCH-01（BrainDB singleton bypass）
+P2（v0.7.0~v1.0.0）：SEC-01、ARCH-02、ARCH-03、PERF-01、DATA-02、REF-02、REF-03
+P3（backlog）：PERF-03、SEC-03、REF-04
+```
+
+---
+
 ## 待辦技術改善
 
-| 優先 | 項目             | 說明                                                                             | 涉及檔案                  |
-| ---- | ---------------- | -------------------------------------------------------------------------------- | ------------------------- |
-| P3   | 合併兩套資料庫   | `knowledge_graph.db` 遷入 `brain.db`，消除雙庫一致性風險與維護負擔              | `graph.py`, `brain_db.py` |
+| 優先 | ID      | 項目                          | 說明                                                                                             | 涉及檔案                      |
+| ---- | ------- | ----------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------- |
+| P0   | BUG-A01 | scope 更新改用 node_id        | `add_knowledge` 以 `WHERE id=?` 取代 `WHERE title=?`；加 logger.warning                         | `mcp_server.py`               |
+| P1   | BUG-A02 | 移除 FTS5 觸發器              | 刪除 `nodes_fts_insert/delete` 觸發器，統一走手動同步，加 migration 清除舊觸發器                 | `brain_db.py`                 |
+| P1   | ARCH-01 | BrainDB 透過 singleton 存取   | MCP 工具內改用 `b.db`，不直接 `new BrainDB`                                                      | `mcp_server.py`               |
+| P2   | SEC-01  | scope filter 參數化           | 用完整參數化查詢取代 f-string 拼接；`scope` 值白名單驗證                                         | `brain_db.py`                 |
+| P2   | ARCH-02 | thread-local 連線清理         | API server handler 結束時 close connection，或改用單一帶鎖連線                                   | `brain_db.py`, `api_server.py`|
+| P2   | ARCH-03 | 統一 graph 搜尋 API           | `search_nodes` / `search_nodes_multi` 合併為單一函式，統一回傳結構與 scope 支援                  | `graph.py`                    |
+| P2   | PERF-01 | access_count 批次 UPDATE      | 收集節點 ID 清單，context 組裝完後一次 `UPDATE ... WHERE id IN (...)`                            | `context.py`                  |
+| P2   | DATA-02 | Migration 失敗不遞增 version  | except 區塊內不執行 `schema_version += 1`；引入 `migration_log` 表                               | `brain_db.py`                 |
+| P2   | REF-02  | Synonym Map 獨立模組          | 新增 `synonyms.py`，`brain_db.py` / `context.py` 共同 import                                    | `brain_db.py`, `context.py`   |
+| P2   | REF-03  | 移除 fcntl write lock         | 依賴 SQLite WAL + busy_timeout，刪除 `fcntl.flock()` 相關程式碼                                  | `brain_db.py`                 |
+| P2   | BUG-A04 | Federation export scope 驗證  | 匯出前明確檢查 scope column 存在；fallback 必須維持 scope 過濾                                   | `federation.py`               |
+| P2   | BUG-A05 | git branch 名稱驗證           | 加 `^[a-zA-Z0-9._\-/]+$` 正則驗證；非法值回傳 error 而非執行                                   | `mcp_server.py`               |
+| P3   | REF-01  | BrainDB 拆分（逐步）          | 優先抽 `VectorStore`（add_vector/search_by_vector）和 `FeedbackTracker`（record_feedback）       | `brain_db.py`                 |
+| P3   | PERF-02 | FTS5 排序複合索引             | 加 `(is_pinned DESC, confidence DESC)` 複合索引                                                  | `brain_db.py`                 |
+| P3   | ARCH-04 | scope 控制流簡化              | 合併 `--global` / `--scope` 為單一 `--scope global`；保留自動推斷                               | `cli.py`                      |
+| P3   | REF-04  | 魔法數字集中管理              | 新增 `constants.py`，遷入 `limit=8`、`budget=800`、`0.003` 衰減率等                             | 多個檔案                      |
+| P3   | DATA-01 | 節點刪除審計日誌              | `delete_node()` 寫入 `node_history` 或 `events` 表，記錄被 cascade 刪除的 edge 清單             | `brain_db.py`                 |
+| P3   | SEC-02  | symlink 路徑遍歷              | `resolve(strict=True)` 或在 resolve 前先驗證                                                     | `mcp_server.py`               |
+| P3   | SEC-03  | PII 正則加強                  | 引入 Microsoft Presidio 或 spaCy NER 作為 PII 偵測後端（可選依賴）                              | `federation.py`               |
+| P3   | PERF-03 | CJK token 計數快取            | `_count_tokens()` 加 `lru_cache`                                                                 | `context.py`                  |
+| P3   | —       | 合併兩套資料庫                | `knowledge_graph.db` 遷入 `brain.db`，消除雙庫一致性風險                                        | `graph.py`, `brain_db.py`     |
 
 ---
 
 ## 版本路線圖
 
-| 版本      | 主題       | 鎖定目標                                                                                                                               | 發布條件（Gate）                                                                                  |
-| --------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| **v0.6.0**| 飛輪啟動   | FLY-03 + **REV-01**（必要）+ UNQ-03 + STAB-06 + STAB-07 + HON-01 + SYNC-01 + DIR-01~02                                               | REV-01 對照實驗完成並有數據；靜默失效路徑數 = 0；ReviewBoard.db 損壞可恢復；SR node ID 比對完成  |
-| **v0.7.0**| 護城河強化 | **MON-04**（必要）+ MON-01~02 + MON-03 草案確認 + TECH-01~03 + STAB-08 + DIR-03 + FLY-04~05 + UNQ-02                                 | 聯邦 bundle 可被第三方驗證引用；官方 bundle 20 條含審核通過標記；Chaos test 接入 CI；NudgeEngine 命中率有量測數據 |
-| **v1.0.0**| 企業就緒   | PH3-04 Cloud 基礎架構 + FLY-06 Time to First Value + UNQ-02 季度更新 + REV-03 可公開驗證報告                                          | 內外部 QA 通過；知識庫在真實專案跑滿 30 天的效果數據；Time to First Value ≤ 48hr                 |
+| 版本      | 主題       | 鎖定目標                                                                                                                                                                          | 發布條件（Gate）                                                                                                             |
+| --------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **v0.6.0**| 飛輪啟動   | FLY-03 + **REV-01**（必要）+ UNQ-03 + STAB-06 + STAB-07 + HON-01 + SYNC-01 + DIR-01~02                                                                                          | REV-01 對照實驗完成並有數據；靜默失效路徑數 = 0；ReviewBoard.db 損壞可恢復；SR node ID 比對完成                              |
+| **v0.7.0**| 護城河強化 | **MON-04**（必要）+ MON-01~02 + MON-03 草案確認 + TECH-01~03 + STAB-08 + DIR-03 + FLY-04~05 + UNQ-02 + **BUG-A01**（P0）+ **BUG-A02**（P1）+ **ARCH-01**（P1）+ SEC-01 + PERF-01 + DATA-02 + REF-02~03 | 所有 P0/P1 audit 項目修復；聯邦 bundle 可第三方驗證；Chaos test 接 CI；NudgeEngine 命中率有量測數據 |
+| **v1.0.0**| 企業就緒   | PH3-04 Cloud 基礎架構 + FLY-06 Time to First Value + UNQ-02 季度更新 + REV-03 可公開驗證報告 + REF-01 BrainDB 拆分（VectorStore/FeedbackTracker）+ ARCH-02~04 + PERF-02          | 內外部 QA 通過；知識庫真實專案跑滿 30 天數據；Time to First Value ≤ 48hr；BrainDB ≤ 800 行                                  |
 
 ---
 
