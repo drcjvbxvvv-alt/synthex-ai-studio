@@ -174,22 +174,16 @@ v0.10.0     ──→ ARCH-04  ✅ 完成
 
 ---
 
-### DEEP-05 — Decay F6 採用率反饋缺失（知識自學習閉環）
+### ~~DEEP-05~~ ✅ — Decay F6 採用率反饋（知識自學習閉環）**（已完成）**
 
-**問題**：`decay_engine.py` 設計了 F1–F7 共 7 個衰減因子，但 **F6（採用率反饋）完全未實裝**。每次 Agent 使用知識後，系統無法知道這條知識是否有幫助；有用的知識無法被獎勵，無效知識無法被懲罰，整個知識庫是「靜態評分」而非「自適應評分」。
+**問題**：`decay_engine.py` F6（採用率反饋）未實裝；有用知識無法被獎勵，知識庫是「靜態評分」。
 
-**實際影響**：
-- `report_knowledge_outcome(node_id, was_useful)` 的 MCP 呼叫結果未被 Decay Engine 消費
-- 長期使用後，高品質知識和低品質知識的 confidence 分佈無差異
-- 知識庫喪失「越用越聰明」的核心能力
-
-**修復方案**：
-1. `brain_db.py` 新增 `record_outcome(node_id, was_useful: bool)`：`was_useful=True` → `meta.adoption_count += 1`，`confidence = min(1.0, confidence + 0.03)`；`was_useful=False` → `confidence = max(DECAY_FLOOR, confidence - 0.05)`
-2. `decay_engine.py` 新增 `_factor_adoption(node)` → `F6 = min(1.2, 1 + adoption_count * 0.02)`（最多 +20% 加成）
-3. `mcp_server.py` 確認 `report_knowledge_outcome` tool 正確呼叫 `record_outcome()`（現在只呼叫 `mark_helpful`）
-4. REST 端點補充：`POST /v1/knowledge/<node_id>/outcome`
-
-**工時**：1.5 天
+**實裝內容**：
+1. `brain_db.py` v17 migration：`adoption_count INTEGER NOT NULL DEFAULT 0`；`feedback_tracker.py` `record_outcome()` 實作採用率累計與信心調整
+2. `decay_engine.py` `_factor_adoption(adoption_count)` → `F6 = min(1.2, 1 + adoption_count × 0.02)`（最多 +20%）
+3. `mcp_server.py` `report_knowledge_outcome` 工具：呼叫 `record_feedback()` + `graph.increment_adoption()`
+4. `graph.py` `increment_adoption(node_id)` — knowledge_graph.db 同步 adoption_count
+5. `api_server.py` **`POST /v1/knowledge/<id>/outcome`**：REST 入口，接收 `{"was_useful": bool, "notes": "..."}`，回傳 `{"confidence": 0.85, "delta": 0.03}`
 
 ---
 

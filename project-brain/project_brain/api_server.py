@@ -8,6 +8,7 @@ project_brain/api_server.py — Project Brain REST API Server
   GET  /v1/stats
   GET  /v1/knowledge
   GET  /v1/knowledge/deprecated
+  POST /v1/knowledge/<id>/outcome
   GET,POST /v1/context
   POST /v1/messages
   POST /v1/add
@@ -204,6 +205,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._knowledge(wd)
             if path == "/v1/knowledge/deprecated" and method == "GET":
                 return self._knowledge_deprecated(wd, qs)
+            # DEEP-05: POST /v1/knowledge/<id>/outcome — feedback loop
+            m = re.fullmatch(r"/v1/knowledge/([^/]+)/outcome", path)
+            if m and method == "POST":
+                return self._knowledge_outcome(wd, urllib.parse.unquote(m.group(1)), body)
             if path == "/v1/context" and method in ("GET", "POST"):
                 return self._context(wd, qs, body)
             if path == "/v1/messages" and method == "POST":
@@ -381,6 +386,51 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             logger.warning("knowledge/deprecated: %s", exc)
             self._json({"error": "無法取得已棄用節點列表", "nodes": []}, 500)
+
+    # ── /v1/knowledge/<id>/outcome ─────────────────────────
+    def _knowledge_outcome(self, wd: str, node_id: str, body: dict):
+        """
+        DEEP-05: POST /v1/knowledge/<id>/outcome
+        Close the F6 feedback loop — record whether a node was useful.
+
+        Body: {"was_useful": true|false, "notes": "optional reason"}
+        Returns: {"ok": true, "node_id": "...", "confidence": 0.85, "delta": 0.03}
+        """
+        was_useful = body.get("was_useful")
+        if was_useful is None:
+            self._json({"error": "was_useful (bool) required"}, 400); return
+        notes = str(body.get("notes", ""))[:500]
+        try:
+            from project_brain.brain_db import BrainDB
+            from project_brain.graph import KnowledgeGraph
+            bd  = Path(wd) / ".brain"
+            db  = BrainDB(bd)
+            g   = KnowledgeGraph(bd)
+            delta    = 0.03 if was_useful else -0.05
+            new_conf = db.record_feedback(node_id, helpful=bool(was_useful))
+            if was_useful:
+                try:
+                    g.increment_adoption(node_id)
+                except Exception:
+                    pass
+            if notes and not was_useful:
+                try:
+                    db.conn.execute(
+                        "UPDATE nodes SET content = content || ? WHERE id=?",
+                        (f"\n\n[Feedback: {notes}]", node_id)
+                    )
+                    db.conn.commit()
+                except Exception:
+                    pass
+            self._json({
+                "ok": True, "node_id": node_id,
+                "was_useful": bool(was_useful),
+                "confidence": round(new_conf, 3),
+                "delta": delta,
+            })
+        except Exception as exc:
+            logger.warning("knowledge_outcome: %s", exc)
+            self._json({"error": str(exc)}, 500)
 
     # ── /v1/context ────────────────────────────────────────
     def _context(self, wd: str, qs: dict, body: dict):
