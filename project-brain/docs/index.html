@@ -1849,13 +1849,11 @@
         <li><a href="#flow" data-i18n="nav_flow">架構</a></li>
         <li><a href="#memory" data-i18n="nav_memory">記憶層</a></li>
         <li><a href="#confidence" data-i18n="nav_confidence">信心衰減</a></li>
-        <li><a href="#cli">CLI</a></li>
         <li><a href="#philosophy" data-i18n="nav_philosophy">設計理念</a></li>
         <li><a href="#academic" data-i18n="nav_academic">學術對比</a></li>
-        <li><a href="#install" data-i18n="nav_install">安裝</a></li>
       </ul>
       <button class="lang-btn" id="lang-btn" onclick="toggleLang()">EN</button>
-      <a class="nav-cta" href="#install" data-i18n="nav_cta">開始使用</a>
+      <a class="nav-cta" href="#flow" data-i18n="nav_cta">探索架構</a>
     </nav>
 
     <!-- ══ HERO ══ -->
@@ -1868,16 +1866,17 @@
           讓每次對話都能承接上一次的決策、規則與踩坑。
         </p>
         <div class="hero-actions">
-          <a class="btn-primary" href="#install" data-i18n="hero_btn_install"
-            >立即安裝</a
+          <a class="btn-primary" href="#flow" data-i18n="hero_btn_install"
+            >探索架構</a
           >
+          <a class="btn-ghost" href="#philosophy">設計理念</a>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 24px">
-          <span class="hpill hp-v">v0.3.0</span>
+          <span class="hpill hp-v">v0.15.0</span>
           <span class="hpill hp-py">Python 3.10+</span>
           <span class="hpill hp-mc">MCP Compatible</span>
           <span class="hpill hp-zt">Zero External Deps</span>
-          <span class="hpill hp-mit">MIT License</span>
+          <span class="hpill hp-zt">867 Tests Passing</span>
         </div>
       </div>
 
@@ -1886,70 +1885,46 @@
           <div class="term-dot"></div>
           <div class="term-dot"></div>
           <div class="term-dot"></div>
-          <div class="term-title">terminal</div>
+          <div class="term-title">project brain · mcp · get_context</div>
         </div>
         <div class="term-body">
           <div>
-            <span class="tc-cmt" data-i18n="term_cmt1"># 初始化 Brain</span>
+            <span class="tc-cmt"># AI Agent 查詢當前任務上下文</span>
           </div>
           <div>
-            <span class="tc-prompt">$</span>
-            <span class="tc-cmd">brain setup</span>
-          </div>
-          <div>
-            <span class="tc-ok">✓</span>
-            <span class="tc-out" data-i18n="term_out1"
-              >.brain/brain.db 建立完成</span
-            >
-          </div>
-          <div>
-            <span class="tc-ok">✓</span>
-            <span class="tc-out" data-i18n="term_out2"
-              >git post-commit hook 已安裝</span
-            >
+            <span class="tc-key">task:</span>
+            <span class="tc-val">"實作支付退款 API"</span>
           </div>
           <div>&nbsp;</div>
           <div>
-            <span class="tc-cmt" data-i18n="term_cmt2"># 加入踩坑記錄</span>
-          </div>
-          <div>
-            <span class="tc-prompt">$</span>
-            <span class="tc-cmd">brain add \</span>
-          </div>
-          <div>
-            &nbsp; <span class="tc-key">--title</span>
-            <span class="tc-val">"Stripe Webhook 冪等性"</span> \
-          </div>
-          <div>
-            &nbsp; <span class="tc-key">--kind</span>
-            <span class="tc-val">Pitfall</span>
-            <span class="tc-key">--confidence</span>
-            <span class="tc-val">0.9</span>
-          </div>
-          <div>
-            <span class="tc-ok">✓</span>
-            <span class="tc-out">知識已寫入 L3 (confidence=0.9)</span>
-          </div>
-          <div>&nbsp;</div>
-          <div>
-            <span class="tc-cmt" data-i18n="term_cmt3"
-              ># Agent 查詢時自動取得</span
-            >
-          </div>
-          <div>
-            <span class="tc-prompt">$</span>
-            <span class="tc-cmd">brain ask "支付退款"</span>
+            <span class="tc-cmt"># Brain 自動注入相關知識</span>
           </div>
           <div>
             <span class="tc-warn">⚠</span>
-            <span class="tc-out" data-i18n="term_pitfall"
-              >Pitfall: 必須用 idempotency_key</span
-            >
+            <span class="tc-out">[conf=0.95] Pitfall · Stripe Webhook</span>
           </div>
           <div>
-            &nbsp;&nbsp;<span class="tc-out"
-              >confidence=0.90 · scope=payment</span
-            >
+            &nbsp;&nbsp;<span class="tc-out">必須帶 idempotency_key，否則重複觸發</span>
+          </div>
+          <div>&nbsp;</div>
+          <div>
+            <span class="tc-ok">✓</span>
+            <span class="tc-out">[conf=0.90] Rule · 退款金額</span>
+          </div>
+          <div>
+            &nbsp;&nbsp;<span class="tc-out">不得超過原始訂單金額（含手續費）</span>
+          </div>
+          <div>&nbsp;</div>
+          <div>
+            <span class="tc-ok">✓</span>
+            <span class="tc-out">[conf=0.87] Decision · 使用 PostgreSQL</span>
+          </div>
+          <div>
+            &nbsp;&nbsp;<span class="tc-out">事務一致性需求，已排除 NoSQL</span>
+          </div>
+          <div>&nbsp;</div>
+          <div>
+            <span class="tc-cmt"># 3 條記憶精準注入，0 條遺漏</span>
           </div>
         </div>
       </div>
@@ -2559,7 +2534,7 @@
           "
           data-i18n="kinds_title"
         >
-          知識類型 <span style="color: var(--cyan)">--kind</span>
+          知識類型
         </h3>
         <p class="section-sub" style="margin-bottom: 0" data-i18n="kinds_sub">
           L3 語意記憶的五種節點類型，從踩坑到架構決策全面覆蓋。
@@ -2573,20 +2548,12 @@
           <div class="kind-desc2" data-i18n="kind_pitfall_desc">
             曾經犯過的錯誤、隱藏的陷阱。信心分數讓 Agent 評估可信度。
           </div>
-          <div class="kind-example">
-            <span class="ex-cyan">brain add</span> "Stripe Webhook 重複觸發"
-            --kind Pitfall
-          </div>
         </div>
         <div class="kind-card kt-decision">
           <span class="kind-tag2">Decision</span>
           <div class="kind-name" data-i18n="kind_decision_name">架構決策</div>
           <div class="kind-desc2" data-i18n="kind_decision_desc">
             為什麼選 A 而不選 B。保留決策背後的脈絡，防止未來重複討論。
-          </div>
-          <div class="kind-example">
-            <span class="ex-cyan">brain add</span> "選 PostgreSQL 而非 MongoDB"
-            --kind Decision
           </div>
         </div>
         <div class="kind-card kt-rule">
@@ -2595,10 +2562,6 @@
           <div class="kind-desc2" data-i18n="kind_rule_desc">
             必須遵守的技術約定。Brain 回傳後 Agent 將其視為硬性約束。
           </div>
-          <div class="kind-example">
-            <span class="ex-cyan">brain add</span> "JWT 必須使用 RS256" --kind
-            Rule
-          </div>
         </div>
         <div class="kind-card kt-adr">
           <span class="kind-tag2">ADR</span>
@@ -2606,20 +2569,12 @@
           <div class="kind-desc2" data-i18n="kind_adr_desc">
             正式的架構決策文件，對應 Architecture Decision Record 標準。
           </div>
-          <div class="kind-example">
-            <span class="ex-cyan">brain add</span> "ADR-001 採用事件驅動架構"
-            --kind ADR
-          </div>
         </div>
         <div class="kind-card kt-note">
           <span class="kind-tag2">Note</span>
           <div class="kind-name" data-i18n="kind_note_name">一般筆記</div>
           <div class="kind-desc2" data-i18n="kind_note_desc">
             其他值得記住但不屬於上述類型的資訊。
-          </div>
-          <div class="kind-example">
-            <span class="ex-cyan">brain add</span> "新人 onboarding 注意事項"
-            --kind Note
           </div>
         </div>
       </div>
@@ -2824,267 +2779,6 @@
       </div>
     </section>
 
-    <hr class="divider" />
-
-    <!-- ══ CLI ══ -->
-    <section id="cli">
-      <div class="section-badge" data-i18n="cli_badge">使用介面</div>
-      <h2 class="section-title" data-i18n="cli_title">
-        CLI 命令 × <span>Agent 整合</span>
-      </h2>
-      <p class="section-sub" data-i18n="cli_sub">
-        完整的命令列介面，支援 MCP、REST API 與 Python SDK 三種 Agent 整合方式。
-      </p>
-
-      <div class="cli-grid">
-        <!-- CLI Reference -->
-        <div class="card">
-          <div class="card-title" data-i18n="cli_card_title">CLI 命令參考</div>
-          <div class="cli-list">
-            <div class="cli-row">
-              <span class="cli-cmd">brain setup</span>
-              <span class="cli-desc" data-i18n="cli_desc_setup"
-                >一鍵初始化，建立 DB + 安裝 git hook</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain add</span>
-              <span class="cli-desc" data-i18n="cli_desc_add"
-                >手動加入知識節點</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain ask</span>
-              <span class="cli-desc" data-i18n="cli_desc_ask">查詢知識庫</span>
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain status</span>
-              <span class="cli-desc" data-i18n="cli_desc_status"
-                >記憶庫統計與健康狀態</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain sync</span>
-              <span class="cli-desc" data-i18n="cli_desc_sync"
-                >從最新 commit 手動學習</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain serve</span>
-              <span class="cli-desc" data-i18n="cli_desc_serve"
-                >啟動 REST API (port 7891)</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain serve --mcp</span>
-              <span class="cli-desc" data-i18n="cli_desc_serve_mcp"
-                >啟動 MCP Server</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain webui</span>
-              <span class="cli-desc" data-i18n="cli_desc_webui"
-                >D3.js 知識圖譜視覺化</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain doctor</span>
-              <span class="cli-desc" data-i18n="cli_desc_doctor"
-                >驗證 sqlite-vec 三層診斷</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain review</span>
-              <span class="cli-desc" data-i18n="cli_desc_review"
-                >KRB 人工審查待確認知識</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain report</span>
-              <span class="cli-desc" data-i18n="cli_desc_report"
-                >匯出 JSON / Markdown 知識報告</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain search</span>
-              <span class="cli-desc" data-i18n="cli_desc_search"
-                >語意搜尋知識庫（支援中英混搜）</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain link-issue</span>
-              <span class="cli-desc" data-i18n="cli_desc_link_issue"
-                >關聯 GitHub Issue 至知識節點</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain review pre-screen</span>
-              <span class="cli-desc" data-i18n="cli_desc_prescreen"
-                >AI 輔助 KRB 批次預審</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain fed export</span>
-              <span class="cli-desc" data-i18n="cli_desc_fed_export"
-                >匯出 global 知識聯邦 bundle</span
-              >
-            </div>
-            <div class="cli-row">
-              <span class="cli-cmd">brain fed import</span>
-              <span class="cli-desc" data-i18n="cli_desc_fed_import"
-                >匯入外部專案知識 bundle</span
-              >
-            </div>
-          </div>
-        </div>
-
-        <!-- MCP Config -->
-        <div>
-          <div class="card" style="margin-bottom: 16px">
-            <div class="card-title" data-i18n="mcp_card_title">
-              Claude Code MCP 設定
-            </div>
-            <div class="mcp-block">
-              <span class="jc">// .claude/settings.json</span><br />
-              {<br />
-              &nbsp;&nbsp;<span class="jk">"mcpServers"</span>: {<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"project-brain"</span>:
-              {<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk"
-                >"command"</span
-              >: <span class="js">"python"</span>,<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"args"</span
-              >: [<span class="js">"-m"</span>,
-              <span class="js">"project_brain.mcp_server"</span>],<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk">"env"</span>:
-              {<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="jk"
-                >"BRAIN_WORKDIR"</span
-              >: <span class="js">"/your/project"</span><br />
-              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;}<br />
-              &nbsp;&nbsp;}<br />
-              }
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-title" data-i18n="mcp_tools_card_title">
-              MCP 可用工具（v0.3.0 共 13 個）
-            </div>
-            <div class="cli-list">
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >get_context</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_get_context"
-                  >取得任務相關知識（含因果鏈 + 主動警告）</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >add_knowledge</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_add_knowledge"
-                  >Agent 寫入新知識到 Brain</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >search_knowledge</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_search_knowledge"
-                  >直接語意搜尋知識庫</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >temporal_query</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_temporal_query"
-                  >時光機——讀取指定時間點的知識狀態</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >brain_status</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_brain_status"
-                  >記憶庫統計</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >complete_task</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_complete_task"
-                  >記錄任務完成，寫入決策 / 踩坑 / 經驗</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >report_knowledge_outcome</span
-                >
-                <span
-                  class="cli-desc"
-                  data-i18n="mcp_desc_report_knowledge_outcome"
-                  >回饋知識節點是否有效，動態調整信心分數</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >krb_pre_screen</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_krb_pre_screen"
-                  >AI 輔助 KRB 預審，批次生成審核建議</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >answer_question</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_answer_question"
-                  >基於知識庫回答自然語言問題</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >impact_analysis</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_impact_analysis"
-                  >分析修改影響範圍，查詢相關知識節點</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >reasoning_chain</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_reasoning_chain"
-                  >追蹤知識因果推理鏈</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >generate_questions</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_generate_questions"
-                  >AI 生成待補充知識的問題清單</span
-                >
-              </div>
-              <div class="cli-row">
-                <span class="cli-cmd" style="font-size: 11.5px"
-                  >mark_helpful</span
-                >
-                <span class="cli-desc" data-i18n="mcp_desc_mark_helpful"
-                  >標記知識有幫助，信心 +0.03</span
-                >
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <hr class="divider" />
 
     <!-- ══ PHILOSOPHY ══ -->
     <section id="philosophy">
@@ -3373,412 +3067,6 @@
       </div>
     </section>
 
-    <hr class="divider" />
-
-    <!-- ══ INSTALL ══ -->
-    <section id="install">
-      <div class="section-badge" data-i18n="install_badge">快速開始</div>
-      <h2 class="section-title" data-i18n="install_title">
-        安裝 × <span>初始化</span>
-      </h2>
-      <p class="section-sub" data-i18n="install_sub">
-        三步驟完成：安裝套件、初始化專案、連接 Agent。系統需求：Python
-        3.10+，無需外部服務。
-      </p>
-
-      <div class="install-grid">
-        <!-- Installation options -->
-        <div class="card">
-          <div class="card-title" data-i18n="install_options_title">
-            安裝選項
-          </div>
-          <div class="install-box">
-            <div>
-              <span class="ib-cmt" data-i18n="ib_cmt1"
-                ># 標準安裝（含向量語意搜尋）</span
-              >
-            </div>
-            <div>
-              <span class="ib-$">$</span>
-              <span class="ib-cmd">pip install project-brain</span>
-            </div>
-            <div>&nbsp;</div>
-            <div>
-              <span class="ib-cmt" data-i18n="ib_cmt2"
-                ># 含 MCP Server（Claude Code / Cursor）</span
-              >
-            </div>
-            <div>
-              <span class="ib-$">$</span>
-              <span class="ib-cmd"
-                >pip install
-                <span class="ib-str">"project-brain[mcp]"</span></span
-              >
-            </div>
-            <div>&nbsp;</div>
-            <div>
-              <span class="ib-cmt" data-i18n="ib_cmt3"
-                ># 含 Anthropic SDK（AI 知識提取）</span
-              >
-            </div>
-            <div>
-              <span class="ib-$">$</span>
-              <span class="ib-cmd"
-                >pip install
-                <span class="ib-str">"project-brain[anthropic]"</span></span
-              >
-            </div>
-            <div>&nbsp;</div>
-            <div>
-              <span class="ib-cmt" data-i18n="ib_cmt4"># 完整安裝</span>
-            </div>
-            <div>
-              <span class="ib-$">$</span>
-              <span class="ib-cmd"
-                >pip install
-                <span class="ib-str">"project-brain[all]"</span></span
-              >
-            </div>
-            <div>&nbsp;</div>
-            <div>
-              <span class="ib-cmt" data-i18n="ib_cmt5"># 初始化專案</span>
-            </div>
-            <div>
-              <span class="ib-$">$</span>
-              <span class="ib-cmd"
-                >cd /your/project &amp;&amp; brain setup</span
-              >
-            </div>
-            <div>&nbsp;</div>
-            <div>
-              <span class="ib-cmt" data-i18n="ib_cmt6"># 驗證 sqlite-vec</span>
-            </div>
-            <div>
-              <span class="ib-$">$</span>
-              <span class="ib-cmd">brain doctor</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Quick Start steps -->
-        <div>
-          <div class="card" style="margin-bottom: 16px">
-            <div class="card-title" data-i18n="quickstart_title">
-              三步驟快速開始
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 12px">
-              <div style="display: flex; gap: 14px; align-items: flex-start">
-                <span
-                  style="
-                    font-family: &quot;Space Mono&quot;, monospace;
-                    font-size: 11px;
-                    font-weight: 700;
-                    color: #fff;
-                    background: var(--cyan);
-                    border-radius: 4px;
-                    padding: 3px 8px;
-                    flex-shrink: 0;
-                  "
-                  >01</span
-                >
-                <div>
-                  <div
-                    style="
-                      font-size: 13px;
-                      font-weight: 700;
-                      margin-bottom: 4px;
-                    "
-                    data-i18n="qs_step1_title"
-                  >
-                    加入第一條知識
-                  </div>
-                  <div
-                    style="
-                      font-family: &quot;Roboto Mono&quot;, monospace;
-                      font-size: 11.5px;
-                      color: var(--cyan);
-                      background: var(--surf2);
-                      border: 1px solid var(--bord);
-                      border-radius: 5px;
-                      padding: 7px 10px;
-                      line-height: 1.8;
-                    "
-                  >
-                    brain add "JWT 必須使用 RS256" \<br />&nbsp;&nbsp;--kind
-                    Rule --confidence 0.9
-                  </div>
-                </div>
-              </div>
-              <div style="display: flex; gap: 14px; align-items: flex-start">
-                <span
-                  style="
-                    font-family: &quot;Space Mono&quot;, monospace;
-                    font-size: 11px;
-                    font-weight: 700;
-                    color: #fff;
-                    background: var(--cyan);
-                    border-radius: 4px;
-                    padding: 3px 8px;
-                    flex-shrink: 0;
-                  "
-                  >02</span
-                >
-                <div>
-                  <div
-                    style="
-                      font-size: 13px;
-                      font-weight: 700;
-                      margin-bottom: 4px;
-                    "
-                    data-i18n="qs_step2_title"
-                  >
-                    驗證可以查到
-                  </div>
-                  <div
-                    style="
-                      font-family: &quot;Roboto Mono&quot;, monospace;
-                      font-size: 11.5px;
-                      color: var(--cyan);
-                      background: var(--surf2);
-                      border: 1px solid var(--bord);
-                      border-radius: 5px;
-                      padding: 7px 10px;
-                      line-height: 1.8;
-                    "
-                  >
-                    brain ask "JWT 設定"<br />brain ask "支付退款"
-                  </div>
-                </div>
-              </div>
-              <div style="display: flex; gap: 14px; align-items: flex-start">
-                <span
-                  style="
-                    font-family: &quot;Space Mono&quot;, monospace;
-                    font-size: 11px;
-                    font-weight: 700;
-                    color: #fff;
-                    background: var(--cyan);
-                    border-radius: 4px;
-                    padding: 3px 8px;
-                    flex-shrink: 0;
-                  "
-                  >03</span
-                >
-                <div>
-                  <div
-                    style="
-                      font-size: 13px;
-                      font-weight: 700;
-                      margin-bottom: 4px;
-                    "
-                    data-i18n="qs_step3_title"
-                  >
-                    連接 Claude Code
-                  </div>
-                  <div
-                    style="font-size: 12px; color: var(--muted)"
-                    data-i18n="qs_step3_desc"
-                  >
-                    加入 MCP 設定後，Agent 在每次任務開始時自動呼叫
-                    <code style="color: var(--cyan)">get_context()</code>
-                    取得相關知識。
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Limits -->
-          <div class="card">
-            <div class="card-title" data-i18n="limits_title">
-              已知限制與設計邊界
-            </div>
-            <div>
-              <div class="limit-item">
-                <div class="limit-tag" data-i18n="limit1_tag">~75%</div>
-                <div class="limit-text" data-i18n="limit1_text">
-                  <strong>語意召回率</strong>：FTS5
-                  對語意相近但用詞不同的查詢效果有限。Phase 1
-                  將加入向量語意搜尋。
-                </div>
-              </div>
-              <div class="limit-item">
-                <div class="limit-tag" data-i18n="limit2_tag">重複</div>
-                <div class="limit-text" data-i18n="limit2_text">
-                  <strong>三層輸出可能重複</strong>：L2 episode 與 L3 node
-                  可能說同一件事。Phase 4 計劃自動建立 DERIVES_FROM 邊。
-                </div>
-              </div>
-              <div class="limit-item">
-                <div class="limit-tag" data-i18n="limit3_tag">手動</div>
-                <div class="limit-text" data-i18n="limit3_text">
-                  <strong>scope 需手動指定</strong>：忘記加
-                  <code style="color: var(--amber); font-size: 11px"
-                    >--scope</code
-                  >
-                  知識會變成全域污染。Phase 5 計劃從目錄自動推導。
-                </div>
-              </div>
-              <div class="limit-item">
-                <div class="limit-tag" data-i18n="limit4_tag">邊界</div>
-                <div class="limit-text" data-i18n="limit4_text">
-                  <strong>無法捕捉隱性知識</strong
-                  >：只能記錄已被意識到的決策。這是設計邊界，不修。
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Environment Variables -->
-      <div class="card" style="margin-top: 24px">
-        <div class="card-title" data-i18n="env_card_title">環境變數</div>
-        <div style="overflow-x: auto">
-          <table class="cmp-table">
-            <thead>
-              <tr>
-                <th data-i18n="env_th_var">變數</th>
-                <th data-i18n="env_th_default">預設值</th>
-                <th data-i18n="env_th_desc">說明</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_WORKDIR</code
-                  >
-                </td>
-                <td class="col-human" data-i18n="env_brain_workdir_default">
-                  當前目錄
-                </td>
-                <td data-i18n="env_brain_workdir_desc">
-                  專案目錄（省略 --workdir）
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >ANTHROPIC_API_KEY</code
-                  >
-                </td>
-                <td class="col-human">—</td>
-                <td data-i18n="env_anthropic_desc">
-                  Anthropic API（AI 提取功能）
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_LLM_PROVIDER</code
-                  >
-                </td>
-                <td class="col-human">anthropic</td>
-                <td data-i18n="env_llm_provider_desc">
-                  <code style="color: var(--amber); font-size: 11px"
-                    >openai</code
-                  >
-                  使用 Ollama / LM Studio
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_LLM_MODEL</code
-                  >
-                </td>
-                <td class="col-human">claude-haiku-4-5</td>
-                <td data-i18n="env_llm_model_desc">模型名稱</td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_SYNTHESIZE</code
-                  >
-                </td>
-                <td class="col-human">0</td>
-                <td data-i18n="env_synthesize_desc">
-                  <code style="color: var(--teal); font-size: 11px">1</code>
-                  啟用 Memory Synthesizer LLM 融合
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_API_KEY</code
-                  >
-                </td>
-                <td class="col-human">—</td>
-                <td data-i18n="env_api_key_desc">
-                  brain serve 的 API 認證金鑰
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_EMBED_PROVIDER</code
-                  >
-                </td>
-                <td class="col-human">auto</td>
-                <td data-i18n="env_embed_provider_desc">
-                  <code style="color: var(--amber); font-size: 11px"
-                    >multilingual</code
-                  >
-                  /
-                  <code style="color: var(--amber); font-size: 11px"
-                    >ollama</code
-                  >
-                  /
-                  <code style="color: var(--amber); font-size: 11px"
-                    >openai</code
-                  >
-                  /
-                  <code style="color: var(--amber); font-size: 11px"
-                    >local</code
-                  >
-                  /
-                  <code style="color: var(--amber); font-size: 11px">none</code>
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_MULTILINGUAL_MODEL</code
-                  >
-                </td>
-                <td class="col-human">multilingual-e5-small</td>
-                <td data-i18n="env_multilingual_desc">
-                  sentence-transformers 模型（中英混搜）
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_OLLAMA_EMBED_MODEL</code
-                  >
-                </td>
-                <td class="col-human">nomic-embed-text</td>
-                <td data-i18n="env_ollama_embed_desc">
-                  Ollama embedding 模型名稱
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <code style="color: var(--cyan); font-size: 12px"
-                    >BRAIN_OLLAMA_URL</code
-                  >
-                </td>
-                <td class="col-human">http://localhost:11434</td>
-                <td data-i18n="env_ollama_url_desc">
-                  Ollama 服務位址（LLM 提取 + embedding）
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
 
     <!-- ══ FOOTER ══ -->
     <footer>
@@ -3787,8 +3075,7 @@
         <div class="footer-tagline" data-i18n="footer_tagline">
           為 AI Agent 設計的工程記憶基礎設施。<br />
           讓每次對話都能承接上一次的決策、規則與踩坑。<br />
-          <span style="color: var(--cyan)">v0.3.0</span> · MIT License · Python
-          3.10+
+          <span style="color: var(--cyan)">v0.15.0</span> · Python 3.10+
         </div>
       </div>
       <div class="footer-right">
@@ -3799,7 +3086,7 @@
           Lore · arXiv:2603.15566<br />
           Codified Context · arXiv:2602.20478
         </div>
-        <div class="footer-copy">© 2026 Project Brain · MIT License</div>
+        <div class="footer-copy">© 2026 Project Brain</div>
       </div>
     </footer>
 
@@ -4237,7 +3524,7 @@
           nav_cta: "開始使用",
           hero_tagline:
             "為 AI Agent 設計的工程記憶基礎設施。\n讓每次對話都能承接上一次的決策、規則與踩坑。",
-          hero_btn_install: "立即安裝",
+          hero_btn_install: "探索架構",
           term_cmt1: "# 初始化 Brain",
           term_out1: ".brain/brain.db 建立完成",
           term_out2: "git post-commit hook 已安裝",
@@ -4507,7 +3794,7 @@
           env_ollama_embed_desc: "Ollama embedding 模型名稱",
           env_ollama_url_desc: "Ollama 服務位址（LLM 提取 + embedding）",
           footer_tagline:
-            "為 AI Agent 設計的工程記憶基礎設施。\n讓每次對話都能承接上一次的決策、規則與踩坑。\nv0.3.0 · MIT License · Python 3.10+",
+            "為 AI Agent 設計的工程記憶基礎設施。\n讓每次對話都能承接上一次的決策、規則與踩坑。\nv0.15.0 · Python 3.10+",
         },
         en: {
           conf_note_1: "More Agent queries → slower decay",
@@ -4531,7 +3818,7 @@
           nav_cta: "Get Started",
           hero_tagline:
             "Engineering memory infrastructure for AI Agents.\nEvery conversation picks up where the last one left off.",
-          hero_btn_install: "Install Now",
+          hero_btn_install: "Explore Architecture",
           term_cmt1: "# Initialize Brain",
           term_out1: ".brain/brain.db created",
           term_out2: "git post-commit hook installed",
@@ -4820,7 +4107,7 @@
           env_ollama_url_desc:
             "Ollama service URL (LLM extraction + embedding)",
           footer_tagline:
-            "Engineering memory infrastructure for AI Agents.\nEvery conversation picks up where the last one left off.\nv0.3.0 · MIT License · Python 3.10+",
+            "Engineering memory infrastructure for AI Agents.\nEvery conversation picks up where the last one left off.\nv0.15.0 · Python 3.10+",
         },
       };
 
