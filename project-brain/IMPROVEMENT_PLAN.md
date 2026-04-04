@@ -25,18 +25,7 @@
 
 ## P2 — 已知缺陷
 
-### BUG-B01 — BrainDB.session_* 是死碼
-
-**問題**：`brain_db.py` 含有 `session_set / session_get / session_list / session_clear` 四個方法（`~1126~1165` 行），但 **grep 確認在 `project_brain/` 內無任何業務呼叫者**。`session_store.py` 的 `SessionStore` 是 L1a 的真正實作，`brain_db.session_*` 從未被連接到任何流程。
-
-**實際影響**：
-- `brain_db.py` 虛增 ~50 行（含 `ReadBrainDB` 中 4 個對應的 `PermissionError` override）
-- 讀者難以判斷「L1a 到底應該用 BrainDB 還是 SessionStore」
-- 任何新貢獻者都可能誤用 `db.session_set()` 而非 `SessionStore`
-
-**修復方案**：移除 `BrainDB.session_set/get/list/clear` 及 `ReadBrainDB` 中的四個對應 override。確認無測試直接呼叫這四個方法（`test_core.py` 有無？）後直接刪除。
-
-**工時**：1 小時（刪除 + 確認測試仍通過）
+~~BUG-B01~~ ✅ **已修復（2026-04-04）**：移除 `BrainDB.session_set/get/list/clear` 四個方法及 `ReadBrainDB` 中的 2 個 override；`import_json` 改用直接 SQL INSERT 替代 `session_set()`；移除 `MAX_SESSION_ENTRIES` 常數及 `TestDef06SessionLRU` 測試。`SessionStore`（`session_store.py`）是 L1a 的唯一入口，brain.db 的 `sessions` 表格仍保留供舊資料統計用（`stats()` / `health_report()`）。
 
 ### REV-02 — Decay 實際效用未量測
 
@@ -63,5 +52,5 @@
 
 | 版本 | 主題 | 主要工作 | 發布 Gate |
 |------|------|---------|----------|
-| **v0.7.0** | 正確性優先 | BUG-B02（Decay 時間基準）、BUG-B01（session 死碼）、REF-04、PERF-03、BUG-A03 | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
+| **v0.7.0** | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、REF-04、PERF-03、BUG-A03 | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
 | **v1.0.0** | 長期穩定 | REF-01（BrainDB 拆分）、CLI-01（cli.py 拆分）、ARCH-04（scope UX）| 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |

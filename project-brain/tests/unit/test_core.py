@@ -2904,44 +2904,6 @@ class TestDef04SchemaMigrations:
 
 # ── DEF-06: Session LRU eviction ────────────────────────────
 
-class TestDef06SessionLRU:
-    """DEF-06: session_set() enforces MAX_SESSION_ENTRIES cap per session_id."""
-
-    def test_sessions_capped_at_max(self, tmp_path):
-        """Writing MAX+10 entries must keep count at MAX_SESSION_ENTRIES."""
-        from project_brain.brain_db import BrainDB, MAX_SESSION_ENTRIES
-        db = BrainDB(tmp_path)
-        for i in range(MAX_SESSION_ENTRIES + 10):
-            db.session_set(f"key_{i}", f"val_{i}", session_id="lru_test")
-        count = db.conn.execute(
-            "SELECT COUNT(*) FROM sessions WHERE session_id='lru_test'"
-        ).fetchone()[0]
-        assert count <= MAX_SESSION_ENTRIES, (
-            f"Expected ≤ {MAX_SESSION_ENTRIES}, got {count}"
-        )
-
-    def test_oldest_entries_evicted(self, tmp_path):
-        """After eviction the oldest key must no longer exist."""
-        from project_brain.brain_db import BrainDB, MAX_SESSION_ENTRIES
-        db = BrainDB(tmp_path)
-        for i in range(MAX_SESSION_ENTRIES + 5):
-            db.session_set(f"key_{i}", f"val_{i}", session_id="lru_evict")
-        # key_0 was the oldest — should be gone
-        val = db.session_get("key_0", session_id="lru_evict")
-        assert val is None, "Oldest session key should have been evicted"
-
-    def test_different_sessions_independent(self, tmp_path):
-        """LRU eviction for session A must not affect session B."""
-        from project_brain.brain_db import BrainDB, MAX_SESSION_ENTRIES
-        db = BrainDB(tmp_path)
-        # Fill session A past limit
-        for i in range(MAX_SESSION_ENTRIES + 5):
-            db.session_set(f"k{i}", f"v{i}", session_id="sessA")
-        # Write one entry to session B
-        db.session_set("b_key", "b_val", session_id="sessB")
-        assert db.session_get("b_key", session_id="sessB") == "b_val"
-
-
 # ── OPT-02: Adaptive search weights ─────────────────────────
 
 class TestOpt02AdaptiveWeights:

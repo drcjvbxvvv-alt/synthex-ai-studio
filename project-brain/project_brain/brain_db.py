@@ -12,7 +12,6 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 13          # DEF-04: bump on every schema change
-MAX_SESSION_ENTRIES = 500    # DEF-06: per-session_id LRU eviction threshold
 
 # REF-02: single source of truth in synonyms.py
 from .synonyms import SYNONYM_MAP as _SYNONYM_MAP  # noqa: E402
@@ -1125,46 +1124,6 @@ class BrainDB:
         """, (at, at, limit)).fetchall()
         return [dict(r) for r in rows]
 
-    # -- L1a: session store --
-
-    def session_set(self, key: str, value: str,
-                    session_id: str = "default", category: str = "general") -> None:
-        self.conn.execute("""
-            INSERT INTO sessions(session_id,key,value,category) VALUES(?,?,?,?)
-            ON CONFLICT(session_id,key) DO UPDATE SET value=excluded.value
-        """, (session_id, key, value, category))
-        # DEF-06: LRU eviction — keep only the newest MAX_SESSION_ENTRIES per session_id
-        count = self.conn.execute(
-            "SELECT COUNT(*) FROM sessions WHERE session_id=?", (session_id,)
-        ).fetchone()[0]
-        if count > MAX_SESSION_ENTRIES:
-            self.conn.execute(
-                "DELETE FROM sessions WHERE id IN ("
-                "  SELECT id FROM sessions WHERE session_id=?"
-                "  ORDER BY created_at ASC LIMIT ?"
-                ")",
-                (session_id, count - MAX_SESSION_ENTRIES)
-            )
-        self.conn.commit()
-
-    def session_get(self, key: str, session_id: str = "default"):
-        r = self.conn.execute(
-            "SELECT value FROM sessions WHERE session_id=? AND key=?", (session_id, key)
-        ).fetchone()
-        return r[0] if r else None
-
-    def session_list(self, session_id: str = "default") -> list:
-        rows = self.conn.execute(
-            "SELECT key,value,category,created_at FROM sessions"
-            " WHERE session_id=? ORDER BY created_at DESC", (session_id,)
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    def session_clear(self, session_id: str = "default") -> int:
-        cur = self.conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
-        self.conn.commit()
-        return cur.rowcount
-
     # -- events --
 
     def emit(self, event_type: str, payload: dict) -> None:
@@ -1672,9 +1631,13 @@ class BrainDB:
                     try:
                         for row in old.execute(f"SELECT * FROM {tbl}").fetchall():
                             d = dict(row)
-                            self.session_set(str(d.get("key","?")),
-                                             str(d.get("value","")),
-                                             session_id=str(d.get("session_id","legacy")))
+                            self.conn.execute(
+                                "INSERT INTO sessions(session_id,key,value,category)"
+                                " VALUES(?,?,?,?)"
+                                " ON CONFLICT(session_id,key) DO UPDATE SET value=excluded.value",
+                                (str(d.get("session_id","legacy")), str(d.get("key","?")),
+                                 str(d.get("value","")), str(d.get("category","general")))
+                            )
                             imported["sessions"] += 1
                     except Exception: pass
                 old.close()
@@ -1722,8 +1685,6 @@ class ReadBrainDB(BrainDB):
     def add_edge(self, *a, **kw):           raise PermissionError("ReadBrainDB is read-only")
     def add_temporal_edge(self, *a, **kw):  raise PermissionError("ReadBrainDB is read-only")
     def emit(self, *a, **kw):               raise PermissionError("ReadBrainDB is read-only")
-    def session_set(self, *a, **kw):        raise PermissionError("ReadBrainDB is read-only")
-    def session_clear(self, *a, **kw):      raise PermissionError("ReadBrainDB is read-only")
     def build_synonym_index(self, *a, **kw): raise PermissionError("ReadBrainDB is read-only")
 
 

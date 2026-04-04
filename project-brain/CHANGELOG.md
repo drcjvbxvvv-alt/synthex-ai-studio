@@ -180,6 +180,14 @@
   - **結論：主要 context 來源**。hybrid search 模式下召回率 95%，可信賴作為 Agent 的主要知識注入
   - 唯一 miss：`api-01`（API 版本號），查詢語意與節點標題向量距離差距較遠，屬邊界案例
 
+### P1 修復（BUG-B02）
+
+- **BUG-B02 Decay 時間基準**：`_effective_confidence()`（`brain_db.py`）和 `decay_engine._factor_time()`（`decay_engine.py`）從使用 `created_at` 改為 `MAX(created_at, updated_at)` 作為衰減計算基準。820 天前建立但 3 天前更新的節點，effective_confidence 從 0.077 恢復至 0.892，解除對長期維護節點的不當懲罰
+
+### P2 修復（BUG-B01）
+
+- **BUG-B01 移除 BrainDB.session_\* 死碼**：移除 `BrainDB.session_set/get/list/clear` 四個方法（~50 行）及 `ReadBrainDB` 中的 2 個 PermissionError override；同步移除 `MAX_SESSION_ENTRIES` 常數及 `TestDef06SessionLRU` 測試；`import_json` 的遺留 `session_store.db` 遷移路徑改用直接 SQL INSERT（不含 LRU，遷移場景不需要）。`SessionStore`（`session_store.py`）是 L1a 的唯一業務入口；`brain.db` 的 `sessions` 表格保留供舊資料統計（`stats()` / `health_report()`）
+
 ---
 
 ## v0.5.0（2026-04-04）— 品質基線版
