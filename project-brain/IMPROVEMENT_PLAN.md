@@ -144,7 +144,7 @@
 
 | 維度                   | 評分       | 主要待辦問題                                                              |
 | ---------------------- | ---------- | ------------------------------------------------------------------------- |
-| 可靠度（Reliability）  | 8.0 / 10   | SR node 追蹤仍用 title 子字串比對（脆弱）                                 |
+| 可靠度（Reliability）  | 8.5 / 10   | Chaos test 未接 CI gate（STAB-08）                                        |
 | 實用性（Practicality） | 7.5 / 10   | Federation bundle 無匯出時間戳；SR node ID 追蹤不準確                     |
 | 可用性（Usability）    | 7.0 / 10   | `brain init` 後無自我測試；錯誤訊息仍不夠精準                             |
 | 誠實性（Honesty）      | 7.0 / 10   | 信心賦值任意（`brain add` 預設 0.8 無依據）；用戶無提示                   |
@@ -152,7 +152,7 @@
 | 系統架構               | 6.5 / 10   | 兩套並行資料庫（knowledge_graph.db + brain.db）；ReviewBoard.db 無 schema 版控 |
 | 成本控制與資源消耗     | 7.5 / 10   | Embedding 無持久化快取；每次重啟重新計算                                  |
 | 程式碼與工程穩定性     | 6.5 / 10   | Magic numbers 散落（`max_c=800`、`access×0.04`）                          |
-| **綜合評分**           | **7.0/10** | v0.6.0 修復使整體提升 ~0.7 分；核心功能可靠度顯著改善                    |
+| **綜合評分**           | **7.1/10** | STAB-06/07 + SYNC-01 再提升 ~0.1 分；剩餘主要風險：Chaos test 未接 CI   |
 
 ---
 
@@ -164,11 +164,14 @@
 - Migration 迴圈異常改為 `logger.warning`（`already exists`/`duplicate column` 記 debug，其餘記 warning）
 - `context.py` 4 處 `except: pass` 全數加 `logger.debug`（dedup / SR 外層 / causal chain / reasoning chain）
 
+**改善（v0.6.0 STAB-07）**
+- SR node 追蹤改用 `_shown_node_ids`（build() 入口統一追蹤），消除 title 子字串比對誤判；access_count 遞增移至 budget 確認後，修正截斷節點被錯誤計為已訪問的舊 bug
+
 **仍存在的問題**
 
 | 位置 | 問題 | 後果 |
 | ---- | ---- | ---- |
-| `context.py:316` | SR node 追蹤用 title 子字串比對 | 含截斷或 emoji 的輸出中易誤判，access_count 更新對象錯誤 |
+| `tests/chaos/` | Chaos test 未接 CI gate | 每版本手動執行，容易遺漏（STAB-08） |
 
 ---
 
@@ -236,7 +239,7 @@
 
 **待辦**
 - **兩套並行資料庫**：`knowledge_graph.db`（graph.py）與 `brain.db`（brain_db.py）各自維護 nodes + edges；`context.py` 必須同時查兩庫再合併
-- **ReviewBoard.db 獨立**：無 schema 版本控制，損壞無遷移路徑
+- ~~**ReviewBoard.db 獨立**：無 schema 版本控制，損壞無遷移路徑~~ → ✅ STAB-06 已修復
 
 ---
 
@@ -274,7 +277,7 @@
 | 維度         | 評價                                                                   | 關鍵行動                                         |
 | ------------ | ---------------------------------------------------------------------- | ------------------------------------------------ |
 | 專案走向     | v0.6.0 完成所有 P1/P2/P3 修復；從 MVP 品質向 Beta 穩定過渡            | REV-01 對照實驗是 v0.6.0 正式發布的最後阻塞點   |
-| 穩定性       | 8.0/10，靜默失效問題基本消除；SR node 追蹤仍脆弱                       | SR node 用 ID 比對替代 title 子字串比對          |
+| 穩定性       | 8.5/10，靜默失效消除；SR node 追蹤修正；ReviewBoard.db 版控完善         | STAB-06/07 已完成，剩餘風險：Chaos test 未接 CI  |
 | 革命性       | REV-01~03 驗證路徑已規劃；需數據支撐衰減因子的實際效用                 | REV-01 對照實驗待執行；30 天數據是可信度關鍵    |
 | 新技術       | Synonym Map 已同步；TypedDict 已加；技術誠實性標記（TECH-01~03）待補   | TECH-01：在 CHANGELOG/README 補全端對端可用標記  |
 | 未來性       | FLY-01~02 已落地；NudgeEngine + BrainDB 貫通；飛輪路徑完整             | FLY-03 知識庫健康度首頁是 v0.6.0 最後一項功能   |
@@ -288,13 +291,15 @@
 | 版本   | 決策                                                       | 理由                                                   |
 | ------ | ---------------------------------------------------------- | ------------------------------------------------------ |
 | v0.6.0 | 全面清除靜默失效路徑，補齊 NudgeEngine + BrainDB 缺口      | 飛輪要轉，所有進入點必須一致；可觀察性是信任的前提     |
-| v0.6.0 | Synonym Map 合一（brain_db 擴展至 32 條與 context.py 對齊）| 兩個查詢入口不對稱讓 `search_knowledge` 成為二等公民   |
+| v0.6.0 | Synonym Map 兩表均擴展至 **46 條**，keys 完全一致          | 兩個查詢入口不對稱讓 `search_knowledge` 成為二等公民   |
 | v0.6.0 | `brain config` 單一指令顯示所有 6 處設定來源               | 設定分散是 debug 地獄；統一入口降低用戶認知負擔        |
+| v0.6.0 | `review_board.db` 加 `schema_meta` 表追蹤版本；DB 損壞轉為 `RuntimeError` 含 `brain doctor` 提示 | 所有 DB 都需版本可追蹤；stack trace 對使用者毫無意義   |
+| v0.6.0 | SR access_count 遞增移至 `_add_if_budget` 之後，用 `_shown_node_ids` 取代 title 子字串比對 | title 比對在含截斷/emoji 時必然誤判；budget 截斷前遞增是邏輯錯誤 |
 | v0.5.0 | STB/FLY 修復優先於新功能                                   | 靜默失效比崩潰更危險，信任建立先於功能擴展             |
 | v0.3.0 | OllamaClient duck-typed，不強制 anthropic SDK              | 讓 KRB 審核可離線運行，降低企業採購門檻                |
 | v0.3.0 | MultilingualEmbedder 優先級高於 Ollama embedder            | sentence-transformers 對中英混搜效果顯著優於 nomic     |
 | v0.3.0 | federation export 時清理 PII，而非 import 時               | bundle 本身即安全，接收方無需信任發送方的清理          |
-| v0.3.0 | LoRA 訓練設定生成三套（Axolotl / Unsloth / LLaMA-Factory） | 不綁定單一框架，使用者選擇熟悉工具                     |
+| ~~v0.3.0~~ | ~~LoRA 訓練設定生成三套（Axolotl / Unsloth / LLaMA-Factory）~~ | ~~不綁定單一框架，使用者選擇熟悉工具~~ **（`brain distill` 已於 v10.x 移除，此決策已失效）** |
 | v0.3.0 | ANN index fallback 為 LinearScan（純 Python）              | sqlite-vec 是 C 擴充，確保零依賴環境仍可運作           |
 | v0.2.0 | `BRAIN_WORKDIR` 改為非必要（自動偵測為主）                 | 多專案工作流不應被環境變數綁死                         |
 | v0.2.0 | 查詢展開限每詞 3 個同義詞，總上限 15                       | 原本 30 個同義詞造成大量無關結果                       |
