@@ -35,27 +35,27 @@
 
 ### 建議開發順序
 
-| 順位 | ID | 影響 | 工時 | 阻塞依賴 | 象限 | 建議理由 |
-|------|----|------|------|---------|------|---------|
-| **1** | PERF-03 | 中 | 30 分 | 無 | ⚡ 快速獲益 | 一行改動，高頻路徑 CPU 直降，成本極低 |
-| **2** | BUG-A03 | 中 | 1 時 | 無 | ⚡ 快速獲益 | 防禦性修復，消除競態死鎖隱患 |
-| **3** | REF-04 | 低 | 半天 | 無 | ⚡ 快速獲益 | 消除魔法數字，為後續重構鋪路 |
-| **4** | PERF-04 | 中 | 半天 | 無 | ⚡ 快速獲益 | 單函數改動，搜尋精度直接提升 |
-| **5** | DEEP-05 | **極高** | 1.5 天 | 無 | 🎯 高價值 | F6 缺失使整個知識庫無法自學習；核心閉環缺口 |
-| **6** | FEAT-01 | 高 | 1.5 天 | 無 | 🎯 高價值 | `node_history` 表已存在，改動最小；為 ARCH-06 提供版本比對基礎 |
-| **7** | ARCH-05 | 高 | 2 天 | 無 | 🎯 高價值 | deprecated 殭屍節點對 Pitfall 類型知識特別危險；阻斷負面知識擴散 |
-| **8** | ARCH-06 | 高 | 3 天 | FEAT-01 | 🎯 高價值 | ConflictResolver 骨架已有呼叫點；保守策略版不依賴 LLM |
-| **9** | OBS-01 | 中 | 3 天 | 無 | 📋 計劃執行 | 先做 structlog（1 天），再做 Prometheus（2 天）；為 v0.9.0 調優提供數據 |
-| **10** | DEEP-04 | 中 | 4 天 | DEEP-05 | 📋 計劃執行 | 主動學習依賴反饋閉環（DEEP-05）先就位 |
-| **11** | FED-01 | 中 | 3 天 | 無 | 📋 計劃執行 | Federation 審計是 FED-02 和 CLI-02 的前置 |
-| **12** | FED-02 | 中 | 2 天 | FED-01 | 📋 計劃執行 | 向量化依賴需可用；搭配 FED-01 一起發布 |
-| **13** | CLI-02 | 低 | 2 天 | FED-01 | 📋 計劃執行 | Federation sync CLI，完成 VISION-03 最後一哩 |
-| **14** | FEAT-04 | 低 | 1.5 天 | 無 | 🔵 填空 | Session 檔案導出，低頻但對長工作階段有用 |
-| **15** | FEAT-03 | 低 | 4 天 | 無 | 🔵 填空 | temporal_query 完整實作，需 git 整合，邊界場景 |
-| **16** | REF-01 | 中 | 2 週+ | 覆蓋率≥70% | 🏗 長期 | BrainDB 拆分，需先達到覆蓋率門檻 |
-| **17** | CLI-01 | 中 | 1.5 週 | 整合測試 | 🏗 長期 | cli.py 拆分，先補整合測試再動刀 |
-| **18** | ARCH-04 | 中 | 1 週 | major 版本 | 🏗 長期 | Breaking change，需配合 v2.0.0 |
-| — | REV-02 | 高 | △ 90 天 | 真實數據 | ⏳ 等待 | 需累積使用數據，無法提前執行 |
+| 優先 | ID | 影響 | 解決方案 | 阻塞依賴 | 象限 | 建議理由 |
+|------|----|------|---------|---------|------|---------|
+| **P0** | PERF-03 | `_count_tokens()` 高頻呼叫（800+次/req）浪費 CPU | `@lru_cache(maxsize=1024)` 加到 `_count_tokens()` | 無 | ⚡ 快速獲益 | 一行改動，零風險，立即生效 |
+| **P0** | BUG-A03 | 6 個懶加載屬性共用鎖，極低概率競態死鎖 | `engine.py` 每個屬性獨立 `threading.Lock()` | 無 | ⚡ 快速獲益 | 防禦性修復，消除死鎖隱患 |
+| **P0** | REF-04 | 魔法數字散落 4 處，修改需多點同步 | 新增 `constants.py`，集中定義 4 個常數 | 無 | ⚡ 快速獲益 | 為後續重構與 DEEP-05 調參鋪路 |
+| **P0** | PERF-04 | EXPAND_LIMIT=15 固定，短查詢噪音 / 長查詢遺漏 | `_expand_query()` 依詞數動態調整上限（10/15/20）| 無 | ⚡ 快速獲益 | 單函數改動，搜尋精度立即提升 |
+| **P1** | DEEP-05 | 知識庫無自學習：有用知識不獎勵，無效不懲罰 | `record_outcome()` + `_factor_adoption()` F6 因子；REST `POST /v1/knowledge/<id>/outcome` | 無 | 🎯 高價值 | F6 是「越用越聰明」的核心缺口，影響極高 |
+| **P1** | FEAT-01 | `update_node()` 直接覆寫，知識演變不可追溯 | `nodes.version` 欄位 + `update_node()` 寫 `node_history`；`brain history / restore` CLI | 無 | 🎯 高價值 | `node_history` 表已存在，改動最小，為 ARCH-06 提供基礎 |
+| **P1** | ARCH-05 | deprecated 節點仍被正常推薦，殭屍知識持續擴散 | `deprecated_at` 欄位（v14）；`brain deprecated list/purge`；context 加 `[已棄用]` 標記 | 無 | 🎯 高價值 | Pitfall 類型節點衰減後更危險，應優先阻斷 |
+| **P1** | ARCH-06 | `BRAIN_CONFLICT_RESOLVE=1` 設置後直接 ImportError | 建立 `conflict_resolver.py`；保守策略（數值仲裁）＋可選 LLM 語義仲裁；edges 表新增 `CONFLICTS_WITH` | FEAT-01 | 🎯 高價值 | 骨架呼叫點已存在，需補上缺失模組 |
+| **P2** | OBS-01 | 問題難重現，Decay 為何降低信心無從追查 | structlog 結構化日誌（`event/node_id/reason`）；`GET /v1/metrics` Prometheus 端點 | 無 | 📋 計劃執行 | 先做 structlog（1天），再做 Prometheus（2天） |
+| **P2** | DEEP-04 | 信心 < 0.5 的節點缺乏人工確認機制 | `context.build()` 附加 QUESTIONS 區塊；MCP `answer_question(node_id, answer)` tool | DEEP-05 | 📋 計劃執行 | 主動學習依賴反饋閉環（DEEP-05）先就位 |
+| **P2** | FED-01 | 跨庫導入無溯源，無法查「誰何時導入了什麼」 | `federation_imports` 表；`brain fed imports list/approve/reject` | 無 | 📋 計劃執行 | FED-02 和 CLI-02 的前置條件 |
+| **P2** | FED-02 | Jaccard 去重無法偵測語義近似知識，知識庫膨脹 | `_is_duplicate()` 組合 Jaccard OR 向量相似度（threshold=0.9） | FED-01 | 📋 計劃執行 | 需向量化依賴可用；搭配 FED-01 同步發布 |
+| **P2** | CLI-02 | `sync_all()` 完成但無 CLI 入口，VISION-03 無法使用 | `brain fed sync/export/import/subscribe/unsubscribe` | FED-01 | 📋 計劃執行 | 補全 Federation 最後一哩路 |
+| **P2** | FEAT-04 | L1a session 結束清空，長工作階段洞察遺失 | `SessionStore.archive()`；導出 `.brain/sessions/<id>.md`；90 天自動清理 | 無 | 🔵 填空 | 低頻場景，有餘力時處理 |
+| **P2** | FEAT-03 | `temporal_query` 只有骨架，無時間過濾邏輯 | `valid_from`/`valid_until` 欄位；從 git log 推斷有效期；`brain history --at <date>` | 無 | 🔵 填空 | 邊界場景，需 git 整合 |
+| **P3** | REF-01 | BrainDB ~1800 行承擔 10+ 職責（God Object） | 逐步抽離 `VectorStore`、`FeedbackTracker` | 覆蓋率≥70% | 🏗 長期 | 前置條件未達標前不動刀 |
+| **P3** | CLI-01 | `cli.py` 2864 行，31 個函數無法維護 | 按功能拆分子模組；抽取 `@require_brain_dir` 裝飾器 | 整合測試 | 🏗 長期 | 先補整合測試再拆分 |
+| **P3** | ARCH-04 | scope 三路控制流讓使用者困惑 | 合併 `--global`/`--scope` 為單一 `--scope global` | major 版本 | 🏗 長期 | Breaking change，配合 v2.0.0 |
+| **⏳** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 對比有/無衰減召回率；統計過時節點前 3 比例 | 90天真實數據 | ⏳ 等待 | 無法提前執行 |
 
 ### 依賴鏈
 
@@ -65,7 +65,7 @@ BUG-A03 ──┤ 無依賴，v0.7.0 可立即執行
 REF-04  ──┤
 PERF-04 ──┘
 
-DEEP-05 ──→ DEEP-04（主動學習需反饋閉環）
+DEEP-05 ──→ DEEP-04（主動學習需反饋閉環先就位）
 FEAT-01 ──→ ARCH-06（版本歷史提供比對基礎）
 FED-01  ──→ FED-02
         └─→ CLI-02
