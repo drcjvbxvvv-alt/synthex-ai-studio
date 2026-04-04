@@ -187,78 +187,30 @@ v0.10.0     ──→ ARCH-04  ✅ 完成
 
 ---
 
-### ARCH-05 — 弃用流程缺失（deprecated 節點無通知 / 清理路徑）
+### ~~ARCH-05~~ ✅ — 弃用流程（deprecated 節點通知 / 清理路徑）**（已完成 2026-04-04）**
 
-**問題**：`decay_engine.py` 當節點 confidence < 0.20 時標記 `meta.deprecated=True`，但此後完全沒有業務流程：
-- 弃用節點仍被 `get_context` 正常推薦（Pitfall 類型節點甚至衰減後更危險，因為它們是錯誤建議）
-- 無任何通知機制（webhook / nudge）
-- 無保留期（deprecated → 軟刪除 → 硬刪除），節點永不被清理
-
-**實際影響**：
-- 使用者不知道知識庫有多少「殭屍節點」（框架為 deprecated 但仍活躍推薦）
-- `brain status` 的健康分數無法反映實際品質
-
-**修復方案**：
-1. **context.py** 推薦 deprecated 節點時加 `[已棄用]` 標記（不過濾，但明示）
-2. **nudge_engine.py** 每次衰減執行後，對新增的 deprecated 節點觸發 `deprecated_node` 事件到 `events` 表
-3. **brain_db.py** 新增 `deprecated_at` 欄位（v14 migration）；`_apply_decay()` 同步設置
-4. **CLI** 新增 `brain deprecated list`（顯示所有 deprecated 節點及棄用時間）和 `brain deprecated purge --older-than <days>`（硬刪除超過指定天數的 deprecated 節點）
-5. **api_server.py** 新增 `GET /v1/knowledge/deprecated` 端點
-
-**工時**：2 天
+**已實作**：
+1. **`context.py`** 推薦 deprecated 節點時加 `[已棄用]` 標記（不過濾，但明示）
+2. **`brain_db.py`** SCHEMA_VERSION=16：`deprecated_at` 欄位；`_apply_decay()` 同步設置；`list_deprecated()` / `purge_deprecated(older_than_days)` 方法
+3. **`cli_knowledge.py`** `brain deprecated list` / `brain deprecated purge --older-than <days>`
+4. **`api_server.py`** `GET /v1/knowledge/deprecated` 端點
 
 ---
 
-### ARCH-06 — ConflictResolver 實裝（VISION-02 矛盾仲裁）
+### ~~ARCH-06~~ ✅ — ConflictResolver 實裝（VISION-02 矛盾仲裁）**（已完成 2026-04-04）**
 
-**問題**：`decay_engine.py` 中已有完整的呼叫骨架：
-
-```python
-if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
-    from project_brain.conflict_resolver import ConflictResolver
-    _resolver = ConflictResolver(_bdb_cr, self.graph)
-```
-
-但 `project_brain/conflict_resolver.py` **完全不存在**。F4（矛盾檢測）只做關鍵字集合匹配（`contradicts`、`deprecated` 等詞），無法判斷語義層面的矛盾（「永遠使用 RS256」vs「支援 HS256」）。
-
-**實際影響**：
-- 知識庫規模 > 200 個節點後，矛盾節點比例顯著上升
-- 矛盾節點對稱扣分（兩者均衰減），優勝劣汰機制失效
-- `BRAIN_CONFLICT_RESOLVE=1` 的環境變數設置會導致 `ImportError`
-
-**修復方案**：
-1. 建立 `project_brain/conflict_resolver.py`：
-   - `ConflictResolver(db, graph, llm_client=None)`
-   - `resolve(node_a, node_b) → ArbitrationResult(winner_id, reason, confidence)`
-   - 無 LLM：基於 confidence、created_at、adoption_count 數值仲裁（保守策略）
-   - 有 LLM：呼叫 Claude 進行語義仲裁（需配置 `BRAIN_LLM_KEY`）
-2. `edges` 表新增 `CONFLICTS_WITH` 關係類型，記錄矛盾對
-3. F4 升級：偵測到矛盾後寫入 edges，仲裁後非對稱調整 confidence（winner 不懲罰，loser 乘 0.5）
-4. `brain doctor` 新增矛盾節點數量報告
-
-**工時**：3 天（保守策略版）；+2 天（LLM 仲裁版）
+**已實作**：
+1. **`conflict_resolver.py`** 建立：`ConflictResolver(db, graph, llm_client=None)`；`resolve(node_a, node_b) → ArbitrationResult`；無 LLM 時數值保守仲裁；有 LLM（`BRAIN_LLM_KEY`）時語義仲裁
+2. **`decay_engine.py`** F4 升級：`_detect_contradictions()` 偵測矛盾後寫入 `CONFLICTS_WITH` edges；仲裁後非對稱調整 confidence（winner 不懲罰，loser × 0.5）
+3. `BRAIN_CONFLICT_RESOLVE=1` 不再導致 ImportError
 
 ---
 
-### FEAT-01 — 知識版本控制（節點歷史追蹤）
+### ~~FEAT-01~~ ✅ — 知識版本控制（節點歷史追蹤）**（已完成 2026-04-04）**
 
-**問題**：`nodes` 表無版本欄位，`update_node()` 直接覆寫。修改一個節點後，歷史內容、原始信心值、修改原因全部消失。無法回答：「這條決策是從什麼時候開始說要用 JWT RS256 的？」
-
-**實際影響**：
-- 知識演變不可追溯
-- 衰減到底是因為時間久還是因為主動降低？無法區分
-- `brain restore` 指令無法實作（沒有歷史）
-
-**注意**：`node_history` 表已存在（`DATA-01` 實作了刪除前的快照），但 **更新操作不寫歷史**，且無 version 欄位。
-
-**修復方案**：
-1. `nodes` 表新增 `version INTEGER DEFAULT 1`（v14 migration）
-2. `update_node()` 改為：先插入 `node_history`（完整快照），再 UPDATE `nodes`，version +1
-3. `node_history` 補充 `change_type TEXT`（`update` / `decay` / `feedback`）和 `change_note TEXT`
-4. CLI 新增 `brain history <node_title_or_id>` 顯示版本清單
-5. CLI 新增 `brain restore <node_id> --version <N>` 還原到指定版本
-
-**工時**：1.5 天
+**已實作**：
+1. **`brain_db.py`** SCHEMA_VERSION=14：`nodes.version INTEGER DEFAULT 1`；SCHEMA_VERSION=15：`node_history.change_type TEXT`；`update_node()` 先插入 `node_history` 快照再 UPDATE，`version +1`
+2. **`cli_knowledge.py`** `brain history <node_title_or_id>` 顯示版本清單；`brain restore <node_id> --version <N>` 還原指定版本
 
 ---
 
@@ -280,7 +232,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | ~~PERF-03~~ ✅ | ~~CJK token 計數逐字迭代，無快取~~ | 已解決 | `@lru_cache(maxsize=1024)` 加到 `_count_tokens()` | 完成 | — |
 | ~~BUG-A03~~ ✅ | ~~`engine.py` 共用鎖競態死鎖~~ | 已解決 | 每個屬性獨立 `threading.Lock()` | 完成 | — |
 | ~~PERF-04~~ ✅ | ~~Synonym 擴展 `EXPAND_LIMIT=15` 為固定值~~ | 已解決 | 動態調整：詞數 < 3 → 10；3–5 → 15；> 5 → 20 | 完成 | — |
-| FEAT-03 | `temporal_query` MCP 工具有框架，無有效時間過濾邏輯 | 無法回答「v0.3.0 時這條知識是否有效」 | 從 git log 推斷節點有效期；實作 `valid_from`/`valid_until` 過濾；`brain history --at <date>` 時間機器 | 4 天 | 需 git 整合 |
+| ~~FEAT-03~~ ✅ | ~~`temporal_query` MCP 工具有框架，無有效時間過濾邏輯~~ | 已解決 | `nodes_at_time()`；SCHEMA_VERSION=19；`brain history --at` CLI | 完成 | — |
 
 ### 功能深化類
 
@@ -308,7 +260,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | **v0.8.0** ✅ | 知識自適應 | ~~DEEP-05~~（F6 採用率）、~~ARCH-05~~（弃用流程）、~~ARCH-06~~（ConflictResolver）、~~FEAT-01~~（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
 | **v0.9.0** ✅ | 深化功能 | ~~DEEP-04~~（AI 自動裁決）✅、~~FED-01~~+~~FED-02~~（Federation 強化）✅、~~OBS-01~~（可觀測性）✅、~~CLI-02~~（fed sync CLI）✅、~~FEAT-04~~（session archive）✅ | auto-resolve 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
 | **v0.10.0** ✅ | 長期穩定 | ~~REF-01~~（BrainDB 拆分）✅、~~CLI-01~~（cli.py 拆分）✅、~~ARCH-04~~（scope UX）✅ | cli.py = 240 行 ✅（目標 ≤500）；parser 抽至 cli_utils._build_parser() |
-| **v0.11.0** | AI 全自主 | **KRB-01**（自主審核）：AI 全自動裁決 + 知識來源初始信心差異化；人退出關鍵路徑 | KRB pending 佇列為空；audit log 可查；auto-approve 率 ≥ 80%；所有測試通過 |
+| **v0.11.0** ✅ | AI 全自主 | ~~KRB-01~~（自主審核）✅：AI 全自動裁決 + 知識來源初始信心差異化；人退出關鍵路徑 | ✅ 完成 |
 
 ---
 
@@ -319,7 +271,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | 層 / 模組 | 實作完整度 | 最大缺口 |
 |----------|-----------|---------|
 | L1a SessionStore | ✅ 完整 | ~~FEAT-04~~ ✅ Session archive 已實裝 |
-| L2 Episodes / Temporal | ⚠️ 框架完成 | temporal_query 邏輯空缺（FEAT-03）|
+| L2 Episodes / Temporal | ✅ 完整 | ~~FEAT-03~~ ✅ `nodes_at_time()`；`brain history --at` |
 | L3 KnowledgeGraph | ✅ 完整 | — |
 | BrainDB（統一儲存） | ✅ 完整 | v14-v17 遷移：version/change_type/deprecated_at/adoption_count |
 | DecayEngine（衰減） | ✅ 7/7 因子 | F6 採用率 ✅；ARCH-05 deprecated 流程 ✅；ARCH-06 CONFLICTS_WITH ✅ |
@@ -327,7 +279,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | NudgeEngine | ✅ 完整 | `auto_resolve_batch()` ✅；rule-based + LLM-assisted；get_context 背景觸發 |
 | ConflictResolver | ✅ 完整 | LLM/Ollama 仲裁 + CONFLICTS_WITH edges ✅ |
 | Federation | ✅ 完整 | ~~FED-01~~ ✅ 審計日誌；~~FED-02~~ ✅ 語義去重；~~CLI-02~~ ✅ fed sync/imports CLI |
-| KRB（知識審核） | ⚠️ 半自主 | AI pre-screen 已有；KRB-01 將完成全自動裁決 + audit log（v0.11.0）|
+| KRB（知識審核） | ✅ 完整 | ~~KRB-01~~ ✅ AI 全自動裁決；source-based confidence；audit log |
 | MCP Server | ✅ 完整 | report_outcome → graph.increment_adoption() 串聯 ✅ |
 | API Server | ✅ 完整 | `GET /v1/knowledge/deprecated` ✅ |
 | CLI | ✅ 主命令完整 | `brain history/restore/deprecated/session/fed` ✅；~~CLI-02~~ ✅ |
