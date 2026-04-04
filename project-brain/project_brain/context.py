@@ -12,12 +12,14 @@ ContextEngineer — 動態 Context 組裝引擎
 不只是「找到知識」，而是「把正確的知識，在正確的時機，
 以正確的密度注入 Context」。
 """
+import functools
 import logging
 import os
 import re
 import json
 from pathlib import Path
 from .graph import KnowledgeGraph
+from .constants import ADR_CONTENT_CAP, NODE_CONTENT_CAP, DEFAULT_SEARCH_LIMIT  # REF-04
 from typing import TypedDict
 if TYPE_CHECKING:
     from .vector_memory import VectorMemory
@@ -61,6 +63,7 @@ EXPAND_LIMIT = int(os.environ.get("BRAIN_EXPAND_LIMIT", "15"))
 DEDUP_THRESHOLD = float(os.environ.get("BRAIN_DEDUP_THRESHOLD", "0.85"))
 
 
+@functools.lru_cache(maxsize=1024)  # PERF-03: cache repeated token counts
 def _count_tokens(text: str) -> int:
     """
     BUG-03 fix: CJK-aware token estimator (no external dependency).
@@ -285,7 +288,7 @@ class ContextEngineer:
 
             # STAB-07: track IDs of nodes that actually fit in budget (no title-matching)
             for priority, label, node in all_nodes:
-                max_c = 800 if label == "📄 ADR" else 400
+                max_c = ADR_CONTENT_CAP if label == "📄 ADR" else NODE_CONTENT_CAP  # REF-04
                 s     = self._fmt_node(label, node, max_chars=max_c)
                 prev_len = len(sections)
                 budget   = self._add_if_budget(sections, s, budget)
@@ -602,7 +605,14 @@ class ContextEngineer:
             for syn in self._SYNONYM_MAP.get(w, [])[:3]:  # P-1: cap 3 synonyms/term
                 _add(syn)
 
-        return expanded[:EXPAND_LIMIT]  # P-1: env-configurable (was hardcoded 30)
+        # PERF-04: dynamic limit — short queries get tighter cap to reduce noise;
+        # all other queries use full EXPAND_LIMIT (architectural hard cap, v0.2.0).
+        word_count = len(raw_words) + len(cjk_ngrams)
+        if word_count < 3:
+            _limit = min(EXPAND_LIMIT, 10)   # conservative: short queries risk noise
+        else:
+            _limit = EXPAND_LIMIT            # standard cap — never exceed EXPAND_LIMIT
+        return expanded[:_limit]
 
     def _extract_keywords(self, task: str) -> str:
         """提取 FTS 搜尋關鍵字（含同義詞擴展）"""
@@ -618,7 +628,7 @@ class ContextEngineer:
         keywords = [w for w in words if w not in stopwords]
         return " ".join(keywords[:8]) if keywords else ""
 
-    def _fmt_node(self, label: str, node: dict, max_chars: int = 400) -> str:
+    def _fmt_node(self, label: str, node: dict, max_chars: int = NODE_CONTENT_CAP) -> str:
         from project_brain.utils import confidence_label
         import datetime as _dt
         title   = node.get("title", "")

@@ -15,6 +15,7 @@ project_brain.cli — Project Brain CLI 入口
 """
 import sys, os
 from pathlib import Path
+from project_brain.constants import DEFAULT_SEARCH_LIMIT  # REF-04
 
 # project_brain 套件安裝後不需要手動設定 sys.path
 # 保留兼容本地開發（python brain.py）
@@ -1002,8 +1003,8 @@ def cmd_counterfactual(args):
 
     # Extract key terms from hypothesis
     terms = _re.findall(r"[a-zA-Z0-9_]{3,}|[\u4e00-\u9fff]{2,}", hypothesis)
-    search_q = " ".join(terms[:8])
-    hits = db.search_nodes(search_q, limit=8)
+    search_q = " ".join(terms[:DEFAULT_SEARCH_LIMIT])
+    hits = db.search_nodes(search_q, limit=DEFAULT_SEARCH_LIMIT)  # REF-04
 
     affected = []
     seen_ids = set()

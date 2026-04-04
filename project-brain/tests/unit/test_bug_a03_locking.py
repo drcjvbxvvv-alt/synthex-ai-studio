@@ -505,7 +505,7 @@ class TestBugA03Regression:
 
         g.add_node("test1", "Rule", "測試圖節點", content="驗證圖操作")
         results = g.search_nodes("測試")
-        assert any(r["node_id"] == "test1" for r in results), (
+        assert any(r["id"] == "test1" for r in results), (
             "加入節點後搜尋未找到（graph 功能異常）。"
         )
 

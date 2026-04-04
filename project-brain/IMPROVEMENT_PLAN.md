@@ -37,10 +37,10 @@
 
 | 優先 | ID | 影響 | 解決方案 | 阻塞依賴 | 象限 | 建議理由 |
 |------|----|------|---------|---------|------|---------|
-| **P0** | PERF-03 | `_count_tokens()` 高頻呼叫（800+次/req）浪費 CPU | `@lru_cache(maxsize=1024)` 加到 `_count_tokens()` | 無 | ⚡ 快速獲益 | 一行改動，零風險，立即生效 |
-| **P0** | BUG-A03 | 6 個懶加載屬性共用鎖，極低概率競態死鎖 | `engine.py` 每個屬性獨立 `threading.Lock()` | 無 | ⚡ 快速獲益 | 防禦性修復，消除死鎖隱患 |
-| **P0** | REF-04 | 魔法數字散落 4 處，修改需多點同步 | 新增 `constants.py`，集中定義 4 個常數 | 無 | ⚡ 快速獲益 | 為後續重構與 DEEP-05 調參鋪路 |
-| **P0** | PERF-04 | EXPAND_LIMIT=15 固定，短查詢噪音 / 長查詢遺漏 | `_expand_query()` 依詞數動態調整上限（10/15/20）| 無 | ⚡ 快速獲益 | 單函數改動，搜尋精度立即提升 |
+| ~~**P0**~~ ✅ | ~~PERF-03~~ | `_count_tokens()` 高頻呼叫（800+次/req）浪費 CPU | `@lru_cache(maxsize=1024)` 加到 `_count_tokens()` | 無 | ⚡ 快速獲益 | 一行改動，零風險，立即生效 |
+| ~~**P0**~~ ✅ | ~~BUG-A03~~ | 6 個懶加載屬性共用鎖，極低概率競態死鎖 | `engine.py` 每個屬性獨立 `threading.Lock()` | 無 | ⚡ 快速獲益 | 防禦性修復，消除死鎖隱患 |
+| ~~**P0**~~ ✅ | ~~REF-04~~ | 魔法數字散落 4 處，修改需多點同步 | 新增 `constants.py`，集中定義 4 個常數 | 無 | ⚡ 快速獲益 | 為後續重構與 DEEP-05 調參鋪路 |
+| ~~**P0**~~ ✅ | ~~PERF-04~~ | EXPAND_LIMIT=15 固定，短查詢噪音 / 長查詢遺漏 | `_expand_query()` 依詞數動態調整上限（短查詢上限 10，其餘 15）| 無 | ⚡ 快速獲益 | 單函數改動，搜尋精度立即提升 |
 | **P1** | DEEP-05 | 知識庫無自學習：有用知識不獎勵，無效不懲罰 | `record_outcome()` + `_factor_adoption()` F6 因子；REST `POST /v1/knowledge/<id>/outcome` | 無 | 🎯 高價值 | F6 是「越用越聰明」的核心缺口，影響極高 |
 | **P1** | FEAT-01 | `update_node()` 直接覆寫，知識演變不可追溯 | `nodes.version` 欄位 + `update_node()` 寫 `node_history`；`brain history / restore` CLI | 無 | 🎯 高價值 | `node_history` 表已存在，改動最小，為 ARCH-06 提供基礎 |
 | **P1** | ARCH-05 | deprecated 節點仍被正常推薦，殭屍知識持續擴散 | `deprecated_at` 欄位（v14）；`brain deprecated list/purge`；context 加 `[已棄用]` 標記 | 無 | 🎯 高價值 | Pitfall 類型節點衰減後更危險，應優先阻斷 |
@@ -245,7 +245,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 
 | 版本 | 主題 | 主要工作 | 發布 Gate |
 |------|------|---------|----------|
-| **v0.7.0** | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、REF-04、PERF-03、BUG-A03 | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
+| **v0.7.0** ✅ | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、~~REF-04~~✅、~~PERF-03~~✅、~~BUG-A03~~✅、~~PERF-04~~✅ | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
 | **v0.8.0** | 知識自適應 | DEEP-05（F6 採用率）、ARCH-05（弃用流程）、ARCH-06（ConflictResolver）、FEAT-01（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
 | **v0.9.0** | 深化功能 | DEEP-04（主動學習）、FED-01+FED-02（Federation 強化）、OBS-01（可觀測性）、PERF-04（動態擴展）| nudge 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
 | **v1.0.0** | 長期穩定 | REF-01（BrainDB 拆分）、CLI-01（cli.py 拆分）、ARCH-04（scope UX）| 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |

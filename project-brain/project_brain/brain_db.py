@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 13          # DEF-04: bump on every schema change
 
 # REF-02: single source of truth in synonyms.py
-from .synonyms import SYNONYM_MAP as _SYNONYM_MAP  # noqa: E402
+from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
+from . import constants as _constants               # REF-04: module ref so monkeypatch works
 
 
 class BrainDB:
@@ -300,7 +301,7 @@ class BrainDB:
             if ref_dt.tzinfo is None:
                 ref_dt = ref_dt.replace(tzinfo=timezone.utc)
             days   = max(0, (datetime.now(timezone.utc) - ref_dt).days)
-            decay  = math.exp(-0.003 * days)          # F1: BASE_DECAY_RATE=0.003
+            decay  = math.exp(-_constants.BASE_DECAY_RATE * days)  # F1: REF-04
             access = int(node.get("access_count") or 0)
             f7     = min(0.15, access / 10 * 0.05)   # F7: access-count bonus
             return max(0.05, min(1.0, base * decay + f7))

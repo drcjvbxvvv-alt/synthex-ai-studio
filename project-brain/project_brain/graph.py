@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+from .constants import DEFAULT_SEARCH_LIMIT  # REF-04
 
 logger = logging.getLogger(__name__)
 
@@ -1020,7 +1021,7 @@ class KnowledgeGraph:
         affected = []
         seen_ids = set()
         try:
-            hits = self.search_nodes(search_q, limit=8)
+            hits = self.search_nodes(search_q, limit=DEFAULT_SEARCH_LIMIT)  # REF-04
             for n in hits:
                 nid = n["id"]
                 if nid in seen_ids:

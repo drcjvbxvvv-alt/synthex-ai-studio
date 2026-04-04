@@ -21,11 +21,12 @@ from pathlib import Path
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
-from .graph     import KnowledgeGraph
-from .brain_db      import BrainDB          # A-10: unified DB
-from .context_result import ContextResult    # P3-A: structured return
-from .extractor import KnowledgeExtractor
-from .context import ContextEngineer
+from .graph          import KnowledgeGraph
+from .brain_db       import BrainDB               # A-10: unified DB
+from .context_result import ContextResult         # P3-A: structured return
+from .extractor      import KnowledgeExtractor
+from .context        import ContextEngineer
+from .constants      import DEFAULT_SEARCH_LIMIT  # REF-04
 
 try:
     from core.config import cfg
@@ -76,16 +77,30 @@ class ProjectBrain:
         self._validator:  None = None
         self._distiller:  None = None
         self._krb:        None = None
-        # DEF-03 fix: single lock serialises all lazy-init paths
-        self._init_lock = threading.Lock()
+        # BUG-A03: decay_engine / nudge_engine lazy instances
+        self._decay:      None = None
+        self._nudge:      None = None
+        # BUG-A03: per-property locks — shared _init_lock was non-reentrant,
+        # causing deadlock risk when chained lazy-init calls (e.g. context_engineer
+        # calling self.graph which also tried to acquire _init_lock).
+        self._db_lock        = threading.Lock()
+        self._graph_lock     = threading.Lock()
+        self._extractor_lock = threading.Lock()
+        self._context_lock   = threading.Lock()
+        self._krb_lock       = threading.Lock()
+        self._router_lock    = threading.Lock()
+        self._validator_lock = threading.Lock()
+        self._distiller_lock = threading.Lock()
+        self._decay_lock     = threading.Lock()
+        self._nudge_lock     = threading.Lock()
 
     # ── 屬性懶初始化 ──────────────────────────────────────────────
 
     @property
     def db(self) -> 'BrainDB':
         """A-10: Unified BrainDB — single source of truth."""
-        if self._db is None:                          # DEF-03 fix: double-checked locking
-            with self._init_lock:
+        if self._db is None:
+            with self._db_lock:                        # BUG-A03: per-property lock
                 if self._db is None:
                     self.brain_dir.mkdir(parents=True, exist_ok=True)
                     self._db = BrainDB(self.brain_dir)
@@ -93,8 +108,8 @@ class ProjectBrain:
 
     @property
     def graph(self) -> KnowledgeGraph:
-        if self._graph is None:                       # DEF-03 fix
-            with self._init_lock:
+        if self._graph is None:
+            with self._graph_lock:                     # BUG-A03
                 if self._graph is None:
                     self.brain_dir.mkdir(parents=True, exist_ok=True)
                     self._graph = KnowledgeGraph(self.brain_dir)
@@ -102,8 +117,8 @@ class ProjectBrain:
 
     @property
     def extractor(self) -> KnowledgeExtractor:
-        if self._extractor is None:                   # DEF-03 fix
-            with self._init_lock:
+        if self._extractor is None:
+            with self._extractor_lock:                 # BUG-A03
                 if self._extractor is None:
                     self._extractor = KnowledgeExtractor(str(self.workdir))
         return self._extractor
@@ -111,13 +126,10 @@ class ProjectBrain:
     @property
     def context_engineer(self) -> ContextEngineer:
         if self._context is None:
-            # Resolve dependencies BEFORE acquiring the lock to prevent
-            # deadlock: threading.Lock is not reentrant, so calling self.graph
-            # or self.db while holding _init_lock would deadlock if they are
-            # not yet initialised (they also acquire _init_lock).
+            # Resolve dependencies outside lock — each dependency has its own lock now
             _graph = self.graph
             _db    = self.db
-            with self._init_lock:
+            with self._context_lock:                   # BUG-A03
                 if self._context is None:
                     # A-11: pass BrainDB so ContextEngineer uses brain.db as primary read
                     self._context = ContextEngineer(
@@ -134,8 +146,8 @@ class ProjectBrain:
         scan/learn 的知識進 Staging 等待審查。
         """
         if self._krb is None:
-            _graph = self.graph  # resolve before acquiring lock (deadlock prevention)
-            with self._init_lock:
+            _graph = self.graph  # resolve before acquiring lock
+            with self._krb_lock:                       # BUG-A03
                 if self._krb is None:
                     self._krb = KnowledgeReviewBoard(
                         brain_dir   = self.brain_dir,
@@ -150,8 +162,8 @@ class ProjectBrain:
         v3.0 三層認知路由器。
         懶初始化：第一次呼叫時建立 L1 + L2 + L3 連線。
         """
-        if self._router is None:                      # DEF-03 fix
-            with self._init_lock:
+        if self._router is None:
+            with self._router_lock:                    # BUG-A03
                 if self._router is None:
                     from project_brain.router import BrainRouter
                     self._router = BrainRouter(
@@ -165,8 +177,8 @@ class ProjectBrain:
     @property
     def validator(self) -> "KnowledgeValidator":
         """v4.0 自主知識驗證器（懶初始化）"""
-        if self._validator is None:                   # DEF-03 fix
-            with self._init_lock:
+        if self._validator is None:
+            with self._validator_lock:                 # BUG-A03
                 if self._validator is None:
                     from project_brain.knowledge_validator import KnowledgeValidator
                     self._validator = KnowledgeValidator(
@@ -179,8 +191,8 @@ class ProjectBrain:
     @property
     def distiller(self) -> "KnowledgeDistiller":
         """v4.0 知識蒸餾器（懶初始化）"""
-        if self._distiller is None:                   # DEF-03 fix
-            with self._init_lock:
+        if self._distiller is None:
+            with self._distiller_lock:                 # BUG-A03
                 if self._distiller is None:
                     from project_brain.knowledge_distiller import KnowledgeDistiller
                     self._distiller = KnowledgeDistiller(
@@ -189,6 +201,32 @@ class ProjectBrain:
                         workdir   = self.workdir,
                     )
         return self._distiller
+
+    @property
+    def decay_engine(self) -> "DecayEngine":
+        """BUG-A03: DecayEngine 懶初始化（獨立鎖）"""
+        if self._decay is None:
+            with self._decay_lock:
+                if self._decay is None:
+                    from project_brain.decay_engine import DecayEngine
+                    self._decay = DecayEngine(
+                        graph   = self.graph,
+                        workdir = str(self.workdir),
+                    )
+        return self._decay
+
+    @property
+    def nudge_engine(self) -> "NudgeEngine":
+        """BUG-A03: NudgeEngine 懶初始化（獨立鎖）"""
+        if self._nudge is None:
+            with self._nudge_lock:
+                if self._nudge is None:
+                    from project_brain.nudge_engine import NudgeEngine
+                    self._nudge = NudgeEngine(
+                        graph    = self.graph,
+                        brain_db = self._db,
+                    )
+        return self._nudge
 
     # ── 公開 API ──────────────────────────────────────────────────
 
@@ -644,7 +682,7 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
         try:
             from .semantic_dedup import SemanticDeduplicator
             _candidates = self.db.search_nodes(
-                f"{title} {content}", node_type=kind, scope=scope, limit=8
+                f"{title} {content}", node_type=kind, scope=scope, limit=DEFAULT_SEARCH_LIMIT  # REF-04
             )
             _dedup = SemanticDeduplicator(self.graph, threshold=0.85)
             _result = _dedup.check_near_duplicate(
