@@ -177,6 +177,14 @@ class KnowledgeGraph:
         # v9.0: 情感重量（踩坑的痛苦程度影響記憶強度）
         if 'emotional_weight' not in existing_nodes:
             conn.execute("ALTER TABLE nodes ADD COLUMN emotional_weight REAL NOT NULL DEFAULT 0.5")
+        # v10.0: DEEP-05 adoption_count for F6 factor
+        if 'adoption_count' not in existing_nodes:
+            conn.execute("ALTER TABLE nodes ADD COLUMN adoption_count INTEGER NOT NULL DEFAULT 0")
+        # ARCH-05: deprecated lifecycle columns
+        if 'is_deprecated' not in existing_nodes:
+            conn.execute("ALTER TABLE nodes ADD COLUMN is_deprecated INTEGER NOT NULL DEFAULT 0")
+        if 'deprecated_at' not in existing_nodes:
+            conn.execute("ALTER TABLE nodes ADD COLUMN deprecated_at TEXT DEFAULT NULL")
         conn.commit()
 
 
@@ -189,6 +197,17 @@ class KnowledgeGraph:
                     last_accessed = datetime('now')
                 WHERE id = ?
             """, (node_id,))
+            self._conn.commit()
+        except Exception:
+            pass
+
+    def increment_adoption(self, node_id: str) -> None:
+        """DEEP-05: 記錄知識被採用（useful=True 時增加 adoption_count，影響 F6 衰減因子）"""
+        try:
+            self._conn.execute(
+                "UPDATE nodes SET adoption_count=COALESCE(adoption_count,0)+1 WHERE id=?",
+                (node_id,)
+            )
             self._conn.commit()
         except Exception:
             pass

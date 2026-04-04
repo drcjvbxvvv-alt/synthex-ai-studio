@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 13          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 17          # DEF-04: bump on every schema change
 
 # REF-02: single source of truth in synonyms.py
 from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -222,6 +222,18 @@ class BrainDB:
             ("is_pinned+confidence composite index",
              "CREATE INDEX IF NOT EXISTS idx_nodes_pinned_conf"
              " ON nodes(is_pinned DESC, confidence DESC)"),
+            # v14: FEAT-01 — version column on nodes for knowledge version control
+            ("version column on nodes",
+             "ALTER TABLE nodes ADD COLUMN version INTEGER NOT NULL DEFAULT 1"),
+            # v15: FEAT-01 — change_type column on node_history
+            ("change_type column on node_history",
+             "ALTER TABLE node_history ADD COLUMN change_type TEXT DEFAULT 'update'"),
+            # v16: ARCH-05 — deprecated_at timestamp column on nodes
+            ("deprecated_at column on nodes",
+             "ALTER TABLE nodes ADD COLUMN deprecated_at TEXT DEFAULT NULL"),
+            # v17: DEEP-05 — adoption_count column for F6 factor
+            ("adoption_count column on nodes",
+             "ALTER TABLE nodes ADD COLUMN adoption_count INTEGER NOT NULL DEFAULT 0"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -445,9 +457,10 @@ class BrainDB:
         if not ups:
             return True
         ups.append("updated_at=datetime('now')")
+        ups.append("version=COALESCE(version,1)+1")  # FEAT-01: increment version
         params.append(node_id)
         with self._write_guard():  # DEF-01 fix
-            # FEAT-06: snapshot BEFORE state into node_history
+            # FEAT-06/FEAT-01: snapshot BEFORE state into node_history
             try:
                 last_ver = self.conn.execute(
                     "SELECT COALESCE(MAX(version),0) FROM node_history WHERE node_id=?",
@@ -455,10 +468,10 @@ class BrainDB:
                 ).fetchone()[0]
                 self.conn.execute(
                     "INSERT INTO node_history(node_id,version,title,content,confidence,tags,"
-                    "changed_by,change_note) VALUES(?,?,?,?,?,?,?,?)",
+                    "changed_by,change_note,change_type) VALUES(?,?,?,?,?,?,?,?,?)",
                     (node_id, last_ver + 1, ex.get("title"), ex.get("content"),
                      ex.get("confidence"), ex.get("tags","[]"),
-                     changed_by, change_note)
+                     changed_by, change_note, "update")
                 )
             except Exception:
                 pass
@@ -598,12 +611,24 @@ class BrainDB:
         else:
             new_conf = max(FLOOR, current - PENALTY)
 
-        self.conn.execute(
-            "UPDATE nodes SET confidence=?, updated_at=datetime('now') WHERE id=?",
-            (new_conf, node_id)
-        )
+        if helpful:
+            # DEEP-05: increment adoption_count for F6 factor
+            self.conn.execute(
+                "UPDATE nodes SET confidence=?, updated_at=datetime('now'),"
+                " adoption_count=COALESCE(adoption_count,0)+1 WHERE id=?",
+                (new_conf, node_id)
+            )
+        else:
+            self.conn.execute(
+                "UPDATE nodes SET confidence=?, updated_at=datetime('now') WHERE id=?",
+                (new_conf, node_id)
+            )
         self.conn.commit()
         return new_conf
+
+    def record_outcome(self, node_id: str, was_useful: bool) -> float:
+        """DEEP-05: alias for record_feedback — named for MCP/REST clarity."""
+        return self.record_feedback(node_id, helpful=was_useful)
 
     def pin_node(self, node_id: str, pinned: bool = True) -> bool:
         r = self.conn.execute(
@@ -677,7 +702,8 @@ class BrainDB:
             return False
         with self._write_guard():
             self.conn.execute(
-                "UPDATE nodes SET is_deprecated=1, updated_at=datetime('now')"
+                "UPDATE nodes SET is_deprecated=1, updated_at=datetime('now'),"
+                " deprecated_at=COALESCE(deprecated_at,datetime('now'))"  # ARCH-05
                 " WHERE id=?", (node_id,)
             )
             if reason:
@@ -716,6 +742,39 @@ class BrainDB:
             "replaced_by":  replaced_by,
             "history":      history,
         }
+
+    def get_deprecated_nodes(self, limit: int = 50) -> list:
+        """ARCH-05: 列出已棄用的節點（含棄用時間）"""
+        try:
+            rows = self.conn.execute(
+                "SELECT id, type, title, confidence, deprecated_at, updated_at"
+                " FROM nodes WHERE is_deprecated=1"
+                " ORDER BY COALESCE(deprecated_at, updated_at) DESC LIMIT ?",
+                (max(1, min(200, limit)),)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def purge_deprecated_nodes(self, older_than_days: int = 90) -> int:
+        """ARCH-05: 硬刪除超過指定天數的已棄用節點。"""
+        try:
+            cutoff = (
+                __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+                - __import__('datetime').timedelta(days=older_than_days)
+            ).isoformat()
+            rows = self.conn.execute(
+                "SELECT id FROM nodes WHERE is_deprecated=1"
+                " AND COALESCE(deprecated_at, updated_at) < ?",
+                (cutoff,)
+            ).fetchall()
+            count = 0
+            for r in rows:
+                if self.delete_node(r[0]):
+                    count += 1
+            return count
+        except Exception:
+            return 0
 
     # ── FEAT-07: Cross-project Migration ─────────────────────────
 

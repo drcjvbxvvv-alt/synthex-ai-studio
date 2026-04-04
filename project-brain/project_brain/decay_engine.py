@@ -263,7 +263,8 @@ class DecayEngine:
                 SELECT id, type, title, content, tags,
                        source_url, created_at, updated_at, is_pinned,
                        importance, confidence AS meta_confidence,
-                       access_count
+                       access_count,
+                       COALESCE(adoption_count, 0) AS adoption_count
                 FROM nodes
                 WHERE type IN ('Decision','Pitfall','Rule','ADR')
                 LIMIT ? OFFSET ?
@@ -326,6 +327,13 @@ class DecayEngine:
                 f5 = self._factor_code_reference(content)
                 new_conf = min(DECAY_CEIL, new_conf + f5)
                 report.factors["F5_code_ref"] = f5
+
+                # F6（DEEP-05）：採用率反衰減 — 知識被確認有用 → 衰減更慢
+                adoption = row.get('adoption_count', 0)
+                if adoption > 0:
+                    f6 = min(1.2, 1.0 + adoption * 0.02)  # max +20% multiplier
+                    new_conf = min(DECAY_CEIL, new_conf * f6)
+                    report.factors['F6_adoption'] = f6
 
                 # F7（Phase 3）：使用頻率反衰減
                 # 被 Agent 查詢越多次，衰減越慢（知識被驗證 = 仍然有效）
@@ -483,6 +491,23 @@ class DecayEngine:
                     has_pos_a = bool(pos_set & words_a)
                     if (has_neg_a and has_pos_b) or (has_neg_b and has_pos_a):
                         pairs.append((da["id"], db["id"]))
+                        # ARCH-06: write CONFLICTS_WITH edge so brain doctor can report it
+                        try:
+                            existing = self.graph._conn.execute(
+                                "SELECT id FROM edges WHERE source_id=? AND target_id=?"
+                                " AND relation='CONFLICTS_WITH' LIMIT 1",
+                                (da["id"], db["id"])
+                            ).fetchone()
+                            if not existing:
+                                self.graph._conn.execute(
+                                    "INSERT INTO edges(source_id, relation, target_id, note)"
+                                    " VALUES(?,?,?,?)",
+                                    (da["id"], "CONFLICTS_WITH", db["id"],
+                                     "Auto-detected by DecayEngine F4")
+                                )
+                                self.graph._conn.commit()
+                        except Exception:
+                            pass
                         break
 
         logger.debug("偵測到 %d 對矛盾知識", len(pairs))
@@ -506,17 +531,23 @@ class DecayEngine:
             pass
         return set()
 
+    def _factor_adoption(self, adoption_count: int) -> float:
+        """F6 (DEEP-05): 採用率反衰減因子。
+        每次 Agent 確認知識有用 → adoption_count +1 → F6 最多 +20% 加成。
+        """
+        return min(1.2, 1.0 + max(0, adoption_count) * 0.02)
+
     def _apply_decay(self, node_id: str, old_conf: float,
                      new_conf: float, deprecated: bool) -> None:
         """把衰減結果寫入知識圖譜"""
         try:
-            meta_raw = self.graph._conn.execute(
-                "SELECT meta FROM nodes WHERE id=?", (node_id,)
+            row = self.graph._conn.execute(
+                "SELECT meta, is_deprecated FROM nodes WHERE id=?", (node_id,)
             ).fetchone()
-            if not meta_raw:
+            if not row:
                 return
             try:
-                meta = json.loads(meta_raw["meta"] or "{}")
+                meta = json.loads(row["meta"] or "{}")
             except (json.JSONDecodeError, TypeError):
                 meta = {}
             meta["confidence"]     = round(new_conf, 4)
@@ -524,10 +555,18 @@ class DecayEngine:
             meta["decayed_at"]     = datetime.now(timezone.utc).isoformat()
             if deprecated:
                 meta["deprecated"] = True
-            self.graph._conn.execute(
-                "UPDATE nodes SET meta=?, confidence=? WHERE id=?",
-                (json.dumps(meta, ensure_ascii=False), round(new_conf, 4), node_id)
-            )
+            # ARCH-05: write deprecated_at column when first deprecated
+            if deprecated and not row["is_deprecated"]:
+                self.graph._conn.execute(
+                    "UPDATE nodes SET meta=?, confidence=?, is_deprecated=1,"
+                    " deprecated_at=COALESCE(deprecated_at, datetime('now')) WHERE id=?",
+                    (json.dumps(meta, ensure_ascii=False), round(new_conf, 4), node_id)
+                )
+            else:
+                self.graph._conn.execute(
+                    "UPDATE nodes SET meta=?, confidence=? WHERE id=?",
+                    (json.dumps(meta, ensure_ascii=False), round(new_conf, 4), node_id)
+                )
             self.graph._conn.commit()
         except Exception as e:
             logger.error("_apply_decay 寫入失敗 (%s): %s", node_id, e)

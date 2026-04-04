@@ -632,6 +632,9 @@ class ContextEngineer:
         from project_brain.utils import confidence_label
         import datetime as _dt
         title   = node.get("title", "")
+        # ARCH-05: mark deprecated nodes so agents know to treat with caution
+        if node.get("is_deprecated"):
+            title = f"[已棄用] {title}"
         content = node.get("content", "")
         if len(content) > max_chars:
             content = content[:max_chars] + "..."

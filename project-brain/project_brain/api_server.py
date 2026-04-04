@@ -7,6 +7,7 @@ project_brain/api_server.py — Project Brain REST API Server
   GET  /health
   GET  /v1/stats
   GET  /v1/knowledge
+  GET  /v1/knowledge/deprecated
   GET,POST /v1/context
   POST /v1/messages
   POST /v1/add
@@ -200,6 +201,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._stats(wd)
             if path == "/v1/knowledge" and method == "GET":
                 return self._knowledge(wd)
+            if path == "/v1/knowledge/deprecated" and method == "GET":
+                return self._knowledge_deprecated(wd, qs)
             if path == "/v1/context" and method in ("GET", "POST"):
                 return self._context(wd, qs, body)
             if path == "/v1/messages" and method == "POST":
@@ -287,6 +290,19 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             logger.warning("knowledge list: %s", exc)
             self._json({"error": "無法取得知識列表，請稍後再試", "nodes": []})
+
+    # ── /v1/knowledge/deprecated ───────────────────────────
+    def _knowledge_deprecated(self, wd: str, qs: dict):
+        """ARCH-05: 列出已棄用節點"""
+        try:
+            from project_brain.brain_db import BrainDB
+            limit = int((qs.get("limit") or [50])[0])
+            db    = BrainDB(Path(wd) / ".brain")
+            rows  = db.get_deprecated_nodes(limit=limit)
+            self._json({"count": len(rows), "nodes": rows})
+        except Exception as exc:
+            logger.warning("knowledge/deprecated: %s", exc)
+            self._json({"error": "無法取得已棄用節點列表", "nodes": []}, 500)
 
     # ── /v1/context ────────────────────────────────────────
     def _context(self, wd: str, qs: dict, body: dict):

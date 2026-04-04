@@ -1,6 +1,6 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.6.0（2026-04-04）
+> **當前版本**：v0.8.0（2026-04-04）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
 
 ---
@@ -41,10 +41,10 @@
 | ~~**P0**~~ ✅ | ~~BUG-A03~~ | 6 個懶加載屬性共用鎖，極低概率競態死鎖 | `engine.py` 每個屬性獨立 `threading.Lock()` | 無 | ⚡ 快速獲益 | 防禦性修復，消除死鎖隱患 |
 | ~~**P0**~~ ✅ | ~~REF-04~~ | 魔法數字散落 4 處，修改需多點同步 | 新增 `constants.py`，集中定義 4 個常數 | 無 | ⚡ 快速獲益 | 為後續重構與 DEEP-05 調參鋪路 |
 | ~~**P0**~~ ✅ | ~~PERF-04~~ | EXPAND_LIMIT=15 固定，短查詢噪音 / 長查詢遺漏 | `_expand_query()` 依詞數動態調整上限（短查詢上限 10，其餘 15）| 無 | ⚡ 快速獲益 | 單函數改動，搜尋精度立即提升 |
-| **P1** | DEEP-05 | 知識庫無自學習：有用知識不獎勵，無效不懲罰 | `record_outcome()` + `_factor_adoption()` F6 因子；REST `POST /v1/knowledge/<id>/outcome` | 無 | 🎯 高價值 | F6 是「越用越聰明」的核心缺口，影響極高 |
-| **P1** | FEAT-01 | `update_node()` 直接覆寫，知識演變不可追溯 | `nodes.version` 欄位 + `update_node()` 寫 `node_history`；`brain history / restore` CLI | 無 | 🎯 高價值 | `node_history` 表已存在，改動最小，為 ARCH-06 提供基礎 |
-| **P1** | ARCH-05 | deprecated 節點仍被正常推薦，殭屍知識持續擴散 | `deprecated_at` 欄位（v14）；`brain deprecated list/purge`；context 加 `[已棄用]` 標記 | 無 | 🎯 高價值 | Pitfall 類型節點衰減後更危險，應優先阻斷 |
-| **P1** | ARCH-06 | `BRAIN_CONFLICT_RESOLVE=1` 設置後直接 ImportError | 建立 `conflict_resolver.py`；保守策略（數值仲裁）＋可選 LLM 語義仲裁；edges 表新增 `CONFLICTS_WITH` | FEAT-01 | 🎯 高價值 | 骨架呼叫點已存在，需補上缺失模組 |
+| ~~**P1**~~ ✅ | ~~DEEP-05~~ | 知識庫無自學習：有用知識不獎勵，無效不懲罰 | `record_outcome()` + `_factor_adoption()` F6 因子；`adoption_count` 欄位 (v17)；mcp_server 同步 graph.increment_adoption() | 無 | 🎯 高價值 | F6 = min(1.2, 1+adoption×0.02)；越用越聰明 |
+| ~~**P1**~~ ✅ | ~~FEAT-01~~ | `update_node()` 直接覆寫，知識演變不可追溯 | `nodes.version` 欄位 (v14) + `change_type` (v15) + `brain history / restore` CLI | 無 | 🎯 高價值 | `node_history` 表已存在；新增 version 欄位與 CLI 別名 |
+| ~~**P1**~~ ✅ | ~~ARCH-05~~ | deprecated 節點仍被正常推薦，殭屍知識持續擴散 | `deprecated_at` 欄位 (v16)；`brain deprecated list/purge`；context 加 `[已棄用]` 標記；`GET /v1/knowledge/deprecated` | 無 | 🎯 高價值 | 完整 deprecated 流程：標記→顯示→清理 |
+| ~~**P1**~~ ✅ | ~~ARCH-06~~ | `BRAIN_CONFLICT_RESOLVE=1` 設置後直接 ImportError | `conflict_resolver.py` 已存在（完整 LLM 仲裁）；`decay_engine._detect_contradictions()` 寫入 `CONFLICTS_WITH` edges | FEAT-01 | 🎯 高價值 | conflict_resolver 模組已完整，補上 edges 寫入即完成 |
 | **P2** | OBS-01 | 問題難重現，Decay 為何降低信心無從追查 | structlog 結構化日誌（`event/node_id/reason`）；`GET /v1/metrics` Prometheus 端點 | 無 | 📋 計劃執行 | 先做 structlog（1天），再做 Prometheus（2天） |
 | **P2** | DEEP-04 | 信心 < 0.5 的節點缺乏人工確認機制 | `context.build()` 附加 QUESTIONS 區塊；MCP `answer_question(node_id, answer)` tool | DEEP-05 | 📋 計劃執行 | 主動學習依賴反饋閉環（DEEP-05）先就位 |
 | **P2** | FED-01 | 跨庫導入無溯源，無法查「誰何時導入了什麼」 | `federation_imports` 表；`brain fed imports list/approve/reject` | 無 | 📋 計劃執行 | FED-02 和 CLI-02 的前置條件 |
@@ -246,7 +246,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | 版本 | 主題 | 主要工作 | 發布 Gate |
 |------|------|---------|----------|
 | **v0.7.0** ✅ | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、~~REF-04~~✅、~~PERF-03~~✅、~~BUG-A03~~✅、~~PERF-04~~✅ | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
-| **v0.8.0** | 知識自適應 | DEEP-05（F6 採用率）、ARCH-05（弃用流程）、ARCH-06（ConflictResolver）、FEAT-01（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
+| **v0.8.0** ✅ | 知識自適應 | ~~DEEP-05~~（F6 採用率）、~~ARCH-05~~（弃用流程）、~~ARCH-06~~（ConflictResolver）、~~FEAT-01~~（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
 | **v0.9.0** | 深化功能 | DEEP-04（主動學習）、FED-01+FED-02（Federation 強化）、OBS-01（可觀測性）、PERF-04（動態擴展）| nudge 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
 | **v1.0.0** | 長期穩定 | REF-01（BrainDB 拆分）、CLI-01（cli.py 拆分）、ARCH-04（scope UX）| 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |
 
@@ -261,13 +261,13 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | L1a SessionStore | ✅ 完整 | Session → L3 升級路徑缺失（FEAT-04）|
 | L2 Episodes / Temporal | ⚠️ 框架完成 | temporal_query 邏輯空缺（FEAT-03）|
 | L3 KnowledgeGraph | ✅ 完整 | — |
-| BrainDB（統一儲存） | ✅ 完整 | 更新操作不寫版本歷史（FEAT-01）|
-| DecayEngine（衰減） | ⚠️ 6/7 因子 | F6 採用率缺失；弃用後無流程（DEEP-05、ARCH-05）|
-| ContextEngineer | ✅ 完整 | 主動學習未集成（DEEP-04）|
+| BrainDB（統一儲存） | ✅ 完整 | v14-v17 遷移：version/change_type/deprecated_at/adoption_count |
+| DecayEngine（衰減） | ✅ 7/7 因子 | F6 採用率 ✅；ARCH-05 deprecated 流程 ✅；ARCH-06 CONFLICTS_WITH ✅ |
+| ContextEngineer | ✅ 完整 | `[已棄用]` 標記 ✅；主動學習未集成（DEEP-04）|
 | NudgeEngine | ⚠️ 集成有限 | 問題生成未掛接；採纳率未追蹤（DEEP-04）|
-| ConflictResolver | ❌ 模組缺失 | 完全需新建（ARCH-06）|
+| ConflictResolver | ✅ 完整 | LLM/Ollama 仲裁 + CONFLICTS_WITH edges ✅ |
 | Federation | ⚠️ 導出/導入完成 | 去重弱；無審計；CLI 缺 sync（FED-01/02、CLI-02）|
-| MCP Server | ✅ 完整 | report_outcome 路徑未完整串聯（DEEP-05）|
-| API Server | ✅ 完整 | — |
-| CLI | ⚠️ 主命令完整 | fed sync 缺失；deprecated 管理缺失（CLI-02、ARCH-05）|
+| MCP Server | ✅ 完整 | report_outcome → graph.increment_adoption() 串聯 ✅ |
+| API Server | ✅ 完整 | `GET /v1/knowledge/deprecated` ✅ |
+| CLI | ✅ 主命令完整 | `brain history/restore/deprecated` ✅；fed sync 缺失（CLI-02）|
 | 可觀測性 | ⚠️ logger.debug 有 | 無結構化日誌；無指標端點（OBS-01）|

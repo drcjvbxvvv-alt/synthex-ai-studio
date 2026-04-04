@@ -784,6 +784,12 @@ def create_server(workdir: str) -> Any:
             db      = b.db
             delta   = 0.03 if was_useful else -0.05
             new_conf = db.record_feedback(node_id_clean, helpful=bool(was_useful))
+            # DEEP-05: update adoption_count in knowledge_graph so F6 decay factor can use it
+            if was_useful:
+                try:
+                    b.graph.increment_adoption(node_id_clean)
+                except Exception:
+                    pass
 
             # If notes provided and node is now low-confidence, append note to content
             if notes_clean and not was_useful:

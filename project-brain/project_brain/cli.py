@@ -823,6 +823,101 @@ def cmd_timeline(args):
     print()
 
 
+def cmd_history(args):
+    """FEAT-01: brain history <node_id> — 顯示版本歷史（含 change_type）"""
+    wd    = _workdir(args)
+    query = getattr(args, 'node_id', '') or ''
+    if not query:
+        _err("用法：brain history <node_id_or_title>"); return
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化"); return
+
+    from project_brain.brain_db import BrainDB
+    db   = BrainDB(bd)
+    node = db.get_node(query)
+    if not node:
+        hits = db.search_nodes(query, limit=1)
+        node = hits[0] if hits else None
+    if not node:
+        _err(f"找不到節點：{query}"); return
+
+    history = db.get_node_history(node["id"])
+    ver = node.get("version") or "?"
+    print(f"\n{C}{B}📜  版本歷史：{node['title']}{R}  {GR}(current v{ver}){R}")
+    print(f"  {GR}節點 ID：{node['id']}{R}")
+    print(f"  {GR}{'─'*50}{R}")
+    if not history:
+        _info("尚無版本歷史（更新節點後才會記錄）")
+        return
+    for h in history:
+        ctype = h.get("change_type") or "update"
+        print(f"  {G}v{h['version']}{R}  {GR}{(h.get('snapshot_at') or '')[:19]}{R}"
+              f"  [{ctype}]  conf={h.get('confidence') or '?'}"
+              f"  {D}{h.get('change_note') or ''}{R}")
+        if h.get("title"):
+            print(f"       標題：{h['title'][:60]}")
+    print()
+
+
+def cmd_restore(args):
+    """FEAT-01: brain restore <node_id> --version <N> — 還原到指定版本"""
+    wd      = _workdir(args)
+    node_id = getattr(args, 'node_id', '')
+    ver     = getattr(args, 'version', None)
+    if not node_id or ver is None:
+        _err("用法：brain restore <node_id> --version <N>"); return
+    bd = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化"); return
+
+    from project_brain.brain_db import BrainDB
+    db = BrainDB(bd)
+    ok = db.rollback_node(node_id, int(ver))
+    if ok:
+        _ok(f"節點 {C}{node_id[:16]}{R} 已還原到版本 v{ver}")
+    else:
+        _err(f"找不到節點 {node_id} 的版本 v{ver}（可用 brain history {node_id} 查詢）")
+
+
+def cmd_deprecated(args):
+    """ARCH-05: brain deprecated list/purge"""
+    sub = getattr(args, 'deprecated_sub', 'list') or 'list'
+    wd  = _workdir(args)
+    bd  = Path(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化"); return
+
+    from project_brain.brain_db import BrainDB
+    db = BrainDB(bd)
+
+    if sub == 'list':
+        limit = getattr(args, 'limit', 50) or 50
+        rows  = db.get_deprecated_nodes(limit=limit)
+        if not rows:
+            _info("目前無已棄用節點"); return
+        print(f"\n{Y}{B}🗑  已棄用節點（{len(rows)} 筆）{R}")
+        print(f"  {GR}{'─'*56}{R}")
+        for r in rows:
+            dep_at = (r.get("deprecated_at") or "")[:16]
+            title  = (r.get("title") or "")[:44]
+            print(f"  {RE}{r['id'][:16]}{R}  {GR}{dep_at}{R}  {title}")
+            if r.get("replaced_by"):
+                print(f"    取代者：{r['replaced_by']}")
+        print()
+
+    elif sub == 'purge':
+        days = getattr(args, 'older_than', 90) or 90
+        n    = db.purge_deprecated_nodes(older_than_days=int(days))
+        if n:
+            _ok(f"已刪除 {n} 個棄用超過 {days} 天的節點")
+        else:
+            _info(f"沒有棄用超過 {days} 天的節點")
+
+    else:
+        _err(f"未知子命令：{sub}（可用：list, purge）")
+
+
 def cmd_deprecate(args):
     """FEAT-13: brain deprecate <node_id>"""
     wd = _workdir(args)
@@ -2706,6 +2801,22 @@ def main():
     p.add_argument('node_id', help='節點 ID')
     p.add_argument('--to', type=int, required=True, help='目標版本號')
 
+    # FEAT-01: history / restore aliases
+    p = mkp('history', 'FEAT-01：顯示節點版本歷史（含 change_type）')
+    p.add_argument('node_id', help='節點 ID 或標題')
+
+    p = mkp('restore', 'FEAT-01：還原節點到指定版本')
+    p.add_argument('node_id', help='節點 ID')
+    p.add_argument('--version', type=int, required=True, help='目標版本號')
+
+    # ARCH-05: deprecated subcommand
+    p = mkp('deprecated', 'ARCH-05：管理已棄用節點（list / purge）')
+    p.add_argument('deprecated_sub', nargs='?', default='list',
+                   choices=['list', 'purge'], help='子命令（預設：list）')
+    p.add_argument('--limit', type=int, default=50, help='列出筆數上限（預設 50）')
+    p.add_argument('--older-than', dest='older_than', type=int, default=90,
+                   help='purge：刪除棄用超過幾天的節點（預設 90）')
+
     # FEAT-13
     p = mkp('deprecate', 'FEAT-13：標記節點為棄用')
     p.add_argument('node_id', help='節點 ID')
@@ -2843,6 +2954,9 @@ def main():
         'import':        cmd_import,
         'timeline':      cmd_timeline,
         'rollback':      cmd_rollback,
+        'history':       cmd_history,
+        'restore':       cmd_restore,
+        'deprecated':    cmd_deprecated,
         'migrate':       cmd_migrate,
         'fed':            cmd_fed,
         'counterfactual': cmd_counterfactual,
