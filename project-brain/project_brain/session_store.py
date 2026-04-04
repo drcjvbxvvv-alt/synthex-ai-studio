@@ -135,9 +135,18 @@ class SessionStore:
         self.session_id = session_id or self._new_session_id()
         self._db_path   = self.brain_dir / "session_store.db"
         import threading as _thr
-        self._local = _thr.local()  # per-thread connections
-        self._lock  = _thr.Lock()
+        self._lock  = _thr.RLock()  # BUG-D04: RLock for re-entrant write serialisation
         self._last_purge_ts: float = 0.0   # R-5: track periodic cleanup
+        # BUG-D04: single shared connection instead of per-thread threading.local()
+        # Ensure directory exists before connecting (setup() will also mkdir, but
+        # we must create it here first so sqlite3.connect() can open the file).
+        self.brain_dir.mkdir(parents=True, exist_ok=True)
+        self._conn_obj = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn_obj.row_factory = sqlite3.Row
+        self._conn_obj.execute("PRAGMA journal_mode=WAL")
+        self._conn_obj.execute("PRAGMA synchronous=NORMAL")
+        self._conn_obj.execute("PRAGMA busy_timeout=5000")
+        self._conn_obj.execute("PRAGMA foreign_keys=ON")
         self._setup()
         if auto_expire:
             self._purge_expired()
@@ -149,46 +158,29 @@ class SessionStore:
         return f"{ts}_{uuid.uuid4().hex[:6]}"
 
     def _conn_(self) -> sqlite3.Connection:
-        """Per-thread connection (WAL+busy_timeout=5s)"""
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            c = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            c.row_factory = sqlite3.Row
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("PRAGMA synchronous=NORMAL")
-            c.execute("PRAGMA busy_timeout=5000")
-            c.execute("PRAGMA foreign_keys=ON")
-            self._local.conn = c
-        return self._local.conn
+        """BUG-D04: single shared connection (check_same_thread=False, WAL+busy_timeout=5s)"""
+        return self._conn_obj
 
     @contextlib.contextmanager
     def _write_guard(self):
         """DEF-09 fix: cross-process advisory lock for SessionStore writes (Unix).
         Falls back to no-op on Windows (fcntl unavailable).
+        BUG-D04: acquire self._lock (RLock) first to serialise concurrent thread
+        access to the shared connection; RLock handles re-entrancy within one thread.
         """
-        depth = getattr(self._local, "_wg_depth", 0)
-        self._local._wg_depth = depth + 1
-        if depth > 0:
+        with self._lock:
             try:
+                import fcntl
+                lf = open(str(self.brain_dir / ".session_write_lock"), "w")
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+                    lf.close()
+            except ImportError:
+                # Windows: no fcntl, rely on SQLite busy_timeout
                 yield
-            finally:
-                self._local._wg_depth -= 1
-            return
-        try:
-            import fcntl
-            lf = open(str(self.brain_dir / ".session_write_lock"), "w")
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                self._local._wg_depth -= 1
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
-                lf.close()
-        except ImportError:
-            # Windows: no fcntl, rely on SQLite busy_timeout
-            try:
-                yield
-            finally:
-                self._local._wg_depth -= 1
 
     def _setup(self) -> None:
         """建立 schema（冪等）"""
@@ -604,9 +596,9 @@ class SessionStore:
 
     def close(self) -> None:
         """關閉資料庫連線"""
-        if hasattr(self._local, 'conn') and self._local.conn:
-            self._local.conn.close()
-            self._local.conn = None
+        if hasattr(self, '_conn_obj') and self._conn_obj:
+            self._conn_obj.close()
+            self._conn_obj = None
 
     def __enter__(self): return self
     def __exit__(self, *_): self.close()

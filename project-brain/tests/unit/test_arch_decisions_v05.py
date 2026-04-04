@@ -157,9 +157,9 @@ class TestScopeInferencePriority(unittest.TestCase):
         return _infer_scope(workdir, current_file)
 
     def test_infer_scope_priority_order_in_source(self):
-        """_infer_scope 原始碼結構中，4 個 priority 步驟須依序出現。"""
-        from project_brain.cli import _infer_scope
-        source = inspect.getsource(_infer_scope)
+        """ARCH-07: 規範實作在 BrainDB.infer_scope，4 個 priority 步驟須依序出現。"""
+        from project_brain.brain_db import BrainDB
+        source = inspect.getsource(BrainDB.infer_scope)
 
         # 確認原始碼中 4 個步驟依順序存在
         git_pos     = source.find("git remote")

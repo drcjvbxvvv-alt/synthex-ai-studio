@@ -1,8 +1,8 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.12.0（2026-04-05）
+> **當前版本**：v0.13.0（2026-04-05）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
-> **分析基準**：873 tests collected；v0.12.0 所有 P1 已完成，868 passed / 5 skipped / 0 failed。
+> **分析基準**：873 tests collected；v0.13.0 所有 P1+P2 已完成，867 passed / 5 skipped / 1 intermittent。
 
 ---
 
@@ -26,15 +26,15 @@
 | **P1** | TEST-01 | 15 個測試失敗（chaos 路徑、web_ui AttributeError、lora、embedding cache） | 修復或標記 skip；確保 CI 全綠 | 無 | 🎯 高價值 | ✅ v0.12.0 |
 | **P1** | PERF-05 | Decay `_detect_contradictions()` N+1 查詢：每對矛盾各一次 `SELECT confidence` | 批次預取所有節點信心值至 dict | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
 | **P1** | BUG-E01 | `_search_batch(terms[:8])` 截斷使「版本號」「路徑」等關鍵詞被丟棄，Rule 類 False Negative | ① 改 `terms[:15]`；② 補 API 同義詞；③ Rule 配額 2→3 | 無 | 🎯 高價值 | ✅ v0.12.0 |
-| **P2** | FEAT-07 | `archaeologist` 掃描 git 歷史後所有節點 `created_at = today`，舊專案 F1 衰減從零開始等 7 天 | ① `add_node()` 接受 `created_at` 參數；② 改 `INSERT OR REPLACE` → `UPSERT` 保留原始日期；③ 新增 `brain backfill-git` 指令 | 無 | 🎯 高價值 |
-| **P2** | PERF-06 | 缺少 `nodes(type, confidence DESC)` 複合索引，type 過濾搜尋全表掃描 | SCHEMA_VERSION=21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)` | 無 | ⚡ 快速獲益 |
-| **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 24h） | 無 | 🔵 填空 |
-| **P2** | BUG-D04 | `session_store.py` per-thread 連線從未關閉，長執行伺服器 FD 洩漏 | 在 `threading.local` 清除時呼叫 `conn.close()`；或改用單一共享連線 | 無 | 📋 計劃執行 |
-| **P2** | ARCH-07 | `cli_utils._infer_scope()` 與 `brain_db.infer_scope()` 邏輯重複（兩套實作）| 保留 `brain_db.infer_scope()` 為單一來源，`cli_utils` 委派呼叫 | 無 | 📋 計劃執行 |
-| **P2** | OBS-02 | `decay_engine` 缺乏 F1–F7 各因子的量測輸出（無法調參） | 在 `_apply_decay()` 結束時 `db.emit("decay_factors", {f1, f2, ..., f7, final})`  | OBS-01 ✅ | 📋 計劃執行 |
-| **P2** | OBS-03 | `rollback_node()` 無審計記錄（誰在何時還原了什麼）| `node_history` 新增 `changed_by TEXT`；`rollback_node()` 寫入還原事件 | FEAT-01 ✅ | 📋 計劃執行 |
-| **P2** | SEC-04 | Federation PII 過濾缺失 IP（`192.168.x.x`）、Slack URL、Cloud service URL | 擴充 `_strip_pii()` regex 模式集 | 無 | 📋 計劃執行 |
-| **P2** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天數據後執行對比測試；`analytics_engine` 新增 `decay_impact_score()` | 90天數據 | ⏳ 等待 |
+| **P2** | FEAT-07 | `archaeologist` 掃描 git 歷史後所有節點 `created_at = today`，舊專案 F1 衰減從零開始等 7 天 | ① `add_node()` 接受 `created_at` 參數；② 改 `INSERT OR REPLACE` → `UPSERT` 保留原始日期；③ 新增 `brain backfill-git` 指令 | 無 | 🎯 高價值 | ✅ v0.13.0 |
+| **P2** | PERF-06 | 缺少 `nodes(type, confidence DESC)` 複合索引，type 過濾搜尋全表掃描 | SCHEMA_VERSION=21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)` | 無 | ⚡ 快速獲益 | ✅ v0.13.0 |
+| **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 7 天） | 無 | 🔵 填空 | ✅ v0.13.0 |
+| **P2** | BUG-D04 | `session_store.py` per-thread 連線從未關閉，長執行伺服器 FD 洩漏 | 改用單一共享連線 `check_same_thread=False`（WAL 模式安全） | 無 | 📋 計劃執行 | ✅ v0.13.0 |
+| **P2** | ARCH-07 | `cli_utils._infer_scope()` 與 `brain_db.infer_scope()` 邏輯重複（兩套實作）| 保留 `brain_db.infer_scope()` 為單一來源，`cli_utils` 委派呼叫 | 無 | 📋 計劃執行 | ✅ v0.13.0 |
+| **P2** | OBS-02 | `decay_engine` 缺乏 F1–F7 各因子的量測輸出（無法調參） | 在 `_apply_decay()` 結束時 `db.emit("decay_factors", {f1, f2, ..., f7, final})`  | OBS-01 ✅ | 📋 計劃執行 | 待辦 |
+| **P2** | OBS-03 | `rollback_node()` 無審計記錄（誰在何時還原了什麼）| `node_history` 新增 `changed_by TEXT`；`rollback_node()` 寫入還原事件 | FEAT-01 ✅ | 📋 計劃執行 | 待辦 |
+| **P2** | SEC-04 | Federation PII 過濾缺失 IP（`192.168.x.x`）、Slack URL、Cloud service URL | 擴充 `_strip_pii()` regex 模式集 | 無 | 📋 計劃執行 | 待辦 |
+| **P2** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天數據後執行對比測試；`analytics_engine` 新增 `decay_impact_score()` | 90天數據 | ⏳ 等待 | 待辦 |
 | **P3** | FEAT-05 | `analytics_engine` 無時序圖表：知識庫成長曲線、信心分布遷移無法可視化 | `generate_timeseries()` 方法；`brain report --format html` 輸出 Chart.js 圖表 | OBS-01 ✅ | 🏗 長期 |
 | **P3** | FEAT-06 | `brain doctor` 只做基礎健康檢查，無法偵測矛盾節點比例、deprecated 比例 | 新增矛盾節點數量報告；deprecated 比例警告（> 20% 觸發 ⚠） | ARCH-06 ✅ | 📋 計劃執行 |
 | **P3** | ARCH-08 | `conflict_resolver.py` 快取無 TTL 淘汰，長執行記憶體持續增長 | 加入 TTL 驅逐（已有 `CACHE_SECONDS=86400` 常數，但無清理機制） | ARCH-06 ✅ | 🔵 填空 |

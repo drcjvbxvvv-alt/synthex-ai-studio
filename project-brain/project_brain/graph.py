@@ -241,6 +241,7 @@ class KnowledgeGraph:
         source_url: str = "",
         author:     str = "",
         meta:       dict = None,
+        created_at: str = "",   # FEAT-07: preserve original git commit date
     ) -> str:
         tags_json  = json.dumps(tags or [], ensure_ascii=False)
         meta_dict  = meta or {}
@@ -249,11 +250,24 @@ class KnowledgeGraph:
         # Ensures decay_engine and context.py see consistent values
         confidence = float(meta_dict.get("confidence", 0.8))
         self._conn.execute("""
-            INSERT OR REPLACE INTO nodes
-                (id, type, title, content, tags, source_url, author, meta, confidence)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO nodes
+                (id, type, title, content, tags, source_url, author, meta, confidence,
+                 created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    COALESCE(NULLIF(?, ''), datetime('now')))
+            ON CONFLICT(id) DO UPDATE SET
+                type=excluded.type,
+                title=excluded.title,
+                content=excluded.content,
+                tags=excluded.tags,
+                source_url=excluded.source_url,
+                author=excluded.author,
+                meta=excluded.meta,
+                confidence=excluded.confidence
+                -- created_at is intentionally omitted: preserve original date
         """, (node_id, node_type, title, content, tags_json,
-              source_url, author, meta_json, confidence))
+              source_url, author, meta_json, confidence,
+              created_at or None))
         # A-8: 直接 INSERT N-gram 格式到 FTS5（單次寫入，無 double write）
         try:
             fts_title   = self._ngram_text(title)

@@ -490,7 +490,38 @@ class KRBAIAssistant:
                     expires_at  TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ai_screen_meta (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            # Delete expired cache entries
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "DELETE FROM ai_screen_cache WHERE expires_at < ?", (now,)
+            )
             conn.commit()
+            # BUG-D03: conditional VACUUM to reclaim space (at most once per 7 days)
+            try:
+                row = conn.execute(
+                    "SELECT value FROM ai_screen_meta WHERE key='last_vacuum'"
+                ).fetchone()
+                from datetime import datetime as _dt
+                _now = _dt.now()
+                _should_vacuum = (
+                    not row or
+                    (_now - _dt.fromisoformat(row[0])).days >= 7
+                )
+                if _should_vacuum:
+                    conn.execute("VACUUM")
+                    conn.execute(
+                        "INSERT OR REPLACE INTO ai_screen_meta(key, value) VALUES('last_vacuum', ?)",
+                        (_now.isoformat(),)
+                    )
+                    conn.commit()
+            except Exception as _ve:
+                logger.debug("BUG-D03: VACUUM failed (non-critical): %s", _ve)
             conn.close()
         except Exception as e:
             logger.debug("krb_ai_assist: cache setup failed: %s", e)

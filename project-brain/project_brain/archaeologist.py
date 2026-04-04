@@ -179,6 +179,7 @@ class ProjectArchaeologist:
                         source_url= commit_hash,
                         author    = meta.get("author", ""),
                         meta      = {"confidence": chunk.get("confidence", 0.8)},
+                        created_at= commit_date,   # FEAT-07: use actual commit date
                     )
                     if chunk["type"] == "Decision": stats["decisions"] += 1
                     if chunk["type"] == "Pitfall":  stats["pitfalls"]  += 1

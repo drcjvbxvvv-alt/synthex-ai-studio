@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 20          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 21          # DEF-04: bump on every schema change
 
 # REF-02: single source of truth in synonyms.py
 from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -260,6 +260,10 @@ class BrainDB:
             # v20: BUG-B — result_count on traces so query_hit_rate() works correctly
             ("result_count column on traces",
              "ALTER TABLE traces ADD COLUMN result_count INTEGER NOT NULL DEFAULT 0"),
+            # v21: PERF-06 — type+confidence compound index for type-filtered searches
+            ("type+confidence compound index",
+             "CREATE INDEX IF NOT EXISTS idx_nodes_type_conf"
+             " ON nodes(type, confidence DESC)"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -454,19 +458,38 @@ class BrainDB:
             ).fetchone()
             if existing:
                 valid_from = existing[0]  # carry over from previous write
+        created_at = kw.get("created_at", "") or ""
         with self._write_guard():  # DEF-01 fix: cross-process write lock
+            _created_at_val = created_at or None  # None means use DEFAULT
             self.conn.execute("""
-                INSERT OR REPLACE INTO nodes
+                INSERT INTO nodes
                     (id,type,title,content,tags,confidence,importance,
-                     emotional_weight,source_url,author,meta,scope,valid_from)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     emotional_weight,source_url,author,meta,scope,valid_from,
+                     created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,
+                        COALESCE(NULLIF(?, ''), datetime('now')))
+                ON CONFLICT(id) DO UPDATE SET
+                    type=excluded.type,
+                    title=excluded.title,
+                    content=excluded.content,
+                    tags=excluded.tags,
+                    confidence=excluded.confidence,
+                    importance=excluded.importance,
+                    emotional_weight=excluded.emotional_weight,
+                    source_url=excluded.source_url,
+                    author=excluded.author,
+                    meta=excluded.meta,
+                    scope=excluded.scope,
+                    valid_from=excluded.valid_from
+                    -- created_at intentionally omitted: preserve original date
             """, (node_id, node_type, title, content, tags_json,
                   confidence,
                   float(kw.get("importance", 0.5)),
                   float(kw.get("emotional_weight", 0.5)),
                   kw.get("source_url",""), kw.get("author",""),
                   json.dumps(meta if isinstance(meta, dict) else {}, ensure_ascii=False),
-                  scope, valid_from))
+                  scope, valid_from,
+                  _created_at_val))
             try:
                 self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
                 self.conn.execute(
@@ -1448,7 +1471,13 @@ class BrainDB:
 
     @staticmethod
     def infer_scope(workdir: str, current_file: str = "") -> str:
-        """FEAT-04: Auto-infer knowledge scope from directory structure.
+        """ARCH-07: Canonical scope inference — single source of truth.
+
+        Priority order (FLY-02):
+          1. git remote origin → repo name
+          2. Sub-directory name under workdir
+          3. workdir directory name
+          4. 'global' as last resort
 
         Examples:
           /project/payment_service/stripe.py → 'payment_service'
@@ -1456,21 +1485,45 @@ class BrainDB:
           /project/utils.py                  → 'global'
         """
         import re as _re
+        import subprocess as _sp
         from pathlib import Path as _P
+
+        # 1. git remote origin → 取 repo 名稱
+        try:
+            _res = _sp.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=str(workdir), capture_output=True, text=True, timeout=3
+            )
+            if _res.returncode == 0:
+                _url = _res.stdout.strip()
+                _m = _re.search(r'[:/]([^/]+?)(?:\.git)?$', _url)
+                if _m:
+                    return _re.sub(r'[^a-z0-9_]', '_', _m.group(1).lower())
+        except Exception:
+            pass
+
+        # 2. Sub-directory heuristic
         _skip = {"src", "test", "tests", "docs", "scripts", "build", "dist", "."}
         _svc  = ["service", "module", "pkg", "app", "api", "lib", "handler", "domain"]
         base  = _P(current_file) if current_file else _P(workdir)
         try:
             parts = list(base.relative_to(_P(workdir).resolve()).parts)
+            for part in parts:
+                pl = part.lower()
+                if any(k in pl for k in _svc):
+                    return _re.sub(r'[^a-z0-9_]', '_', pl)
+            if parts and parts[0].lower() not in _skip:
+                return _re.sub(r'[^a-z0-9_]', '_', parts[0].lower())
         except ValueError:
-            return "global"
-        for part in parts:
-            pl = part.lower()
-            if any(k in pl for k in _svc):
-                return _re.sub(r"[^a-z0-9_]", "_", pl)
-        if parts and parts[0].lower() not in _skip:
-            return _re.sub(r"[^a-z0-9_]", "_", parts[0].lower())
-        return "global"
+            pass
+
+        # 3. workdir name (only when no current_file context was given)
+        if not current_file:
+            _wd_name = _P(workdir).name.lower()
+            if _wd_name and _wd_name not in _skip:
+                return _re.sub(r'[^a-z0-9_]', '_', _wd_name)
+
+        return 'global'
 
     # ── FEAT-05: import / export ────────────────────────────────
 

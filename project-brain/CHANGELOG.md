@@ -4,6 +4,37 @@
 
 ---
 
+## v0.13.0（2026-04-05）— P2 改善版
+
+本版本完成所有 P2 改善項目。
+
+### FEAT-07 — Git 歷史時間回填
+
+- **`graph.py`** `add_node()` 新增 `created_at` 參數；`INSERT OR REPLACE` → `UPSERT`，`ON CONFLICT DO UPDATE` 不覆蓋 `created_at`，永久保留初始建立時間
+- **`brain_db.py`** 同步修改 `add_node()`：UPSERT 保留 `created_at`；`SCHEMA_VERSION` 20 → 21
+- **`archaeologist.py`** `_scan_git_history()` 在 `add_node()` 呼叫中加入 `created_at=commit_date`，歷史節點日期正確回填
+- **`cli_admin.py`** 新增 `brain backfill-git [--dry-run]`：對 `source_url` 為 commit hash 或檔案路徑的節點批次更新 `created_at`，修正已建立 DB 的時間錯誤
+- **`cli_utils.py` / `cli.py`** 註冊 `backfill-git` 子指令
+
+### PERF-06 — type+confidence 複合索引
+
+- **`brain_db.py`** migration v21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)`；`search_nodes(node_type=...)` type 過濾從全表掃描提升為索引掃描，10k 節點下效能顯著改善
+
+### BUG-D03 — KRB AI Cache 永不 VACUUM
+
+- **`krb_ai_assist.py`** `_setup_cache()`：新增 `ai_screen_meta` 表追蹤最後 VACUUM 時間；每 7 天執行一次 `VACUUM` 回收 `ai_screen_cache.db` 空間
+
+### BUG-D04 — SessionStore FD 洩漏
+
+- **`session_store.py`**：移除 `threading.local()` per-thread 連線；改為單一共享連線 `check_same_thread=False` + WAL 模式，與 `brain_db.py` 模式一致；長執行伺服器不再洩漏 FD
+
+### ARCH-07 — scope 推斷邏輯去重
+
+- **`brain_db.py`** `BrainDB.infer_scope()` 擴充為 4 步驟完整實作（git-remote → 子目錄 → workdir 名稱 → global）
+- **`cli_utils.py`** `_infer_scope()` 改為委派呼叫 `BrainDB.infer_scope()`，消除兩套同步維護的推斷邏輯
+
+---
+
 ## v0.12.0（2026-04-05）— 品質鞏固版
 
 本版本完成所有 P1 改善項目，測試套件從 15 個失敗降至 0（868 passed / 5 skipped）。

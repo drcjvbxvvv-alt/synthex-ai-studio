@@ -671,6 +671,82 @@ def cmd_index(args):
         _info("brain ask 現在使用混合搜尋（FTS5 × 0.4 + 向量 × 0.6）")
 
 
+def _cmd_backfill_git(args):
+    """FEAT-07: 回填 git 歷史時間戳，修正 created_at = today 問題。"""
+    import re as _re
+    import subprocess
+    from .brain_db import BrainDB
+
+    workdir = Path(args.workdir).resolve()
+    brain_dir = workdir / ".brain"
+    if not brain_dir.exists():
+        print(f"[backfill-git] 找不到 .brain 目錄：{brain_dir}", file=sys.stderr)
+        return 1
+
+    db = BrainDB(brain_dir)
+    # 只回填 source_url 為 40-char hex (commit hash) 或 non-empty 的節點
+    # 且 created_at 是今天（代表是初始化時設定的）
+    nodes = db.conn.execute(
+        "SELECT id, source_url, created_at FROM nodes WHERE source_url != ''"
+    ).fetchall()
+
+    dry_run = getattr(args, "dry_run", False)
+    updated = 0
+    skipped = 0
+    _HASH_RE = _re.compile(r'^[0-9a-f]{7,40}$', _re.I)
+
+    for row in nodes:
+        node_id   = row[0]
+        source_url = row[1] or ""
+        git_date  = None
+
+        if _HASH_RE.match(source_url):
+            # source_url is a commit hash
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(workdir), "show", "-s",
+                     "--format=%ai", source_url],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    git_date = result.stdout.strip().splitlines()[0].strip()
+            except Exception:
+                pass
+        else:
+            # source_url might be a file path — get earliest commit date
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(workdir), "log", "--follow",
+                     "--format=%ai", "--", source_url],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().splitlines()
+                    if lines:
+                        git_date = lines[-1].strip()  # oldest commit
+            except Exception:
+                pass
+
+        if git_date:
+            if dry_run:
+                print(f"  [dry-run] {node_id}: {row[2]} → {git_date}")
+            else:
+                db.conn.execute(
+                    "UPDATE nodes SET created_at=?, updated_at=? WHERE id=?",
+                    (git_date, git_date, node_id)
+                )
+            updated += 1
+        else:
+            skipped += 1
+
+    if not dry_run:
+        db.conn.commit()
+
+    mode = "[dry-run] " if dry_run else ""
+    print(f"{mode}回填完成：{updated} 個節點時間戳已更新，{skipped} 個跳過（無法解析 git 日期）")
+    return 0
+
+
 def cmd_doctor(args):
     """系統健康檢查與自動修復（brain doctor [--fix]）"""
     import sqlite3, shutil, stat, json

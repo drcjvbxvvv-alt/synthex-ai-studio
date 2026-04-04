@@ -129,51 +129,9 @@ def _brain(workdir: str):
 
 
 def _infer_scope(workdir: str, current_file: str = "") -> str:
-    """
-    FLY-02: Auto-infer scope.  Priority:
-      1. git remote origin → repo name
-      2. Sub-directory name under workdir
-      3. workdir directory name
-      4. 'global' as last resort
-    """
-    import re as _re
-    import subprocess as _sp
-
-    # 1. git remote origin → 取 repo 名稱
-    try:
-        _res = _sp.run(
-            ["git", "remote", "get-url", "origin"],
-            cwd=str(workdir), capture_output=True, text=True, timeout=3
-        )
-        if _res.returncode == 0:
-            _url = _res.stdout.strip()
-            _m = _re.search(r'[:/]([^/]+?)(?:\.git)?$', _url)
-            if _m:
-                return _re.sub(r'[^a-z0-9_]', '_', _m.group(1).lower())
-    except Exception as _e:
-        logger.debug("scope inference from git remote failed", exc_info=True)
-
-    # 2. Sub-directory heuristic
-    _skip = {'src','test','tests','docs','scripts','build','dist','.'}
-    _svc  = ['service','module','pkg','app','api','lib','handler','domain']
-    base  = Path(current_file) if current_file else Path(os.getcwd())
-    try:
-        parts = list(base.relative_to(Path(workdir).resolve()).parts)
-        for part in parts:
-            pl = part.lower()
-            if any(k in pl for k in _svc):
-                return _re.sub(r'[^a-z0-9_]', '_', pl)
-        if parts and parts[0].lower() not in _skip:
-            return _re.sub(r'[^a-z0-9_]', '_', parts[0].lower())
-    except ValueError:
-        pass
-
-    # 3. workdir name
-    _wd_name = Path(workdir).name.lower()
-    if _wd_name and _wd_name not in _skip:
-        return _re.sub(r'[^a-z0-9_]', '_', _wd_name)
-
-    return 'global'
+    """ARCH-07: delegate to BrainDB.infer_scope() — single source of truth."""
+    from project_brain.brain_db import BrainDB
+    return BrainDB.infer_scope(workdir, current_file)
 
 
 def _env_source(key: str) -> str:
@@ -670,6 +628,10 @@ def _build_parser():
                    help='sync：新增來源（格式：name:bundle_path）')
     p.add_argument('--remove-source', dest='remove_source', default=None,
                    help='sync：移除來源（依名稱）')
+
+    p = mkp('backfill-git', 'FEAT-07: 回填 git 歷史時間戳至 .brain 節點')
+    p.add_argument('--dry-run', action='store_true', dest='dry_run',
+                   help='只顯示要更新的內容，不實際修改')
 
     p = mkp('counterfactual', 'DEEP-03：反事實推理')
     p.add_argument('hypothesis', nargs='+', help='假設條件（如：如果我們用 NoSQL）')

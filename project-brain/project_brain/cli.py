@@ -41,6 +41,7 @@ from project_brain.cli_admin import (
     cmd_init, cmd_status, cmd_setup, cmd_doctor, cmd_config,
     cmd_optimize, cmd_clear, cmd_scan, cmd_health_report, cmd_report,
     cmd_analytics, cmd_export, cmd_import, cmd_index,
+    _cmd_backfill_git,
 )
 
 from project_brain.cli_serve import cmd_serve, cmd_webui
@@ -224,6 +225,7 @@ def main():
         'migrate':       cmd_migrate,
         'fed':            cmd_fed,
         'counterfactual': cmd_counterfactual,
+        'backfill-git':  _cmd_backfill_git,
         'deprecate':     cmd_deprecate,
         'lifecycle':     cmd_lifecycle,
     }

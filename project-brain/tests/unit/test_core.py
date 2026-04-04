@@ -3119,7 +3119,7 @@ class TestFeat04ScopeInference:
     def test_no_file_returns_global(self, tmp_path):
         from project_brain.brain_db import BrainDB
         scope = BrainDB.infer_scope(str(tmp_path), "")
-        assert scope in ("global", str(tmp_path.name).lower()[:20])
+        assert scope in ("global", str(tmp_path.name).lower())
 
     def test_api_directory_detected(self, tmp_path):
         from project_brain.brain_db import BrainDB
