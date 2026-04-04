@@ -4,7 +4,133 @@
 
 ---
 
-## v0.6.0（2026-04-04）— 飛輪啟動版（進行中）
+## v0.11.0（2026-04-04）— AI 全自主版
+
+### KRB-01 — 自主審核（Autonomous KRB）
+
+- **`review_board.py`** `RB_SCHEMA_VERSION=3`：`confidence` 欄位 migration；`INITIAL_CONF_BY_SOURCE`（git-*=0.85, mcp=0.80, manual=0.75, scan=0.60）；`submit()` 從 source 推斷初始信心；`approve()` 傳遞 confidence 至 L3；`auto_approve_by_confidence()`（≥0.75 auto-approve / 0.50–0.74 approve@0.55 / <0.50 reject）；`list_audit_log()`
+- **`engine.py`** `StagingGraph`：掃描後自動對每個 `staged_id` 呼叫 `auto_approve_by_confidence()`；`learn_from_commit()` 使用 `git log -1 --pretty=%aI` 取實際 commit 日期
+- **`cli_knowledge.py`**：`brain review list` 預設顯示 audit log；`--pending` 顯示人工審查佇列（KRB-01 模式下永遠空）
+- **環境變數**：`BRAIN_KRB_AUTO_APPROVE`（預設 0.75）/ `BRAIN_KRB_AUTO_REJECT`（預設 0.50）
+
+### FEAT-03 — 時間感知查詢（Temporal Query）
+
+- **`brain_db.py`** SCHEMA_VERSION=19：`ALTER TABLE nodes ADD COLUMN valid_from TEXT DEFAULT NULL`；`add_node()` INSERT OR REPLACE 前先讀取現有 `valid_from` 確保不遺失；新增 `nodes_at_time(at_time, limit, node_type)` 查詢方法
+- **`engine.py`** `_store_chunk()`：同步寫入 `brain.db` 帶 `valid_from=commit_date`
+- **`mcp_server.py`** `temporal_query`：回傳 `edges` + `nodes`（節點時間快照）
+- **`cli_knowledge.py`** `brain history --at <date|ref>`：顯示指定時間點知識快照；支援 git branch/tag 名稱解析
+
+### Bug 修復
+
+- **BUG-C01**：`mcp_server.py` `report_knowledge_outcome()` 更新 confidence 但未呼叫 `db.emit("knowledge_outcome", {...})`，導致 `analytics_engine.useful_knowledge_rate()`（brain report ROI 指標）永遠回傳 `null`。修復：`record_feedback()` 之後立即 `db.emit()`
+- **BUG-C02**：`traces` 表缺少 `result_count` 欄位且 `search_nodes()` 從未寫入 traces，`query_hit_rate()` 因 `total=0` 永遠回傳 `None`。修復：SCHEMA_VERSION=20 加 `result_count INTEGER NOT NULL DEFAULT 0`；`search_nodes()` 尾端加 `INSERT INTO traces(query, result_count, latency_ms)`
+- **BUG-C03**：`CLAUDE.md` 只有 8 行通用指令，缺少 Task Start Protocol 和 Knowledge Summary Protocol，知識摘要閉環從未被 Agent 觸發。修復：新增 `## Task Start Protocol`（任務開始呼叫 `get_context`）與 `## Knowledge Summary Protocol`（任務結束呼叫 `complete_task` + `report_knowledge_outcome`）
+
+---
+
+## v0.10.0（2026-04-04）— 長期穩定版
+
+### REF-01 — BrainDB 拆分
+
+- 從 ~1800 行的 God Object `BrainDB` 抽離 `vector_store.py`（`VectorStore`）和 `feedback_tracker.py`（`FeedbackTracker`）
+- `BrainDB` 以 delegation 模式保持 backward compatibility，所有呼叫點零改動
+
+### CLI-01 — cli.py 拆分
+
+- `cli.py`（原 2864 行）拆分為 `cli_utils.py`、`cli_knowledge.py`、`cli_admin.py`、`cli_serve.py`、`cli_fed.py`
+- 抽取 `@require_brain_dir` 裝飾器；`cli.py` 精簡至 240 行（目標 ≤500）
+- `_build_parser()` / `_apply_aliases()` 抽至 `cli_utils`
+
+### ARCH-04 — scope UX 統一
+
+- `--global` flag 保留但輸出棄用警告（stderr），導引改用 `--scope global`
+- 消除 scope 三路控制流（`--global` / `--scope` / 自動推斷）造成的使用者困惑
+
+---
+
+## v0.9.0（2026-04-04）— 深化功能版
+
+### DEEP-04 — AI 自動裁決
+
+- `nudge_engine.py` `auto_resolve_batch()`：rule-based 自動裁決低信心節點；`get_context()` 背景靜默觸發
+- `mcp_server.py` `auto_resolve_knowledge()` MCP 工具
+
+### FED-01 — Federation 審計日誌
+
+- `brain_db.py` `federation_imports` 表（`source / node_id / node_title / imported_at / status`）
+- 每次 federation 匯入自動記錄；`brain_db.get_federation_imports()` 查詢
+- `cli_fed.py` `brain fed imports` → `cmd_fed_import_list()`
+
+### FED-02 — 語義去重
+
+- `federation.py` `_is_duplicate()`：Jaccard（title tokens）OR TF-IDF cosine similarity（sklearn，threshold=0.82）
+- chromadb 可用時自動升級為向量比對；批量匯入語義近似知識不再膨脹
+
+### CLI-02 — Federation CLI 完整實裝
+
+- `cli_fed.py`：`brain fed sync / export / import / subscribe / unsubscribe / imports` 全部實裝
+- `cmd_fed_sync()`：`brain fed sync [--dry-run] [--confidence 0.5]`
+- `cmd_session()`：`brain session archive / list`（FEAT-04 入口）
+
+### FEAT-04 — Session Archive
+
+- `session_store.py` `SessionStore.archive()`：導出當前 session 為 `.brain/sessions/<id>.md`
+- 90 天後自動清理舊歸檔（`_cleanup_archives()`）
+- `brain session archive [--session <id>]` / `brain session list`
+
+### OBS-01 — 可觀測性
+
+- structlog 結構化日誌：`{event, node_id, reason, old_val, new_val}` 覆蓋 Decay / Nudge / Context 所有核心流程
+- `api_server.py` `GET /v1/metrics`（Prometheus 格式）：`brain_nodes_total`、`brain_decay_count`、`brain_nudge_trigger_rate`、`brain_context_tokens_avg`
+
+---
+
+## v0.8.0（2026-04-04）— 知識自適應版
+
+### DEEP-05 — Decay F6 採用率反饋
+
+- `brain_db.py` SCHEMA_VERSION=17：`adoption_count INTEGER NOT NULL DEFAULT 0`
+- `feedback_tracker.py` `record_outcome()`：採用率累計 + 信心調整
+- `decay_engine.py` `_factor_adoption(n)` → `F6 = min(1.2, 1 + n × 0.02)`（最多 +20%）
+- `graph.py` `increment_adoption(node_id)`：knowledge_graph.db 同步
+- `mcp_server.py` `report_knowledge_outcome`：呼叫 `record_feedback()` + `graph.increment_adoption()`
+- `api_server.py` `POST /v1/knowledge/<id>/outcome`：REST 入口，回傳 `{confidence, delta}`
+
+### ARCH-05 — 弃用流程
+
+- `brain_db.py` SCHEMA_VERSION=16：`deprecated_at TEXT DEFAULT NULL`；`_apply_decay()` 同步設置；`list_deprecated()` / `purge_deprecated(older_than_days)`
+- `context.py`：推薦 deprecated 節點時加 `[已棄用]` 標記
+- `cli_knowledge.py`：`brain deprecated list` / `brain deprecated purge --older-than <days>`
+- `api_server.py` `GET /v1/knowledge/deprecated`
+
+### ARCH-06 — ConflictResolver 實裝
+
+- 新增 `conflict_resolver.py`：`ConflictResolver(db, graph, llm_client=None)`；無 LLM 時數值保守仲裁；有 `BRAIN_LLM_KEY` 時語義仲裁
+- `decay_engine.py` F4 升級：`_detect_contradictions()` 偵測矛盾後寫入 `CONFLICTS_WITH` edges；仲裁後非對稱調整（winner 不懲罰，loser × 0.5）
+- `BRAIN_CONFLICT_RESOLVE=1` 不再導致 ImportError
+
+### FEAT-01 — 知識版本控制
+
+- `brain_db.py` SCHEMA_VERSION=14：`nodes.version INTEGER DEFAULT 1`；SCHEMA_VERSION=15：`node_history.change_type TEXT`（`update / decay / feedback`）
+- `update_node()`：先插入 `node_history` 完整快照，再 UPDATE nodes，`version +1`
+- `cli_knowledge.py`：`brain history <node_title_or_id>` 顯示版本清單；`brain restore <node_id> --version <N>` 還原指定版本
+
+---
+
+## v0.7.0（2026-04-04）— 正確性優先版
+
+### P0 快速修復
+
+- **PERF-03**：`brain_db.py` `_count_tokens()` 加 `@lru_cache(maxsize=1024)`，消除 800+ 次/請求的高頻 CPU 浪費
+- **BUG-A03**：`engine.py` 6 個懶加載屬性從共用 `_lock` 改為各自獨立的 `threading.Lock()`，消除競態死鎖隱患
+- **REF-04**：新增 `project_brain/constants.py`，集中定義 4 個魔法數字（`DECAY_RATE`、`MAX_TOKENS`、`EXPAND_LIMIT`、`SIMILARITY_THRESHOLD`）
+- **PERF-04**：`brain_db.py` `_expand_query()`：詞數 < 3 → 上限 10；3–5 → 15；> 5 → 20（動態調整，取代固定 15）
+- **BUG-B02**：`_effective_confidence()` 和 `decay_engine._factor_time()` 改用 `MAX(created_at, updated_at)` 作為衰減時間基準（見 v0.6.0 P1 修復）
+- **BUG-B01**：移除 `BrainDB.session_set/get/list/clear` 死碼，`SessionStore` 成為 L1a 唯一入口（見 v0.6.0 P2 修復）
+
+---
+
+## v0.6.0（2026-04-04）— 飛輪啟動版（已完成）
 
 ### P1 修復
 
