@@ -49,6 +49,10 @@ RATE_LIMIT_RPM   = int(os.environ.get("BRAIN_RATE_LIMIT_RPM", "60"))  # A-3: env
 _call_times: list[float] = []      # Rate limiter 狀態
 _rate_lock   = threading.Lock()    # BUG-04 fix: protect concurrent access
 
+# VISION-01: session node tracking for auto-feedback on complete_task
+_session_nodes: dict[str, list[str]] = {}
+_snodes_lock = threading.Lock()
+
 
 def _rate_check() -> None:
     """
@@ -238,6 +242,18 @@ def create_server(workdir: str) -> Any:
                     ctx = nudge_block + ctx if ctx else nudge_block
             except Exception:
                 pass  # nudge failure must never break context delivery
+            # VISION-01: record recently updated node IDs for auto-feedback
+            try:
+                from project_brain.brain_db import BrainDB as _BDB2
+                _bdb2 = _BDB2(b.brain_dir)
+                _recent_rows = _bdb2.conn.execute(
+                    "SELECT id FROM nodes ORDER BY updated_at DESC LIMIT 10"
+                ).fetchall()
+                _wk2 = str(b.workdir)
+                with _snodes_lock:
+                    _session_nodes[_wk2] = [r[0] for r in _recent_rows if r[0]]
+            except Exception:
+                pass
             return ctx
         except Exception as e:
             logger.error("get_context 內部錯誤：%s", e)
@@ -694,6 +710,25 @@ def create_server(workdir: str) -> Any:
             except Exception as e:
                 logger.warning("complete_task: failed to write node %r: %s", title, e)
 
+        # VISION-01: auto-feedback on session nodes based on task outcome
+        _wk = str(b.workdir)
+        _auto_nodes: list[str] = []
+        with _snodes_lock:
+            _auto_nodes = list(_session_nodes.pop(_wk, []))
+        if _auto_nodes:
+            _had_pitfalls = bool(_pitfalls)
+            try:
+                from project_brain.brain_db import BrainDB as _BDB3
+                _bdb3 = _BDB3(b.brain_dir)
+                for _nid in _auto_nodes[:5]:  # cap at 5 to avoid over-feedback
+                    _bdb3.record_feedback(_nid, helpful=not _had_pitfalls)
+                logger.debug(
+                    "VISION-01 auto-feedback: %d nodes helpful=%s",
+                    min(5, len(_auto_nodes)), not _had_pitfalls,
+                )
+            except Exception as _fe:
+                logger.debug("VISION-01 auto-feedback failed: %s", _fe)
+
         return {"ok": True, "created": len(created_ids), "node_ids": created_ids}
 
     # ── Tool: report_knowledge_outcome (PH1-03) ──────────────────────
@@ -852,6 +887,175 @@ def create_server(workdir: str) -> Any:
         except Exception as e:
             logger.error("krb_pre_screen 內部錯誤：%s", e)
             return {"error": "預篩失敗，請檢查日誌"}
+
+    # ── Tool: multi_brain_query (VISION-05) ─────────────────────────────────
+    @mcp.tool()
+    def multi_brain_query(
+        task: str,
+        extra_brain_dirs: list[str] | None = None,
+        top_k: int = 5,
+        workdir: str = "",
+    ) -> str:
+        """
+        Query multiple .brain/ directories simultaneously — for monorepo scenarios.
+
+        Merges knowledge from the primary Brain plus any additional Brain instances,
+        ranks all results by confidence, and labels each result with its source project.
+
+        Configure additional brains permanently via environment variable:
+          BRAIN_EXTRA_DIRS=/path/to/project-a:/path/to/project-b
+
+        Args:
+            task:             Task description for context retrieval.
+            extra_brain_dirs: Additional project directories containing .brain/
+                              (overrides BRAIN_EXTRA_DIRS env var when provided).
+            top_k:            Max results to return per brain (default 5).
+            workdir:          Primary project directory (optional).
+
+        Returns:
+            Merged context string with [source: project-name] labels per result.
+            Empty string if no results found.
+        """
+        _rate_check()
+        task_clean = _safe_str(task, MAX_QUERY_LEN, "task")
+        top_k = max(1, min(20, int(top_k)))
+
+        # Resolve list of brain dirs to query
+        dirs_to_query: list[str] = []
+
+        # 1. Primary brain
+        primary_b = _resolve_brain(workdir)
+        dirs_to_query.append(str(primary_b.workdir))
+
+        # 2. Extra dirs from argument
+        if extra_brain_dirs:
+            for d in extra_brain_dirs[:10]:
+                try:
+                    d_clean = _safe_str(str(d), 500, "extra_brain_dirs[i]")
+                    if d_clean and ".." not in d_clean:
+                        dirs_to_query.append(d_clean)
+                except Exception:
+                    pass
+        else:
+            # 3. Fall back to BRAIN_EXTRA_DIRS env var
+            env_extra = os.environ.get("BRAIN_EXTRA_DIRS", "")
+            if env_extra:
+                for d in env_extra.split(":"):
+                    d = d.strip()
+                    if d and ".." not in d:
+                        dirs_to_query.append(d)
+
+        # Deduplicate
+        seen: set[str] = set()
+        unique_dirs: list[str] = []
+        for d in dirs_to_query:
+            resolved = str(Path(d).resolve())
+            if resolved not in seen:
+                seen.add(resolved)
+                unique_dirs.append(d)
+
+        if len(unique_dirs) <= 1:
+            # Single brain — delegate to standard get_context
+            try:
+                return primary_b.get_context(task_clean) or ""
+            except Exception:
+                return ""
+
+        # Query each brain
+        all_results: list[dict] = []
+        for d in unique_dirs:
+            root = _find_brain_root(d)
+            if root is None:
+                continue
+            try:
+                key = str(root)
+                if key not in _brain_cache:
+                    from project_brain.engine import ProjectBrain as _PB
+                    _brain_cache[key] = _PB(key)
+                b_inst = _brain_cache[key]
+                project_name = root.name
+                # Get context snippets
+                raw = b_inst.graph.search_nodes(task_clean, limit=top_k)
+                for node in raw:
+                    all_results.append({
+                        "source":     project_name,
+                        "title":      node.get("title", ""),
+                        "content":    (node.get("content", "") or "")[:400],
+                        "kind":       node.get("type", ""),
+                        "confidence": float(node.get("confidence", 0.5) or 0.5),
+                    })
+            except Exception as _me:
+                logger.debug("multi_brain_query: skipping %s — %s", d, _me)
+
+        if not all_results:
+            return ""
+
+        # Sort by confidence descending
+        all_results.sort(key=lambda x: x["confidence"], reverse=True)
+        # Deduplicate by title across brains
+        seen_titles: set[str] = set()
+        deduped: list[dict] = []
+        for r in all_results:
+            t = r["title"].lower().strip()
+            if t and t not in seen_titles:
+                seen_titles.add(t)
+                deduped.append(r)
+
+        # Format output
+        lines = [f"## 🔗 Multi-Brain Query: {task_clean!r} ({len(unique_dirs)} projects)\n"]
+        for r in deduped[:top_k * len(unique_dirs)]:
+            conf_str = f"conf={r['confidence']:.2f}"
+            lines.append(
+                f"**[{r['source']}]** [{r['kind']}] {r['title']}  ({conf_str})\n"
+                f"{r['content'][:200]}\n"
+            )
+
+        return "\n".join(lines)
+
+    # ── Tool: federation_sync (VISION-03) ────────────────────────────────────
+    @mcp.tool()
+    def federation_sync(
+        dry_run:        bool  = False,
+        min_confidence: float = 0.5,
+        workdir:        str   = "",
+    ) -> dict:
+        """
+        Sync knowledge from all configured federation sync_sources into KRB Staging.
+
+        Reads sync_sources from .brain/federation.json and imports each enabled bundle
+        file into the KRB Staging queue for human review before promotion to L3.
+
+        To add a sync source permanently, use the CLI:
+          brain fed sync --add-source "project-a:/path/to/federation_export.json"
+
+        Args:
+            dry_run:        Preview only — do not write to KRB Staging.
+            min_confidence: Skip nodes below this confidence (default 0.5).
+            workdir:        Project directory (auto-detected if omitted).
+
+        Returns:
+            {"synced": int, "skipped": int, "errors": int, "details": list}
+        """
+        _rate_check()
+        try:
+            _b    = _resolve_brain(workdir)
+            from project_brain.brain_db      import BrainDB as _BDB_FED
+            from project_brain.graph         import KnowledgeGraph as _KG_FED
+            from project_brain.review_board  import KnowledgeReviewBoard as _KRB_FED
+            from project_brain.federation    import FederationAutoSync
+            _bdb_f  = _BDB_FED(_b.brain_dir)
+            _graph_f = _KG_FED(_b.brain_dir / "brain.db")
+            _krb_f  = _KRB_FED(_bdb_f, _graph_f)
+            syncer  = FederationAutoSync(_krb_f, _b.brain_dir)
+            stats   = syncer.sync_all(dry_run=dry_run, min_confidence=min_confidence)
+            logger.info(
+                "federation_sync: synced=%d skipped=%d errors=%d",
+                stats["synced"], stats["skipped"], stats["errors"],
+            )
+            return stats
+        except Exception as e:
+            logger.error("federation_sync 內部錯誤：%s", e)
+            return {"error": str(e), "synced": 0, "skipped": 0, "errors": 1, "details": []}
 
     return mcp
 

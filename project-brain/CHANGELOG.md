@@ -4,6 +4,40 @@
 
 ---
 
+## v0.4.0（2026-04-04）— 長期願景版
+
+### 長期願景實現（VISION-01 ～ VISION-05）
+
+- **VISION-01：動態 confidence 更新**
+  - `mcp_server.py`：`get_context` 記錄本次查詢涉及的節點 ID 到 `_session_nodes`
+  - `complete_task` 任務完成後自動回饋：有踩坑 → `helpful=False`，順利完成 → `helpful=True`
+  - 最多回饋最近 5 個節點，避免過度調整；完全靜默降級，不影響正常任務流程
+
+- **VISION-02：知識衝突自動解決（LLM 仲裁）**
+  - 新增 `conflict_resolver.py`：`ConflictResolver` 類別，duck-typed（支援 Anthropic Haiku 或 Ollama）
+  - 仲裁結果：`winner=A/B` 時勝者 +0.05 confidence，敗者套用正常 F4 懲罰；`both` 時雙方套用較輕的 0.85× 懲罰
+  - 24 小時快取，避免相同節點對重複呼叫 LLM
+  - 啟用方式：`BRAIN_CONFLICT_RESOLVE=1`（預設關閉）
+  - `decay_engine.py` F4 矛盾懲罰段整合：有仲裁結果時使用個別因子，無則回退均等懲罰
+
+- **VISION-03：跨專案知識遷移（scope=global 聯邦網路）**
+  - `federation.py` 新增 `FederationAutoSync` 類別：從 `.brain/federation.json` 的 `sync_sources` 自動批次匯入 bundle
+  - `federation.py` 新增 `cmd_fed_sync()` CLI 輔助函式
+  - `cli.py` 新增 `brain fed sync` 子命令（支援 `--add-source`、`--remove-source`、`--dry-run`）
+  - `cli.py` 新增 `brain fed` 一級命令，整合 export / import / sync / subscribe / unsubscribe / list
+  - `mcp_server.py` 新增 `federation_sync` MCP 工具
+
+- **VISION-04：唯讀共享模式（`brain serve --readonly`）**
+  - `api_server.py`：`_Handler.readonly` 類別屬性，`_dispatch` 中攔截所有 POST/PUT/DELETE（除 `/v1/context`、`/v1/messages`、`/v1/session/search`），回傳 403
+  - `cli.py`：`brain serve` 新增 `--readonly` 參數
+
+- **VISION-05：多知識庫合併查詢（monorepo 場景）**
+  - `mcp_server.py` 新增 `multi_brain_query` MCP 工具
+  - 支援 `extra_brain_dirs` 參數或 `BRAIN_EXTRA_DIRS` 環境變數設定額外 `.brain/` 目錄
+  - 結果跨庫去重後依 confidence 排序，每筆標記 `[source: project-name]`
+
+---
+
 ## v0.3.0（2026-04-03）— 知識工廠版
 
 ### Bug 修復

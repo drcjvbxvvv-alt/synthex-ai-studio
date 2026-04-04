@@ -38,6 +38,7 @@ v2.0 的 DecayEngine 引入多因子衰減：
 
 from __future__ import annotations
 
+import os
 import re
 import math
 import json
@@ -223,6 +224,35 @@ class DecayEngine:
         contradiction_pairs = self._detect_contradictions()
         contradicted_ids    = {nid for pair in contradiction_pairs for nid in pair}
 
+        # VISION-02：LLM 仲裁（需 BRAIN_CONFLICT_RESOLVE=1 啟用）
+        _resolver     = None
+        _pair_factors: dict[str, float] = {}   # node_id → multiplier override
+        if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1" and contradiction_pairs:
+            try:
+                from project_brain.conflict_resolver import ConflictResolver
+                from project_brain.brain_db import BrainDB as _BDB_CR
+                _bdb_cr   = _BDB_CR(self.workdir / ".brain")
+                _resolver = ConflictResolver(_bdb_cr, self.graph)
+                _contr_def = self._params.get("contradiction_penalty", CONTRADICTION_PENALTY)
+                for _pair in contradiction_pairs:
+                    _nid_a, _nid_b = list(_pair)[:2]
+                    _res = _resolver.arbitrate(_nid_a, _nid_b)
+                    # 讀取原始 confidence
+                    _row_a = self.graph._conn.execute(
+                        "SELECT confidence FROM nodes WHERE id=?", (_nid_a,)
+                    ).fetchone()
+                    _row_b = self.graph._conn.execute(
+                        "SELECT confidence FROM nodes WHERE id=?", (_nid_b,)
+                    ).fetchone()
+                    _ca = float((_row_a or [0.8])[0] or 0.8)
+                    _cb = float((_row_b or [0.8])[0] or 0.8)
+                    _fa, _fb = _resolver.apply_resolution(_res, _ca, _cb, _contr_def)
+                    _pair_factors[_nid_a] = _fa
+                    _pair_factors[_nid_b] = _fb
+                    logger.debug("VISION-02 arbitration: %s vs %s → %s", _nid_a[:8], _nid_b[:8], _res.winner)
+            except Exception as _cr_exc:
+                logger.debug("VISION-02 ConflictResolver 初始化失敗，回退均等懲罰: %s", _cr_exc)
+
         # 取得 git 近期活動（一次性）
         recent_files = self._get_recently_modified_files(days=30)
 
@@ -279,9 +309,12 @@ class DecayEngine:
                 new_conf = min(DECAY_CEIL, new_conf + f3)
                 report.factors["F3_activity"] = f3
 
-                # F4：矛盾懲罰
+                # F4：矛盾懲罰（VISION-02：若有 LLM 仲裁結果則使用個別因子）
                 if node_id in contradicted_ids:
-                    _contr = self._params.get("contradiction_penalty", CONTRADICTION_PENALTY)
+                    if node_id in _pair_factors:
+                        _contr = _pair_factors[node_id]
+                    else:
+                        _contr = self._params.get("contradiction_penalty", CONTRADICTION_PENALTY)
                     new_conf *= _contr
                     report.factors["F4_contradiction"] = _contr
                     report.reason = "與其他決策存在矛盾"

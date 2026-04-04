@@ -453,6 +453,173 @@ class SubscriptionManager:
 
 
 # ══════════════════════════════════════════════════════════════
+#  FederationAutoSync  (VISION-03)
+# ══════════════════════════════════════════════════════════════
+
+class FederationAutoSync:
+    """
+    跨專案知識自動同步（VISION-03）。
+
+    從 .brain/federation.json 的 sync_sources 清單讀取本地 bundle 路徑，
+    依序匯入到 KRB Staging，供人工審查後升級至 L3。
+
+    設定格式（.brain/federation.json）：
+    {
+        "subscriptions": [...],
+        "blocked_sources": [...],
+        "sync_sources": [
+            {
+                "name":       "project-a",
+                "bundle_path": "/absolute/or/relative/path/federation_export.json",
+                "enabled":    true
+            }
+        ]
+    }
+
+    設計原則：
+      - 同步後永不直接寫入 L3（所有知識走 KRB Staging）
+      - bundle_path 可為絕對路徑或相對於 brain_dir 的路徑
+      - enabled=false 的來源被跳過
+      - 每次 sync 都回傳詳細統計
+    """
+
+    def __init__(self, krb, brain_dir: Path) -> None:
+        self.krb        = krb
+        self.brain_dir  = Path(brain_dir)
+        self._cfg_path  = self.brain_dir / _FED_CONFIG_NAME
+
+    def _load_sources(self) -> list[dict]:
+        try:
+            if self._cfg_path.exists():
+                cfg = json.loads(self._cfg_path.read_text(encoding="utf-8"))
+                return cfg.get("sync_sources", [])
+        except Exception as exc:
+            logger.warning("FederationAutoSync: 無法讀取設定 %s: %s", self._cfg_path, exc)
+        return []
+
+    def add_source(self, name: str, bundle_path: str, enabled: bool = True) -> bool:
+        """新增一個同步來源，若已存在同名來源則更新"""
+        try:
+            cfg = json.loads(self._cfg_path.read_text(encoding="utf-8")) \
+                  if self._cfg_path.exists() else {}
+            sources = cfg.get("sync_sources", [])
+            # 更新或新增
+            updated = False
+            for src in sources:
+                if src.get("name") == name:
+                    src["bundle_path"] = bundle_path
+                    src["enabled"]     = enabled
+                    updated = True
+                    break
+            if not updated:
+                sources.append({
+                    "name":        name,
+                    "bundle_path": bundle_path,
+                    "enabled":     enabled,
+                    "added_at":    datetime.now(timezone.utc).isoformat(),
+                })
+            cfg["sync_sources"] = sources
+            self.brain_dir.mkdir(parents=True, exist_ok=True)
+            self._cfg_path.write_text(
+                json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            return True
+        except Exception as exc:
+            logger.error("FederationAutoSync.add_source 失敗: %s", exc)
+            return False
+
+    def remove_source(self, name: str) -> bool:
+        """移除一個同步來源"""
+        try:
+            if not self._cfg_path.exists():
+                return False
+            cfg     = json.loads(self._cfg_path.read_text(encoding="utf-8"))
+            sources = cfg.get("sync_sources", [])
+            new_src = [s for s in sources if s.get("name") != name]
+            if len(new_src) == len(sources):
+                return False
+            cfg["sync_sources"] = new_src
+            self._cfg_path.write_text(
+                json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            return True
+        except Exception as exc:
+            logger.error("FederationAutoSync.remove_source 失敗: %s", exc)
+            return False
+
+    def sync_all(
+        self,
+        dry_run:        bool  = False,
+        min_confidence: float = 0.5,
+    ) -> dict:
+        """
+        同步所有已啟用的來源。
+
+        Returns:
+            {
+                "synced":   int,   — 成功同步的來源數
+                "skipped":  int,   — 停用或找不到 bundle 的來源數
+                "errors":   int,   — 發生錯誤的來源數
+                "details":  list,  — 每個來源的統計（含 imported/dup/low_conf/domain）
+            }
+        """
+        sources = self._load_sources()
+        result  = {"synced": 0, "skipped": 0, "errors": 0, "details": []}
+
+        if not sources:
+            logger.info("FederationAutoSync: 無已設定的同步來源")
+            return result
+
+        importer = FederationImporter(self.krb, self.brain_dir)
+
+        for src in sources:
+            name    = src.get("name", "unknown")
+            enabled = src.get("enabled", True)
+
+            if not enabled:
+                result["skipped"] += 1
+                result["details"].append({"name": name, "status": "disabled"})
+                continue
+
+            bundle_path_raw = src.get("bundle_path", "")
+            if not bundle_path_raw:
+                result["skipped"] += 1
+                result["details"].append({"name": name, "status": "no bundle_path"})
+                continue
+
+            # 支援相對路徑（相對於 brain_dir）
+            bundle_path = Path(bundle_path_raw)
+            if not bundle_path.is_absolute():
+                bundle_path = self.brain_dir / bundle_path
+
+            if not bundle_path.exists():
+                logger.warning("FederationAutoSync: bundle 不存在 %s (來源: %s)", bundle_path, name)
+                result["skipped"] += 1
+                result["details"].append({"name": name, "status": "bundle_not_found", "path": str(bundle_path)})
+                continue
+
+            try:
+                stats = importer.import_bundle(
+                    bundle_path    = bundle_path,
+                    dry_run        = dry_run,
+                    min_confidence = min_confidence,
+                )
+                result["synced"] += 1
+                result["details"].append({"name": name, "status": "ok", **stats})
+                logger.info(
+                    "FederationAutoSync: 來源 %s → imported=%d dup=%d low_conf=%d domain=%d",
+                    name, stats["imported"], stats["skipped_dup"],
+                    stats["skipped_low_conf"], stats["skipped_domain"],
+                )
+            except Exception as exc:
+                logger.error("FederationAutoSync: 來源 %s 同步失敗: %s", name, exc)
+                result["errors"] += 1
+                result["details"].append({"name": name, "status": "error", "error": str(exc)})
+
+        return result
+
+
+# ══════════════════════════════════════════════════════════════
 #  CLI 輔助函式（供 cli.py 呼叫）
 # ══════════════════════════════════════════════════════════════
 
@@ -548,3 +715,61 @@ def cmd_fed_subscribe(brain_dir: Path, args) -> None:
 
     else:
         print(f"  Unknown action: {action}")
+
+
+def cmd_fed_sync(brain_dir: Path, krb, args) -> None:
+    """
+    CLI: brain fed sync  (VISION-03)
+
+    自動從所有已設定的 sync_sources 拉取 bundle 並匯入 KRB Staging。
+
+    args 預期屬性：
+        dry_run    (bool)  — 預設 False
+        confidence (float) — 預設 0.5
+        add_source (str)   — "name:bundle_path" 格式，新增同步來源
+        remove_source (str)— 移除同步來源（依名稱）
+    """
+    syncer = FederationAutoSync(krb, brain_dir)
+
+    # 新增來源
+    add_src = getattr(args, "add_source", None)
+    if add_src:
+        parts = add_src.split(":", 1)
+        if len(parts) != 2:
+            print("  ERROR: --add-source 格式應為 name:bundle_path")
+            return
+        ok = syncer.add_source(parts[0].strip(), parts[1].strip())
+        print(f"  {'Added' if ok else 'Updated'} sync source: {parts[0].strip()}")
+        return
+
+    # 移除來源
+    rm_src = getattr(args, "remove_source", None)
+    if rm_src:
+        ok = syncer.remove_source(rm_src)
+        print(f"  {'Removed' if ok else 'Source not found'}: {rm_src}")
+        return
+
+    # 執行同步
+    dry   = getattr(args, "dry_run",    False)
+    conf  = getattr(args, "confidence", 0.5)
+    stats = syncer.sync_all(dry_run=dry, min_confidence=conf)
+
+    dry_label = " (dry run)" if dry else ""
+    print(
+        f"  Federation sync{dry_label}: "
+        f"synced={stats['synced']} "
+        f"skipped={stats['skipped']} "
+        f"errors={stats['errors']}"
+    )
+    for d in stats.get("details", []):
+        name   = d.get("name", "?")
+        status = d.get("status", "?")
+        if status == "ok":
+            print(
+                f"    [{name}] imported={d.get('imported',0)} "
+                f"dup={d.get('skipped_dup',0)} "
+                f"low_conf={d.get('skipped_low_conf',0)} "
+                f"domain={d.get('skipped_domain',0)}"
+            )
+        else:
+            print(f"    [{name}] {status}")

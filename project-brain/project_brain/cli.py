@@ -888,6 +888,62 @@ def cmd_migrate(args):
         _info("加 --execute 參數可實際執行遷移（去掉 --dry-run）")
 
 
+def cmd_fed(args):
+    """
+    VISION-03: 跨專案聯邦知識共享（brain fed）
+
+    子命令：
+      brain fed export   — 匯出本地知識 bundle
+      brain fed import   — 匯入外部 bundle 到 KRB Staging
+      brain fed sync     — 自動從所有 sync_sources 同步知識
+      brain fed subscribe / unsubscribe / list — 管理領域訂閱
+    """
+    wd = _workdir(args)
+    from pathlib import Path as _P
+    bd = _P(wd) / ".brain"
+    if not bd.exists():
+        _err("Brain 尚未初始化，請執行：brain setup"); return
+
+    fed_sub = getattr(args, 'fed_sub', 'list')
+
+    if fed_sub in ('subscribe', 'unsubscribe', 'list'):
+        from project_brain.federation import cmd_fed_subscribe
+        args.action = fed_sub
+        cmd_fed_subscribe(bd, args)
+
+    elif fed_sub == 'export':
+        from project_brain.brain_db import BrainDB
+        from project_brain.graph    import KnowledgeGraph
+        from project_brain.federation import cmd_fed_export
+        db    = BrainDB(bd)
+        graph = KnowledgeGraph(bd / "brain.db")
+        cmd_fed_export(bd, graph, args)
+
+    elif fed_sub == 'import':
+        from project_brain.brain_db    import BrainDB
+        from project_brain.graph       import KnowledgeGraph
+        from project_brain.review_board import KnowledgeReviewBoard
+        from project_brain.federation   import cmd_fed_import
+        db    = BrainDB(bd)
+        graph = KnowledgeGraph(bd / "brain.db")
+        krb   = KnowledgeReviewBoard(db, graph)
+        cmd_fed_import(bd, krb, args)
+
+    elif fed_sub == 'sync':
+        from project_brain.brain_db    import BrainDB
+        from project_brain.graph       import KnowledgeGraph
+        from project_brain.review_board import KnowledgeReviewBoard
+        from project_brain.federation   import cmd_fed_sync
+        db    = BrainDB(bd)
+        graph = KnowledgeGraph(bd / "brain.db")
+        krb   = KnowledgeReviewBoard(db, graph)
+        cmd_fed_sync(bd, krb, args)
+
+    else:
+        _err(f"未知子命令：{fed_sub}")
+        _info("用法：brain fed export | import | sync | subscribe | unsubscribe | list")
+
+
 def cmd_counterfactual(args):
     """DEEP-03: 反事實推理（brain counterfactual "如果我們用 NoSQL"）"""
     wd         = _workdir(args)
@@ -995,6 +1051,9 @@ def cmd_serve(args):
     production = getattr(args, 'production', False)
     workers    = getattr(args, 'workers', 4)
 
+    if getattr(args, 'readonly', False):
+        print(f"  {Y}唯讀模式 — 只允許查詢，寫入操作將被拒絕{R}")
+
     if production:
         # 生產模式：Gunicorn multi-worker
         print(f"\n  {G}⚡ Production 模式：Gunicorn {workers} workers{R}")
@@ -1016,9 +1075,11 @@ def cmd_serve(args):
         except FileNotFoundError:
             _err("Gunicorn 未安裝：pip install gunicorn")
             _info("退回標準模式...")
-            _api_run(workdir=wd, port=port, host=bind_host, api_key=_api_key)
+            _api_run(workdir=wd, port=port, host=bind_host, api_key=_api_key,
+                     readonly=getattr(args, 'readonly', False))
     else:
-        _api_run(workdir=wd, port=port, host=bind_host, api_key=_api_key)
+        _api_run(workdir=wd, port=port, host=bind_host, api_key=_api_key,
+                 readonly=getattr(args, 'readonly', False))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -2534,6 +2595,24 @@ def main():
                    help='只遷移信心值 >= 此值的節點（預設 0.0）')
     p.add_argument('--dry-run', action='store_true', help='預覽模式（不實際寫入）')
 
+    # VISION-03: Federation
+    p = mkp('fed', 'VISION-03：跨專案聯邦知識共享（export / import / sync / subscribe）')
+    p.add_argument('fed_sub', nargs='?', default='list',
+                   choices=['export','import','sync','subscribe','unsubscribe','list'],
+                   help='子命令（預設：list）')
+    p.add_argument('--output',    '-o', default=None, help='匯出路徑（export 時使用）')
+    p.add_argument('--scope',     default='global',   help='匯出 scope（預設 global）')
+    p.add_argument('--confidence',type=float, default=0.5, help='最低信心值（預設 0.5）')
+    p.add_argument('--max-nodes', dest='max_nodes', type=int, default=500)
+    p.add_argument('--project',   default='',         help='專案名稱（export 時嵌入 bundle）')
+    p.add_argument('bundle_path', nargs='?', default='', help='Bundle JSON 路徑（import 時使用）')
+    p.add_argument('--dry-run',   dest='dry_run', action='store_true')
+    p.add_argument('--domain',    default='',     help='領域（subscribe / unsubscribe 時使用）')
+    p.add_argument('--add-source',    dest='add_source',    default=None,
+                   help='sync：新增來源（格式：name:bundle_path）')
+    p.add_argument('--remove-source', dest='remove_source', default=None,
+                   help='sync：移除來源（依名稱）')
+
     # DEEP-03: Counterfactual
     p = mkp('counterfactual', 'DEEP-03：反事實推理')
     p.add_argument('hypothesis', nargs='+', help='假設條件（如：如果我們用 NoSQL）')
@@ -2547,6 +2626,7 @@ def main():
     p.add_argument('--workers',        type=int,   default=4,     help='Gunicorn worker 數量（--production 時有效）')
     p.add_argument('--host',           default='0.0.0.0',         help='綁定 host（預設 0.0.0.0）')
     p.add_argument('--mcp',            action='store_true',        help='MCP Server 模式（Claude Code / Cursor 直接連接）')
+    p.add_argument('--readonly',        action='store_true',        help='唯讀模式：禁止寫入操作，適合團隊共享查詢')
     p.add_argument('--slack-webhook',  dest='slack_webhook', default=None,
                    help='FEAT-10: Slack Incoming Webhook URL（覆蓋 BRAIN_SLACK_WEBHOOK_URL）')
 
@@ -2632,6 +2712,7 @@ def main():
         'timeline':      cmd_timeline,
         'rollback':      cmd_rollback,
         'migrate':       cmd_migrate,
+        'fed':            cmd_fed,
         'counterfactual': cmd_counterfactual,
         'deprecate':     cmd_deprecate,
         'lifecycle':     cmd_lifecycle,

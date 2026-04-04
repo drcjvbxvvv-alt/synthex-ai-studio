@@ -103,6 +103,7 @@ def _tdb(workdir: str):
 class _Handler(BaseHTTPRequestHandler):
     workdir: str = ""
     api_key: str = ""
+    readonly: bool = False
 
     def log_message(self, fmt, *args):
         pass  # suppress per-request noise
@@ -182,6 +183,13 @@ class _Handler(BaseHTTPRequestHandler):
 
             if not self._authorized(path):
                 return
+
+            # VISION-04: readonly mode — block all write operations
+            if self.__class__.readonly and method in ("POST", "PUT", "DELETE"):
+                _WRITE_SAFE = {"/v1/context", "/v1/messages", "/v1/session/search"}
+                if path not in _WRITE_SAFE:
+                    self._json({"error": "readonly mode — write operations disabled"}, 403)
+                    return
 
             wd = self.__class__.workdir
 
@@ -584,10 +592,13 @@ class _Handler(BaseHTTPRequestHandler):
 # ─────────────────────────────────────────────────────────────
 
 def run_server(workdir: str, port: int = 7891, host: str = "0.0.0.0",
-               api_key: str = "") -> None:
+               api_key: str = "", readonly: bool = False) -> None:
     """Start the REST API server (blocking). Ctrl+C to stop."""
-    _Handler.workdir = str(workdir)
-    _Handler.api_key = api_key
+    _Handler.workdir  = str(workdir)
+    _Handler.api_key  = api_key
+    _Handler.readonly = readonly
+    if readonly:
+        logger.info("Project Brain API server started in READONLY mode on %s:%s", host, port)
     server = HTTPServer((host, port), _Handler)
     # Pre-warm connections
     try:
@@ -603,17 +614,18 @@ def run_server(workdir: str, port: int = 7891, host: str = "0.0.0.0",
         server.server_close()
 
 
-def create_app(workdir: str, api_key: str = ""):
+def create_app(workdir: str, api_key: str = "", readonly: bool = False):
     """
     Backwards-compatible shim — returns an object with a .run() method.
     New code should call run_server() directly.
     """
     class _Compat:
-        def __init__(self, wd, key):
+        def __init__(self, wd, key, ro):
             self._wd  = wd
             self._key = key
+            self._ro  = ro
 
         def run(self, host: str = "0.0.0.0", port: int = 7891, **_):
-            run_server(self._wd, port, host, self._key)
+            run_server(self._wd, port, host, self._key, self._ro)
 
-    return _Compat(workdir, api_key)
+    return _Compat(workdir, api_key, readonly)
