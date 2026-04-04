@@ -227,7 +227,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 
 | ID | 問題 | 影響 | 解決方案 | 工時 | 備註 |
 |----|------|------|---------|------|------|
-| DEEP-04 | `nudge_engine.generate_questions()` 框架完成但未集成到 MCP / context 流程 | 主動學習環節中斷：信心 < 0.5 的節點缺乏人工確認機制 | `context.build()` 中對 confidence < 0.5 的節點附加 QUESTIONS 區塊；MCP 新增 `answer_question(node_id, answer, new_confidence)` tool；REST `POST /v1/knowledge/<id>/feedback` | 4 天 | 與 DEEP-05 協作 |
+| ~~**P2**~~ ✅ | ~~DEEP-04~~ | 低信心節點無確認機制，知識庫品質停滯 | AI 自動裁決（rule-based + LLM-assisted）取代人工確認；`auto_resolve_knowledge()` MCP tool；`get_context()` 背景靜默執行 rule-based auto-resolve | 無 | 設計調整：系統目標是讓 AI 自主運作，應大量減少人工介入 |
 | FED-01 | Federation 導入無審計日誌，無法溯源「哪個專案、何時、匯入了什麼」 | 多知識庫聯邦場景下責任不清晰 | 新增 `federation_imports` 表（source / node_id / imported_at / status）；`brain fed imports list/approve/reject`；REST `GET /v1/federation/imports` | 3 天 | 前提：Federation 被積極使用 |
 | FED-02 | Federation 去重只用 Jaccard 集合匹配，無法偵測語義重複 | 批量匯入造成語義近似的知識膨脹（「JWT RS256」vs「RS256 JWT 驗證」） | chromadb 可用時加語義相似度比對（threshold=0.9）；`FederationImporter._is_duplicate()` 組合 Jaccard OR 向量相似度 | 2 天 | 需向量化依賴可用 |
 | CLI-02 | `federation.py` 的 `sync_all()` 完成，CLI `brain fed sync` 未實裝 | Federation 自動同步功能（VISION-03）無入口 | `cmd_fed_sync()`：`brain fed sync [--dry-run] [--confidence 0.5]`；`brain fed export/import/subscribe/unsubscribe` | 2 天 | 搭配 FED-01 |
@@ -247,7 +247,7 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 |------|------|---------|----------|
 | **v0.7.0** ✅ | 正確性優先 | ~~BUG-B02~~✅、~~BUG-B01~~✅、~~REF-04~~✅、~~PERF-03~~✅、~~BUG-A03~~✅、~~PERF-04~~✅ | 所有測試通過；Chaos 100%；召回率 ≥ 60% |
 | **v0.8.0** ✅ | 知識自適應 | ~~DEEP-05~~（F6 採用率）、~~ARCH-05~~（弃用流程）、~~ARCH-06~~（ConflictResolver）、~~FEAT-01~~（版本控制）| 採用率反饋閉環可驗證；deprecated 流程有 CLI 入口；ConflictResolver 保守策略通過測試 |
-| **v0.9.0** | 深化功能 | DEEP-04（主動學習）、FED-01+FED-02（Federation 強化）、OBS-01（可觀測性）、PERF-04（動態擴展）| nudge 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
+| **v0.9.0** | 深化功能 | ~~DEEP-04~~（AI 自動裁決）✅、FED-01+FED-02（Federation 強化）、OBS-01（可觀測性）| auto-resolve 採纳率可量測；federation 審計可追蹤；structlog 覆蓋所有核心流程 |
 | **v1.0.0** | 長期穩定 | REF-01（BrainDB 拆分）、CLI-01（cli.py 拆分）、ARCH-04（scope UX）| 覆蓋率 ≥ 70%；BrainDB ≤ 800 行；cli.py ≤ 500 行 |
 
 ---
@@ -263,8 +263,8 @@ if os.environ.get("BRAIN_CONFLICT_RESOLVE", "0") == "1":
 | L3 KnowledgeGraph | ✅ 完整 | — |
 | BrainDB（統一儲存） | ✅ 完整 | v14-v17 遷移：version/change_type/deprecated_at/adoption_count |
 | DecayEngine（衰減） | ✅ 7/7 因子 | F6 採用率 ✅；ARCH-05 deprecated 流程 ✅；ARCH-06 CONFLICTS_WITH ✅ |
-| ContextEngineer | ✅ 完整 | `[已棄用]` 標記 ✅；主動學習未集成（DEEP-04）|
-| NudgeEngine | ⚠️ 集成有限 | 問題生成未掛接；採纳率未追蹤（DEEP-04）|
+| ContextEngineer | ✅ 完整 | `[已棄用]` 標記 ✅ |
+| NudgeEngine | ✅ 完整 | `auto_resolve_batch()` ✅；rule-based + LLM-assisted；get_context 背景觸發 |
 | ConflictResolver | ✅ 完整 | LLM/Ollama 仲裁 + CONFLICTS_WITH edges ✅ |
 | Federation | ⚠️ 導出/導入完成 | 去重弱；無審計；CLI 缺 sync（FED-01/02、CLI-02）|
 | MCP Server | ✅ 完整 | report_outcome → graph.increment_adoption() 串聯 ✅ |

@@ -246,6 +246,19 @@ def create_server(workdir: str) -> Any:
                     ctx = nudge_block + ctx if ctx else nudge_block
             except Exception:
                 pass  # nudge failure must never break context delivery
+            # DEEP-04: background AI auto-resolve low-confidence nodes (non-blocking)
+            try:
+                import threading as _t
+                from project_brain.nudge_engine import NudgeEngine as _NE
+                def _bg_resolve():
+                    try:
+                        _ne = _NE(b.graph, brain_db=b.db)
+                        _ne.auto_resolve_batch(task_clean, threshold=0.5, use_llm=False)
+                    except Exception:
+                        pass
+                _t.Thread(target=_bg_resolve, daemon=True).start()
+            except Exception:
+                pass  # auto-resolve must never block context delivery
             # VISION-01: record recently updated node IDs for auto-feedback
             try:
                 from project_brain.brain_db import BrainDB as _BDB2
@@ -570,18 +583,60 @@ def create_server(workdir: str) -> Any:
             logger.error("reasoning_chain error: %s", e)
             return ""
 
-    # ── Tool: DEEP-04 主動學習問題 ────────────────────────────────────
+    # ── Tool: DEEP-04 AI 自動確認 ─────────────────────────────────────
+    @mcp.tool()
+    def auto_resolve_knowledge(
+        task:      str,
+        threshold: float = 0.5,
+        use_llm:   bool  = True,
+        workdir:   str   = "",
+    ) -> dict:
+        """DEEP-04: AI 自動評估並修正低信心節點，無需人工介入。
+
+        系統主目標是讓 AI 在長期大型企業專案中自主運作。
+        此工具讓 AI 主動對知識庫中不確定的節點做出裁決：
+        - Rule-based（零費用）：根據 adoption_count / access_count 自動裁決
+        - LLM-assisted（可選）：規則無法裁決時，呼叫 Anthropic/Ollama 取得 AI 意見
+
+        建議在 get_context() 之後呼叫，持續優化知識品質。
+
+        Args:
+            task:      當前任務描述（用於搜尋相關低信心節點）
+            threshold: 信心門檻（低於此值觸發裁決，預設 0.5）
+            use_llm:   是否允許呼叫 LLM（預設 True；rule-based 失敗時使用）
+            workdir:   工作目錄（選填）
+
+        Returns:
+            {"resolved": N, "boosted": N, "downgraded": N, "deprecated": N,
+             "unchanged": N, "details": [...]}
+        """
+        _rate_check()
+        t_clean = _safe_str(task, MAX_QUERY_LEN, "task")
+        b = _resolve_brain(workdir)
+        try:
+            from project_brain.nudge_engine import NudgeEngine
+            ne = NudgeEngine(b.graph, brain_db=b.db)
+            return ne.auto_resolve_batch(
+                t_clean,
+                threshold=float(threshold),
+                use_llm=bool(use_llm),
+            )
+        except Exception as e:
+            logger.error("auto_resolve_knowledge error: %s", e)
+            return {"resolved": 0, "boosted": 0, "downgraded": 0,
+                    "deprecated": 0, "unchanged": 0, "details": [], "error": str(e)}
+
     @mcp.tool()
     def generate_questions(task: str, threshold: float = 0.5,
                            workdir: str = "") -> list:
-        """DEEP-04: Ask Brain what it wants to know about the current task.
+        """DEEP-04: 列出低信心節點供 AI 主動確認（明確確認路徑）。
 
-        Returns low-confidence knowledge nodes that need user verification,
-        as a list of questions Brain wants to ask.
+        一般情況下 auto_resolve_knowledge() 會自動處理，
+        此工具適合 AI 需要明確列出「尚不確定的知識」再逐一裁決時使用。
 
         Args:
             task:      當前任務描述
-            threshold: 信心門檻（低於此值觸發問題，預設 0.5）
+            threshold: 信心門檻（低於此值列出，預設 0.5）
             workdir:   工作目錄（選填）
 
         Returns:
@@ -605,15 +660,15 @@ def create_server(workdir: str) -> Any:
         new_confidence: float = 0.9,
         workdir: str = "",
     ) -> dict:
-        """DEEP-04 補完: 回饋主動學習答案，更新節點信心值並記錄學習事件。
+        """DEEP-04: AI 回饋對特定節點的判斷，更新信心值並記錄學習事件。
 
-        配合 generate_questions() 使用：Brain 提問後，使用者回答，
-        此工具將答案回寫進知識庫，形成主動學習閉環。
+        配合 generate_questions() 使用，也可以獨立呼叫。
+        AI 自行判斷後直接呼叫此工具更新知識庫，形成完全自動的學習閉環。
 
         Args:
-            node_id:        目標節點 ID（來自 generate_questions 返回值）
-            answer:         使用者回答內容
-            new_confidence: 更新後信心值（預設 0.9，已確認事實）
+            node_id:        目標節點 ID
+            answer:         AI 的判斷 / 補充說明
+            new_confidence: 更新後信心值（預設 0.9）
             workdir:        工作目錄（選填）
 
         Returns:
@@ -625,21 +680,19 @@ def create_server(workdir: str) -> Any:
             node_id_clean  = _safe_str(node_id, 128, "node_id")
             answer_clean   = _safe_str(answer, MAX_QUERY_LEN, "answer")
             conf           = float(max(0.0, min(1.0, new_confidence)))
-            # Update node confidence and append answer to content
             node = b.db.get_node(node_id_clean)
             if not node:
                 return {"ok": False, "error": f"node {node_id_clean!r} not found"}
-            new_content = (node.get("content") or "") + f"\n[學習迴路] {answer_clean}"
+            new_content = (node.get("content") or "") + f"\n[AI確認] {answer_clean}"
             b.db.update_node(
                 node_id_clean,
                 content=new_content,
                 confidence=conf,
                 changed_by="answer_question",
-                change_note=f"Active learning answer: {answer_clean[:80]}",
+                change_note=f"AI confirmation: {answer_clean[:80]}",
             )
-            # Record as episode for L2 memory
             b.db.add_episode(
-                content=f"[主動學習確認] {node.get('title','')}: {answer_clean}",
+                content=f"[AI主動確認] {node.get('title','')}: {answer_clean}",
                 source=f"answer_question:{node_id_clean}",
                 confidence=conf,
             )

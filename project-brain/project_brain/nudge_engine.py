@@ -249,13 +249,14 @@ class NudgeEngine:
         except Exception:
             return ""
 
-    # ── DEEP-04: Active Learning Loop ────────────────────────────────
+    # ── DEEP-04: AI Auto-Confirmation Loop ──────────────────────────────
 
     def generate_questions(self, task: str, threshold: float = 0.5) -> list:
-        """DEEP-04: 主動學習迴圈 — 對低信心節點產生問題，讓用戶填補知識缺口。
+        """DEEP-04: For explicit AI confirmation — surfaces low-confidence nodes
+        as structured questions that an AI agent can then auto-resolve via
+        auto_resolve_batch() or answer_question().
 
-        當 Brain 找到相關節點但信心低於 threshold 時，
-        生成一個問題請用戶確認或補充。
+        Prefer auto_resolve_batch() for fully autonomous operation.
 
         Returns: [{"node_id": ..., "question": "...", "current_confidence": 0.38}]
         """
@@ -285,6 +286,193 @@ class NudgeEngine:
                 "current_confidence": round(conf, 3),
                 "node_type":         ntype,
             })
-        # Sort by lowest confidence first (most uncertain)
         questions.sort(key=lambda x: x["current_confidence"])
         return questions[:5]
+
+    def auto_resolve_batch(
+        self,
+        task:      str,
+        threshold: float = 0.5,
+        use_llm:   bool  = True,
+        limit:     int   = 10,
+    ) -> dict:
+        """DEEP-04: AI 自動判斷低信心節點，無需人工介入。
+
+        兩層判斷策略：
+        1. Rule-based（零費用）：根據 adoption_count / access_count 信號直接裁決
+        2. LLM-assisted（可選）：規則無法裁決時，呼叫 Anthropic/Ollama 取得 AI 意見
+
+        此方法適合在 get_context() 後台靜默執行，讓知識庫持續自我優化。
+
+        Returns:
+            {
+              "resolved": N,      # 已處理節點數
+              "boosted":  N,      # 信心提升的節點數
+              "downgraded": N,    # 信心降低的節點數
+              "deprecated": N,    # 標記棄用的節點數
+              "unchanged": N,     # 未變更的節點數
+              "details": [...]    # 每個節點的裁決詳情
+            }
+        """
+        if not self._brain_db:
+            return {"resolved": 0, "boosted": 0, "downgraded": 0,
+                    "deprecated": 0, "unchanged": 0, "details": []}
+
+        try:
+            results = self.graph.search_nodes(task, limit=limit)
+        except Exception:
+            results = []
+
+        low_conf = [
+            r for r in results
+            if float(r.get("confidence", 0.8) or 0.8) < threshold
+            and not r.get("is_deprecated")
+        ]
+        if not low_conf:
+            return {"resolved": 0, "boosted": 0, "downgraded": 0,
+                    "deprecated": 0, "unchanged": 0, "details": []}
+
+        stats   = {"boosted": 0, "downgraded": 0, "deprecated": 0, "unchanged": 0}
+        details = []
+
+        for node in low_conf:
+            node_id = node["id"]
+            verdict, new_conf, reason = self._rule_verdict(node)
+
+            # If rule says uncertain AND LLM available → ask LLM
+            if verdict == "uncertain" and use_llm:
+                try:
+                    verdict, new_conf, reason = self._llm_verdict(node, task)
+                except Exception as e:
+                    logger.debug("LLM verdict failed for %s: %s", node_id, e)
+
+            old_conf = float(node.get("confidence", 0.5) or 0.5)
+            self._apply_verdict(node_id, node, old_conf, verdict, new_conf, reason, stats)
+            details.append({
+                "node_id":   node_id,
+                "title":     node.get("title", "")[:60],
+                "verdict":   verdict,
+                "old_conf":  round(old_conf, 3),
+                "new_conf":  round(new_conf, 3),
+                "reason":    reason,
+            })
+
+        resolved = len(low_conf)
+        logger.info("DEEP-04 auto_resolve: %d nodes | %s", resolved, stats)
+        return {"resolved": resolved, **stats, "details": details}
+
+    # ── DEEP-04 internals ────────────────────────────────────────────
+
+    def _rule_verdict(self, node: dict) -> tuple[str, float, str]:
+        """Rule-based verdict using usage signals. Returns (verdict, new_conf, reason)."""
+        conf        = float(node.get("confidence",     0.5) or 0.5)
+        adoption    = int(  node.get("adoption_count", 0)   or 0)
+        access      = int(  node.get("access_count",   0)   or 0)
+        emo_weight  = float(node.get("emotional_weight", 0.5) or 0.5)
+
+        if adoption >= 5:
+            new = min(0.90, conf + 0.20)
+            return "valid", new, f"high adoption ({adoption}x confirmed helpful)"
+        if adoption >= 2:
+            new = min(0.80, conf + 0.15)
+            return "valid", new, f"repeated adoption ({adoption}x helpful)"
+        if adoption >= 1:
+            new = min(0.70, conf + 0.10)
+            return "likely_valid", new, f"adopted once ({adoption}x)"
+        if access > 15 and adoption == 0:
+            new = max(0.15, conf - 0.08)
+            return "suspect", new, f"accessed {access}x but never confirmed helpful"
+        if emo_weight >= 0.8 and adoption == 0 and access == 0:
+            # High emotional weight but zero usage → might be outdated trauma
+            return "uncertain", conf, "high emotional weight, no usage signal"
+        return "uncertain", conf, "no usage signal"
+
+    def _llm_verdict(self, node: dict, task: str) -> tuple[str, float, str]:
+        """Call LLM to evaluate node validity. Returns (verdict, new_conf, reason)."""
+        import os, json as _j
+        prompt = (
+            "You are evaluating a knowledge node in a software project's AI memory system.\n\n"
+            f"Node type: {node.get('type','Note')}\n"
+            f"Title: {node.get('title','')}\n"
+            f"Content: {(node.get('content') or '')[:400]}\n"
+            f"Current confidence: {float(node.get('confidence', 0.5)):.2f}\n"
+            f"Used helpfully: {node.get('adoption_count', 0)} times\n"
+            f"Accessed: {node.get('access_count', 0)} times\n\n"
+            f"Current task context: \"{task[:200]}\"\n\n"
+            "Evaluate if this knowledge is still accurate and applicable for a modern enterprise software project.\n"
+            'Reply ONLY with JSON (no markdown): {"verdict": "valid"|"outdated"|"uncertain", '
+            '"confidence": 0.0-1.0, "reason": "one sentence"}'
+        )
+        raw = self._call_llm(prompt)
+        # Parse JSON — strip any markdown fences
+        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        data = _j.loads(raw)
+        verdict = data.get("verdict", "uncertain")
+        new_conf = float(max(0.05, min(1.0, data.get("confidence", node.get("confidence", 0.5)))))
+        reason   = str(data.get("reason", "LLM verdict"))[:120]
+        return verdict, new_conf, reason
+
+    def _call_llm(self, prompt: str) -> str:
+        """Call LLM. Tries Anthropic first (BRAIN_LLM_PROVIDER), then Ollama."""
+        import os, urllib.request, json as _j
+        provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+        if provider in ("openai", "ollama") or os.environ.get("BRAIN_LLM_BASE_URL"):
+            base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
+            model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.2:3b")
+            from openai import OpenAI
+            client   = OpenAI(base_url=base_url, api_key="ollama")
+            resp     = client.chat.completions.create(
+                model=model, max_tokens=200,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return resp.choices[0].message.content.strip()
+        else:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                raise ValueError("ANTHROPIC_API_KEY not set")
+            model  = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
+            client = anthropic.Anthropic(api_key=api_key)
+            msg    = client.messages.create(
+                model=model, max_tokens=200,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return msg.content[0].text.strip()
+
+    def _apply_verdict(
+        self,
+        node_id:  str,
+        node:     dict,
+        old_conf: float,
+        verdict:  str,
+        new_conf: float,
+        reason:   str,
+        stats:    dict,
+    ) -> None:
+        """Write verdict result to brain_db."""
+        db = self._brain_db
+        if not db:
+            return
+        try:
+            if verdict == "outdated":
+                db.deprecate_node(node_id, reason=f"AI auto-resolve: {reason}")
+                stats["deprecated"] += 1
+            elif verdict in ("valid", "likely_valid") and new_conf > old_conf:
+                db.update_node(
+                    node_id, confidence=new_conf,
+                    changed_by="auto_resolve",
+                    change_note=f"AI auto-confirm: {reason}",
+                )
+                stats["boosted"] += 1
+            elif verdict == "suspect" and new_conf < old_conf:
+                db.update_node(
+                    node_id, confidence=new_conf,
+                    changed_by="auto_resolve",
+                    change_note=f"AI auto-downgrade: {reason}",
+                )
+                stats["downgraded"] += 1
+            else:
+                stats["unchanged"] += 1
+        except Exception as e:
+            logger.debug("_apply_verdict failed for %s: %s", node_id, e)
+            stats["unchanged"] += 1
