@@ -346,7 +346,8 @@ class TestKnowledgeDistiller(unittest.TestCase):
         """LoRA 蒸餾應生成 JSONL 訓練數據"""
         from project_brain.knowledge_distiller import KnowledgeDistiller
         d    = KnowledgeDistiller(self.graph, Path(self.tmpdir))
-        path = d._distill_lora_dataset(d._get_all_nodes())
+        result = d._distill_lora_dataset(d._get_all_nodes())
+        path = result[0] if isinstance(result, tuple) else result
         self.assertTrue(path.exists())
         lines = path.read_text(encoding="utf-8").strip().split("\n")
         self.assertGreater(len(lines), 0)
@@ -1488,13 +1489,13 @@ class TestEngineWithMockedLLM:
         r = subprocess.run(
             [sys.executable, "brain.py", "setup", "--workdir", str(tmp_path)],
             capture_output=True, text=True,
-            cwd="/home/claude/project-brain"
+            cwd=str(Path(__file__).parent.parent)
         )
         r2 = subprocess.run(
             [sys.executable, "brain.py", "add",
              "--workdir", str(tmp_path), "JWT 必須使用 RS256"],
             capture_output=True, text=True,
-            cwd="/home/claude/project-brain"
+            cwd=str(Path(__file__).parent.parent)
         )
         assert r2.returncode == 0, f"add positional failed: {r2.stderr}"
 

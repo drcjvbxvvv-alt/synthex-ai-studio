@@ -377,8 +377,14 @@ class TestV52L2HealthCheck:
     """Fix 4: L2 availability is visible"""
 
     def test_l2_health_check_function_exists(self, tmp_path):
-        content = open('/home/claude/synthex_v10/brain.py').read()
-        assert '_check_l2_health' in content, "_check_l2_health must exist"
+        from pathlib import Path as _P
+        src_root = _P(__file__).parent.parent.parent / "project_brain"
+        # _check_l2_health lives in cli_utils.py (or cli.py / cli_admin.py)
+        found = any(
+            "_check_l2_health" in f.read_text()
+            for f in src_root.glob("cli*.py")
+        )
+        assert found, "_check_l2_health must exist in project_brain/cli*.py"
 
     def test_l2_health_returns_dict(self, tmp_path, monkeypatch):
         import sys; sys.path.insert(0, '/home/claude/synthex_v10')

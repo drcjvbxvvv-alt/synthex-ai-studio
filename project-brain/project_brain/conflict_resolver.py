@@ -150,8 +150,8 @@ class ConflictResolver:
         try:
             urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=2)
             return OllamaClient(ollama_url), ollama_model
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Ollama availability check failed", exc_info=True)
 
         return None, None
 

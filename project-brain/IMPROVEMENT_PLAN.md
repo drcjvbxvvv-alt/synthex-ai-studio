@@ -1,8 +1,8 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.11.0（2026-04-04）
+> **當前版本**：v0.12.0（2026-04-05）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
-> **分析基準**：873 tests collected；15 failing；29 bare except/pass；完整原始碼靜態掃描。
+> **分析基準**：873 tests collected；v0.12.0 所有 P1 已完成，868 passed / 5 skipped / 0 failed。
 
 ---
 
@@ -18,14 +18,14 @@
 
 ## 矩陣優先總覽
 
-| 優先 | ID | 影響 | 解決方案 | 阻塞依賴 | 象限 |
-|------|----|------|---------|---------|------|
-| **P1** | SEC-03 | API key 字串比對有 timing attack 漏洞 | `hmac.compare_digest()` 取代 `!=` | 無 | ⚡ 快速獲益 |
-| **P1** | BUG-D01 | 29 處 `except Exception: pass` 靜默吞錯 | 逐一加 `logger.warning`，critical 路徑改 `logger.error` | 無 | ⚡ 快速獲益 |
-| **P1** | BUG-D02 | `embedder.py._embedder_cache` 無鎖，多執行緒競態 | 加 `threading.Lock()` 保護 dict read/write | 無 | ⚡ 快速獲益 |
-| **P1** | TEST-01 | 15 個測試失敗（chaos 路徑、web_ui AttributeError、lora、embedding cache） | 修復或標記 skip；確保 CI 全綠 | 無 | 🎯 高價值 |
-| **P1** | PERF-05 | Decay `_detect_contradictions()` N+1 查詢：每對矛盾各一次 `SELECT confidence` | 批次預取所有節點信心值至 dict | 無 | ⚡ 快速獲益 |
-| **P1** | BUG-E01 | `_search_batch(terms[:8])` 截斷使「版本號」「路徑」等關鍵詞被丟棄，Rule 類 False Negative | ① 改 `terms[:15]`；② 補 API 同義詞；③ Rule 配額 2→3 | 無 | 🎯 高價值 |
+| 優先 | ID | 影響 | 解決方案 | 阻塞依賴 | 象限 | 狀態 |
+|------|----|------|---------|---------|------|------|
+| **P1** | SEC-03 | API key 字串比對有 timing attack 漏洞 | `hmac.compare_digest()` 取代 `!=` | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
+| **P1** | BUG-D01 | 29 處 `except Exception: pass` 靜默吞錯 | 逐一加 `logger.warning`，critical 路徑改 `logger.error` | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
+| **P1** | BUG-D02 | `embedder.py._embedder_cache` 無鎖，多執行緒競態 | 加 `threading.Lock()` 保護 dict read/write | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
+| **P1** | TEST-01 | 15 個測試失敗（chaos 路徑、web_ui AttributeError、lora、embedding cache） | 修復或標記 skip；確保 CI 全綠 | 無 | 🎯 高價值 | ✅ v0.12.0 |
+| **P1** | PERF-05 | Decay `_detect_contradictions()` N+1 查詢：每對矛盾各一次 `SELECT confidence` | 批次預取所有節點信心值至 dict | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
+| **P1** | BUG-E01 | `_search_batch(terms[:8])` 截斷使「版本號」「路徑」等關鍵詞被丟棄，Rule 類 False Negative | ① 改 `terms[:15]`；② 補 API 同義詞；③ Rule 配額 2→3 | 無 | 🎯 高價值 | ✅ v0.12.0 |
 | **P2** | FEAT-07 | `archaeologist` 掃描 git 歷史後所有節點 `created_at = today`，舊專案 F1 衰減從零開始等 7 天 | ① `add_node()` 接受 `created_at` 參數；② 改 `INSERT OR REPLACE` → `UPSERT` 保留原始日期；③ 新增 `brain backfill-git` 指令 | 無 | 🎯 高價值 |
 | **P2** | PERF-06 | 缺少 `nodes(type, confidence DESC)` 複合索引，type 過濾搜尋全表掃描 | SCHEMA_VERSION=21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)` | 無 | ⚡ 快速獲益 |
 | **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 24h） | 無 | 🔵 填空 |

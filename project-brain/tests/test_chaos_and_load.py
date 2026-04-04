@@ -374,7 +374,7 @@ class TestV52L2HealthCheck:
         pytest.skip("Stale test: hardcoded path no longer valid")
 
     def test_l2_health_returns_dict(self, tmp_path, monkeypatch):
-        import sys; sys.path.insert(0, '/home/claude/synthex_v10')
+        import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
         import importlib
         # Import brain module's _check_l2_health
         import socket

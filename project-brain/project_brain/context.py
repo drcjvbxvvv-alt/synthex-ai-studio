@@ -196,18 +196,18 @@ class ContextEngineer:
                             from .embedder import get_embedder
                             _emb = get_embedder()
                             if _emb:
-                                _q_vec = _emb.embed(" ".join(terms[:8]))
+                                _q_vec = _emb.embed(" ".join(terms))
                         except Exception:
                             pass
                         if _q_vec:
                             db_results = self._brain_db.hybrid_search(
-                                " ".join(terms[:8]), query_vector=_q_vec,
+                                " ".join(terms), query_vector=_q_vec,
                                 scope=_scope, limit=limit
                             )
                             db_results = [r for r in db_results if r.get("type") == node_type]
                         else:
                             db_results = self._brain_db.search_nodes(
-                                " ".join(terms[:8]), node_type=node_type,
+                                " ".join(terms), node_type=node_type,
                                 scope=_scope, limit=limit  # BUG-12 fix
                             )
                     # Always query KnowledgeGraph and merge (BUG-09 fix)
@@ -224,7 +224,7 @@ class ContextEngineer:
                     return merged[:limit]
                 pitfalls  = _search_batch(expanded_terms, node_type="Pitfall",  limit=3)
                 decisions = _search_batch(expanded_terms, node_type="Decision", limit=2)
-                rules     = _search_batch(expanded_terms, node_type="Rule",     limit=2)
+                rules     = _search_batch(expanded_terms, node_type="Rule",     limit=3)  # BUG-E01: 2→3
                 adrs      = _search_batch(expanded_terms, node_type="ADR",      limit=1)
                 notes     = _search_batch(expanded_terms, node_type="Note",     limit=2)  # A-24
 

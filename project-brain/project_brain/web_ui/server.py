@@ -1230,6 +1230,9 @@ loadGraph();
 
 
 # ─────────────────────────────────────────────
+# Alias for backwards compatibility / test imports (BUG-08 fix)
+_generate_graph_html = _generate_html
+
 # Public API
 # ─────────────────────────────────────────────
 
@@ -1253,13 +1256,251 @@ def run_server(workdir, port: int = 7890) -> None:
         server.server_close()
 
 
-# Backwards-compat shim for any code that still calls create_app()
 def create_app(workdir, **_):
-    """Deprecated: use run_server() instead. Returns a callable for CLI compatibility."""
-    class _Compat:
-        def __init__(self, wd): self._wd = wd
-        def run(self, host=HOST, port=7890, **kw): run_server(self._wd, port)
-    return _Compat(workdir)
+    """Return a Flask WSGI app exposing the same endpoints as run_server().
+
+    Primarily useful for testing (``app.test_client()``) and programmatic
+    embedding.  Falls back to a thin compatibility shim if Flask is not
+    installed.
+    """
+    try:
+        from flask import Flask, jsonify, request, Response as _Resp
+    except ImportError:  # Flask not available — legacy shim
+        class _Compat:  # type: ignore[no-redef]
+            def __init__(self, wd): self._wd = wd
+            def run(self, host=HOST, port=7890, **kw): run_server(self._wd, port)
+        return _Compat(workdir)
+
+    wd = Path(workdir)
+    app = Flask(__name__)
+
+    # ── DB helper ───────────────────────────────────────────────────────
+    def _get_db():
+        bd = wd / ".brain"
+        for name in ("brain.db", "knowledge_graph.db"):
+            p = bd / name
+            if p.exists():
+                conn = sqlite3.connect(str(p), check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                return conn
+        raise FileNotFoundError(f"找不到資料庫：{bd}/brain.db（請先執行 brain setup）")
+
+    def _col(row, key, default=None):
+        try:
+            return row[key]
+        except (IndexError, KeyError):
+            return default
+
+    # ── Routes ──────────────────────────────────────────────────────────
+    @app.route("/health")
+    def health():
+        return jsonify({"status": "ok", "version": _VERSION})
+
+    @app.route("/")
+    def index():
+        html = _generate_html(str(wd))
+        return _Resp(html, content_type="text/html; charset=utf-8")
+
+    @app.route("/api/graph")
+    def api_graph():
+        limit = min(MAX_NODES_RETURN, int(request.args.get("limit", 300)))
+        kind = request.args.get("kind")
+        conn = _get_db()
+        try:
+            cols = "id, kind, title, content, tags, created_at, confidence, is_pinned, scope"
+            try:
+                if kind:
+                    sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
+                    rows = conn.execute(
+                        f"SELECT {cols} FROM nodes WHERE kind=? LIMIT ?", (sk, limit)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT {cols} FROM nodes LIMIT ?", (limit,)
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                cols2 = "id, type as kind, title, content, tags, created_at"
+                if kind:
+                    sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
+                    rows = conn.execute(
+                        f"SELECT {cols2} FROM nodes WHERE type=? LIMIT ?", (sk, limit)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT {cols2} FROM nodes LIMIT ?", (limit,)
+                    ).fetchall()
+
+            nodes, node_ids = [], set()
+            for r in rows:
+                k = _col(r, "kind") or "Note"
+                conf = float(_col(r, "confidence") or 0.7)
+                nodes.append({
+                    "id": r["id"], "kind": k, "title": r["title"] or "",
+                    "confidence": conf, "color": KIND_COLOR.get(k, "#94a3b8"),
+                    "size": NODE_SIZE.get(k, 9),
+                    "is_pinned": bool(_col(r, "is_pinned") or False),
+                })
+                node_ids.add(r["id"])
+
+            try:
+                edge_rows = conn.execute(
+                    "SELECT source_id, target_id, relation_type FROM edges LIMIT 2000"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                try:
+                    edge_rows = conn.execute(
+                        "SELECT source_id, target_id, relation as relation_type FROM edges LIMIT 2000"
+                    ).fetchall()
+                except Exception:
+                    edge_rows = []
+        finally:
+            conn.close()
+
+        links = [
+            {"source": e["source_id"], "target": e["target_id"],
+             "relation": _col(e, "relation_type") or "RELATES_TO"}
+            for e in edge_rows
+            if e["source_id"] in node_ids and e["target_id"] in node_ids
+        ]
+        return jsonify({"nodes": nodes, "links": links, "edges": links,
+                        "total_nodes": len(nodes), "total_links": len(links)})
+
+    @app.route("/api/stats")
+    def api_stats():
+        conn = _get_db()
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            try:
+                edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            except Exception:
+                edges = 0
+            try:
+                by_kind = conn.execute(
+                    "SELECT kind, COUNT(*) cnt, AVG(confidence) avg_conf "
+                    "FROM nodes GROUP BY kind ORDER BY cnt DESC"
+                ).fetchall()
+                low_conf = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE confidence < 0.3"
+                ).fetchone()[0]
+                pinned = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE is_pinned = 1"
+                ).fetchone()[0]
+            except sqlite3.OperationalError:
+                by_kind = conn.execute(
+                    "SELECT type as kind, COUNT(*) cnt FROM nodes GROUP BY type ORDER BY cnt DESC"
+                ).fetchall()
+                low_conf = pinned = 0
+        finally:
+            conn.close()
+        return jsonify({
+            "total_nodes": total, "total_edges": edges,
+            "low_confidence": low_conf, "pinned": pinned,
+            "by_kind": [
+                {"kind": r["kind"] or "Note", "count": r["cnt"],
+                 "avg_confidence": round(float(_col(r, "avg_conf") or 0.7), 2)}
+                for r in by_kind
+            ],
+        })
+
+    @app.route("/api/search")
+    def api_search():
+        q = (request.args.get("q", "") or "")[:MAX_QUERY_LEN].strip()
+        if not q:
+            return jsonify({"results": []})
+        conn = _get_db()
+        try:
+            try:
+                rows = conn.execute(
+                    "SELECT id, kind, title, content, confidence FROM nodes "
+                    "WHERE title LIKE ? OR content LIKE ? ORDER BY confidence DESC LIMIT 20",
+                    (f"%{q}%", f"%{q}%")
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = conn.execute(
+                    "SELECT id, type as kind, title, content FROM nodes "
+                    "WHERE title LIKE ? OR content LIKE ? LIMIT 20",
+                    (f"%{q}%", f"%{q}%")
+                ).fetchall()
+        finally:
+            conn.close()
+        return jsonify({"results": [
+            {"id": r["id"], "kind": r["kind"] or "Note", "title": r["title"] or "",
+             "excerpt": (r["content"] or "")[:80],
+             "confidence": float(_col(r, "confidence") or 0.7),
+             "color": KIND_COLOR.get(r["kind"] or "Note", "#94a3b8")}
+            for r in rows
+        ]})
+
+    @app.route("/api/node/<node_id>")
+    def api_node(node_id):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        conn = _get_db()
+        try:
+            try:
+                row = conn.execute(
+                    "SELECT id, kind, title, content, tags, created_at, "
+                    "confidence, is_pinned, scope FROM nodes WHERE id=?", (safe,)
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = conn.execute(
+                    "SELECT id, type as kind, title, content, tags, created_at "
+                    "FROM nodes WHERE id=?", (safe,)
+                ).fetchone()
+            if not row:
+                return jsonify({"error": "節點不存在"}), 404
+            try:
+                nbrs = conn.execute(
+                    "SELECT n.id, n.kind, n.title, e.relation_type "
+                    "FROM edges e JOIN nodes n ON e.target_id = n.id "
+                    "WHERE e.source_id=? LIMIT 10", (safe,)
+                ).fetchall()
+            except sqlite3.OperationalError:
+                try:
+                    nbrs = conn.execute(
+                        "SELECT n.id, n.type as kind, n.title, e.relation as relation_type "
+                        "FROM edges e JOIN nodes n ON e.target_id = n.id "
+                        "WHERE e.source_id=? LIMIT 10", (safe,)
+                    ).fetchall()
+                except Exception:
+                    nbrs = []
+        finally:
+            conn.close()
+        conf = float(_col(row, "confidence") or 0.7)
+        k = row["kind"] or "Note"
+        return jsonify({
+            "id": row["id"], "kind": k, "title": row["title"] or "",
+            "content": row["content"] or "", "confidence": conf,
+            "conf_label": _conf_label(conf), "conf_color": _conf_color(conf),
+            "tags": row["tags"] or "", "created_at": row["created_at"] or "",
+            "is_pinned": bool(_col(row, "is_pinned") or False),
+            "scope": _col(row, "scope") or "global",
+            "color": KIND_COLOR.get(k, "#94a3b8"),
+            "neighbors": [
+                {"id": n["id"], "kind": n["kind"] or "Note",
+                 "title": n["title"] or "", "relation": n["relation_type"] or "",
+                 "color": KIND_COLOR.get(n["kind"] or "Note", "#94a3b8")}
+                for n in nbrs
+            ],
+        })
+
+    @app.route("/api/node/<node_id>/pin", methods=["POST"])
+    def api_pin(node_id):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        body = request.get_json(silent=True) or {}
+        pinned = bool(body.get("pinned", True))
+        conn = _get_db()
+        try:
+            cur = conn.execute(
+                "UPDATE nodes SET is_pinned=? WHERE id=?", (1 if pinned else 0, safe)
+            )
+            conn.commit()
+            if cur.rowcount == 0:
+                return jsonify({"error": "節點不存在"}), 404
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "id": safe, "pinned": pinned})
+
+    return app
 
 
 if __name__ == "__main__":

@@ -217,17 +217,17 @@ def create_server(workdir: str) -> Any:
                         ss = SessionStore(brain_dir=b.brain_dir)
                         l1_data = [{"content": e.value, "category": e.category}
                                    for e in ss.list(limit=5)]
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.debug("session_store L1 read failed in get_context", exc_info=True)
                     l2_data = []
                     try:
                         l2_data = b.db.recent_episodes(limit=5)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.debug("recent_episodes L2 read failed in get_context", exc_info=True)
                     synth = MemorySynthesizer(str(b.workdir))
                     ctx   = synth.fuse(l1_data, l2_data, ctx, task=task_clean) or ctx
-            except Exception:
-                pass  # synthesis failure must never break context delivery
+            except Exception as _e:
+                logger.debug("synthesis failed, skipping", exc_info=True)  # synthesis failure must never break context delivery
             # P2-A: attach nudges to every MCP response
             # Agent cannot opt out — if it queries anything, nudges come with it
             try:
@@ -245,8 +245,8 @@ def create_server(workdir: str) -> Any:
                         _conf_str = f" [conf={_conf:.2f}]" if _conf is not None else ""
                         nudge_block += f"  {_icon}{_conf_str} {_msg}\n"
                     ctx = nudge_block + ctx if ctx else nudge_block
-            except Exception:
-                pass  # nudge failure must never break context delivery
+            except Exception as _e:
+                logger.debug("nudge block failed, skipping", exc_info=True)  # nudge failure must never break context delivery
             # DEEP-04: background AI auto-resolve low-confidence nodes (non-blocking)
             try:
                 import threading as _t
@@ -255,11 +255,11 @@ def create_server(workdir: str) -> Any:
                     try:
                         _ne = _NE(b.graph, brain_db=b.db)
                         _ne.auto_resolve_batch(task_clean, threshold=0.5, use_llm=False)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.debug("bg_resolve auto_resolve_batch failed", exc_info=True)
                 _t.Thread(target=_bg_resolve, daemon=True).start()
-            except Exception:
-                pass  # auto-resolve must never block context delivery
+            except Exception as _e:
+                logger.debug("auto-resolve thread start failed, skipping", exc_info=True)  # auto-resolve must never block context delivery
             # VISION-01: record recently updated node IDs for auto-feedback
             try:
                 from project_brain.brain_db import BrainDB as _BDB2
@@ -270,8 +270,8 @@ def create_server(workdir: str) -> Any:
                 _wk2 = str(b.workdir)
                 with _snodes_lock:
                     _session_nodes[_wk2] = [r[0] for r in _recent_rows if r[0]]
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("session_nodes update failed", exc_info=True)
             return ctx
         except Exception as e:
             logger.error("get_context 內部錯誤：%s", e)
@@ -507,8 +507,8 @@ def create_server(workdir: str) -> Any:
                     )
                     if r.returncode == 0 and r.stdout.strip():
                         resolved_time = r.stdout.strip()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("git log date resolution failed in temporal_query", exc_info=True)
 
             edges = db.temporal_query(at_time=resolved_time, limit=limit)
             # FEAT-03: also return nodes valid at the given time
@@ -855,14 +855,14 @@ def create_server(workdir: str) -> Any:
                     "notes":      notes_clean,
                     "confidence": round(new_conf, 3),
                 })
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("knowledge_outcome event emit failed", exc_info=True)
             # DEEP-05: update adoption_count in knowledge_graph so F6 decay factor can use it
             if was_useful:
                 try:
                     b.graph.increment_adoption(node_id_clean)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("increment_adoption failed", exc_info=True)
 
             # If notes provided and node is now low-confidence, append note to content
             if notes_clean and not was_useful:
@@ -872,8 +872,8 @@ def create_server(workdir: str) -> Any:
                         (f"\n\n[Feedback {_now_iso()}: {notes_clean}]", node_id_clean),
                     )
                     db.conn.commit()
-                except Exception:
-                    pass  # non-critical
+                except Exception as _e:
+                    logger.debug("feedback note append failed", exc_info=True)  # non-critical
 
             return {
                 "ok":         True,
@@ -1014,8 +1014,8 @@ def create_server(workdir: str) -> Any:
                     d_clean = _safe_str(str(d), 500, "extra_brain_dirs[i]")
                     if d_clean and ".." not in d_clean:
                         dirs_to_query.append(d_clean)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("extra_brain_dirs entry parse failed", exc_info=True)
         else:
             # 3. Fall back to BRAIN_EXTRA_DIRS env var
             env_extra = os.environ.get("BRAIN_EXTRA_DIRS", "")
@@ -1038,7 +1038,8 @@ def create_server(workdir: str) -> Any:
             # Single brain — delegate to standard get_context
             try:
                 return primary_b.get_context(task_clean) or ""
-            except Exception:
+            except Exception as _e:
+                logger.debug("single brain get_context failed in answer_question", exc_info=True)
                 return ""
 
         # Query each brain

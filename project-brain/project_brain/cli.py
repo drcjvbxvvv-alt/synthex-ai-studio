@@ -9,7 +9,10 @@ CLI-01: Functions split into sub-modules:
     cli_fed.py       — federation and session commands
 """
 import sys, os
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # 保留兼容本地開發（python brain.py）
 _ROOT = Path(__file__).parent.parent
@@ -90,8 +93,8 @@ def cmd_add(args):
             b.graph._conn.execute(
                 "UPDATE nodes SET emotional_weight=? WHERE id=?", (ew, node_id))
             b.graph._conn.commit()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("emotional_weight update failed", exc_info=True)
     _ok(f"知識已加入：{C}{B}{node_id}{R}")
     _info(f"類型：{kind}  標題：{title}")
     if not getattr(args, 'quiet', False):
@@ -103,8 +106,8 @@ def cmd_add(args):
                 if p.get("new_id") == node_id:
                     print(f"  {Y}⚠ 相似知識已存在（相似度 {p['similarity']:.0%}）：{p['existing_id'][:16]}{R}")
                     print(f"  {D}  若確認重複請執行：brain dedup --execute{R}")
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("near_duplicate event check failed", exc_info=True)
         first_word = title.split()[0] if title.split() else title
         _info(f"查詢：{GR}brain ask \"{first_word}\"{R}")
 
@@ -131,8 +134,8 @@ def cmd_context(args):
                     print(f"  {Y}?{R}  {q['question']}")
                     print(f"     {GR}brain add --kind {q['node_type']} \"{q['question'][:40]}\"{R}")
                 print()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("nudge questions display failed", exc_info=True)
     if ctx:
         print(f"\n{C}{B}🧠  相關知識注入{R}\n{GR}{'─'*50}{R}")
         print(ctx)

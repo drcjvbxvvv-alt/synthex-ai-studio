@@ -31,6 +31,7 @@ project_brain/api_server.py — Project Brain REST API Server
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -151,7 +152,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not auth.startswith("Bearer "):
             self._json({"error": "未授權：需要 Authorization: Bearer <key>"}, 401)
             return False
-        if auth[7:].strip() != key:
+        if not hmac.compare_digest(auth[7:].strip(), key):
             self._json({"error": "未授權：API Key 不正確"}, 401)
             return False
         return True
@@ -301,8 +302,8 @@ class _Handler(BaseHTTPRequestHandler):
                 n_dep = g._conn.execute(
                     "SELECT COUNT(*) FROM nodes WHERE is_deprecated=1"
                 ).fetchone()[0]
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("deprecated nodes count query failed", exc_info=True)
 
             # Count by type
             by_type = stats.get("by_type", {})
@@ -411,8 +412,8 @@ class _Handler(BaseHTTPRequestHandler):
             if was_useful:
                 try:
                     g.increment_adoption(node_id)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("increment_adoption failed in api_server", exc_info=True)
             if notes and not was_useful:
                 try:
                     db.conn.execute(
@@ -420,8 +421,8 @@ class _Handler(BaseHTTPRequestHandler):
                         (f"\n\n[Feedback: {notes}]", node_id)
                     )
                     db.conn.commit()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("feedback note append failed in api_server", exc_info=True)
             self._json({
                 "ok": True, "node_id": node_id,
                 "was_useful": bool(was_useful),
@@ -656,8 +657,8 @@ class _Handler(BaseHTTPRequestHandler):
                 def _on_c(p):
                     try: evt_q.put_nowait(p)
                     except _q.Full: pass
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("event bus subscription failed in SSE handler", exc_info=True)
             _push("init")
             while True:
                 try:
@@ -747,8 +748,8 @@ def run_server(workdir: str, port: int = 7891, host: str = "0.0.0.0",
     # Pre-warm connections
     try:
         _tdb(str(workdir))
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("pre-warm connection failed", exc_info=True)
     logger.info("Project Brain API server started on %s:%s", host, port)
     try:
         server.serve_forever()

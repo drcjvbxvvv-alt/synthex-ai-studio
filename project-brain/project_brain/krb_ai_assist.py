@@ -507,8 +507,8 @@ class KRBAIAssistant:
                 expires = datetime.fromisoformat(row[0])
                 if datetime.now(timezone.utc) < expires:
                     return True
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("cache check failed", exc_info=True)
         return False
 
     def _cache_result(self, staged_id: str) -> None:

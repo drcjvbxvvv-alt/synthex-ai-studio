@@ -2,7 +2,10 @@
 import sys
 import os
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from project_brain.cli_utils import (
     R, B, D, G, Y, RE, C, P, GR, W,
     _workdir, _ok, _err, _info, _Spinner,
@@ -54,8 +57,8 @@ def cmd_init(args):
             (name,)
         )
         _db.conn.commit()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("project_name brain_meta write failed", exc_info=True)
 
     try:
         import json as _j
@@ -66,8 +69,8 @@ def cmd_init(args):
                 "範例術語": ["example_term", "sample"],
             }
             _syn_path.write_text(_j.dumps(_default_synonyms, ensure_ascii=False, indent=2), encoding='utf-8')
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("synonyms.json creation failed", exc_info=True)
 
 
 def cmd_status(args):
@@ -846,8 +849,8 @@ def cmd_doctor(args):
                            "執行：brain review list")
                 else:
                     _ok2("KRB 暫存區清空")
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("KRB pending check failed", exc_info=True)
 
     _section("Git 整合")
 

@@ -4,6 +4,48 @@
 
 ---
 
+## v0.12.0（2026-04-05）— 品質鞏固版
+
+本版本完成所有 P1 改善項目，測試套件從 15 個失敗降至 0（868 passed / 5 skipped）。
+
+### SEC-03 — API Key Timing Attack 修復
+
+- **`api_server.py`**：`auth[7:].strip() != key` → `not hmac.compare_digest(auth[7:].strip(), key)`
+- 防止透過計時差異推算 API key 前綴（OWASP A07）
+
+### BUG-D01 — 靜默例外消除（29 處）
+
+- 全專案清除 `except Exception: pass`，替換為適當的 `logger.error` / `logger.warning`
+- 涵蓋 18 個檔案，包括：`brain_db.py`（6 處）、`cli_knowledge.py`（7 處）、`graph.py`（5 處）、`federation.py`（4 處）、`engine.py`（3 處）等
+
+### BUG-D02 — Embedder Cache 競態修復
+
+- **`embedder.py`**：新增 `_embedder_lock = threading.Lock()`，保護 `_embedder_cache` 的所有讀寫路徑（5 處 cache write + 1 處 cache read）
+
+### BUG-E01 — `_search_batch` 截斷修復（False Negative）
+
+- **`context.py`**：`_search_batch(terms[:8])` → `_search_batch(terms)`（全詞傳遞，不截斷）
+- **`context.py`**：Rule 類節點配額 `limit=2` → `limit=3`
+- **`synonyms.py`**：新增 5 條 API 版本化同義詞（「版本」「版本號」「路徑」「header」「versioning」），條目總數 46 → 51
+- 修復 benchmark 召回測試案例 `api-01`（如何設計 API 版本號）的 False Negative
+
+### PERF-05 — Decay N+1 查詢批次化
+
+- **`decay_engine.py`**：`_detect_contradictions()` 由每對矛盾各一次 `SELECT confidence` 改為單次批次預取 `WHERE id IN (?)` dict；消除 N+1 查詢模式
+
+### TEST-01 — 修復全部失敗測試（15 → 0）
+
+- **`web_ui/server.py`**：`create_app()` 改為回傳真實 Flask WSGI app，修復 16 個 `AttributeError`
+- **`graph.py`**：`search_nodes()` FTS5 查詢加 `threading.Lock()`，修復並行讀取測試的 `bad parameter or other API misuse`
+- **`tests/unit/test_core.py`**：修復 4 個路徑（`/home/claude` → `Path(__file__).parent`）、lora 回傳值解包、embedding cache key 公式
+- **`tests/test_core.py`**：同步修復路徑與 lora 測試
+- **`tests/unit/test_arch_decisions_v06.py`**：同義詞數量 46 → 51
+- **`tests/unit/test_arch_decisions_v03.py`**：embedder cache 污染隔離
+- **`tests/chaos/test_chaos_and_load.py`**：修復硬編碼 `/home/claude/synthex_v10/brain.py` 路徑
+- **`tests/test_chaos_and_load.py`**：修復硬編碼 `/home/claude/synthex_v10` sys.path
+
+---
+
 ## v0.11.0（2026-04-04）— AI 全自主版
 
 ### KRB-01 — 自主審核（Autonomous KRB）

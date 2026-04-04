@@ -30,6 +30,12 @@ SYNONYM_MAP: dict = {
     "關係型":         ["postgresql","mysql","sql","acid","relational","table"],
     "migration":     ["遷移","migrate","schema","rollback","資料庫","升級"],
     "遷移":           ["migration","migrate","schema","rollback","資料庫"],
+    # API 版本化（BUG-E01 fix）
+    "版本":          ["versioning", "v1", "url", "path", "routing", "api version"],
+    "版本號":        ["versioning", "api version", "url", "path", "v1"],
+    "路徑":          ["url", "path", "endpoint", "route", "routing"],
+    "header":        ["http header", "accept", "content-type", "versioning"],
+    "versioning":    ["版本", "版本號", "url", "path", "v1"],
     # 通用技術
     "api":           ["endpoint","rest","http","request","response","接口"],
     "cache":         ["redis","memcached","快取","緩存"],

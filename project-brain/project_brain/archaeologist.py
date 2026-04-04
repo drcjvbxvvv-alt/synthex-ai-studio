@@ -19,9 +19,12 @@ import os
 import re
 import ast
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 from .extractor import KnowledgeExtractor
 from .graph import KnowledgeGraph
 
@@ -189,8 +192,8 @@ class ProjectArchaeologist:
                                 valid_from = commit_date or None,
                                 content    = f"commit {commit_hash[:8]} introduced {chunk['type']}: {chunk['title'][:60]}",
                             )
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            logger.debug("add_edge INTRODUCES failed", exc_info=True)
 
                 # 記錄依賴關係
                 for dep in result.get("dependencies_detected", []):

@@ -243,15 +243,15 @@ def build_index_from_graph(
             blob = sample[0]
             # float32 = 4 bytes per element
             dim  = len(blob) // 4
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("vector dim probe from db failed", exc_info=True)
 
     if dim == 0 and embedder is not None:
         try:
             test_vec = embedder.embed("test")
             dim = len(test_vec)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("vector dim probe from embedder failed", exc_info=True)
 
     if dim == 0:
         # 無法確定維度，預設 768
@@ -294,8 +294,8 @@ def build_index_from_graph(
                         continue
                     index.add(node_id, vec)
                     indexed += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("ann_index add from stored vector failed", exc_info=True)
             elif embedder is not None:
                 # 節點沒有預存 embedding，即時計算
                 text = (row[1] or "") + " " + (row[2] or "")
@@ -304,8 +304,8 @@ def build_index_from_graph(
                     if vec and len(vec) == dim:
                         index.add(node_id, vec)
                         indexed += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("ann_index add from on-the-fly embed failed", exc_info=True)
 
         offset += batch_size
 

@@ -224,8 +224,8 @@ class BrainRouter:
                 logger.warning("l3_sync_failed, rolling back l1a: %s", str(e)[:100])
                 try:
                     self.l1a.delete(l1a_key)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("l1a rollback delete failed", exc_info=True)
                 return False
 
         # A-4 fix: L1b (Anthropic Memory Tool) bridge removed — dir_path was

@@ -380,8 +380,8 @@ class KnowledgeValidator:
                     found_any = True
                 else:
                     missing.append(ref)
-            except Exception:
-                pass  # grep 失敗不影響主流程
+            except Exception as _e:
+                logger.debug("grep ref check failed", exc_info=True)  # grep 失敗不影響主流程
 
         if missing and not found_any:
             # 所有引用都找不到 → 可能是過期知識
@@ -417,8 +417,8 @@ class KnowledgeValidator:
                 ).days
                 if age < MIN_AGE_DAYS_FOR_AI:
                     return False
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("node age check failed", exc_info=True)
 
         # 快取檢查（7 天內已驗證的不重複驗證）
         content_hash = hashlib.sha256(
@@ -570,8 +570,8 @@ class KnowledgeValidator:
                 if datetime.now(timezone.utc) < expires:
                     return True
             conn.close()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("validation cache check failed", exc_info=True)
         return False
 
     def _cache_result(self, content_hash: str, result: dict) -> None:

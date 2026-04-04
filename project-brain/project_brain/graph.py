@@ -8,6 +8,7 @@ KnowledgeGraph — 輕量知識圖譜
 import logging
 import sqlite3
 import json
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -52,6 +53,7 @@ class KnowledgeGraph:
 
     def __init__(self, brain_dir: Path):
         self.db_path = brain_dir / "knowledge_graph.db"
+        self._lock = threading.Lock()  # serialise concurrent SQLite access
         # ARCH-02: single shared connection — no per-thread fd leak
         self._conn_obj: sqlite3.Connection = self._make_connection()
         self._setup_schema()
@@ -198,8 +200,8 @@ class KnowledgeGraph:
                 WHERE id = ?
             """, (node_id,))
             self._conn.commit()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("record_access failed for node %s", node_id, _e)
 
     def increment_adoption(self, node_id: str) -> None:
         """DEEP-05: 記錄知識被採用（useful=True 時增加 adoption_count，影響 F6 衰減因子）"""
@@ -209,8 +211,8 @@ class KnowledgeGraph:
                 (node_id,)
             )
             self._conn.commit()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("increment_adoption failed for node %s", node_id, _e)
 
     # ── 節點操作 ──────────────────────────────────────────────────
 
@@ -322,8 +324,8 @@ class KnowledgeGraph:
                     "SELECT rowid, id, ?, ?, tags FROM nodes WHERE id=?",
                     (self._ngram_text(new_title), self._ngram_text(new_content), node_id)
                 )
-            except Exception:
-                pass  # FTS5 同步失敗不影響主流程
+            except Exception as _e:
+                logger.error("FTS5 sync failed in update_node: %s", _e)  # FTS5 同步失敗不影響主流程
 
         self._conn.commit()
         return True
@@ -419,7 +421,8 @@ class KnowledgeGraph:
                         (fts_q, limit),
                     ).fetchall()
                 return [dict(r) for r in rows]
-            except Exception:
+            except Exception as _e:
+                logger.error("FTS5 multi-search failed, falling back to LIKE: %s", _e)
                 # FTS5 error: fall back to first few terms via LIKE
                 for term in safe[:5]:
                     results = self.search_nodes(term, node_type=node_type, limit=limit)
@@ -429,23 +432,24 @@ class KnowledgeGraph:
 
         # Step 1: FTS5 精準查詢
         rows = []
-        try:
-            if node_type:
-                rows = self._conn.execute("""
-                    SELECT n.* FROM nodes n
-                    JOIN nodes_fts f ON f.id = n.id
-                    WHERE nodes_fts MATCH ? AND n.type = ?
-                    ORDER BY rank LIMIT ?
-                """, (query, node_type, limit)).fetchall()
-            else:
-                rows = self._conn.execute("""
-                    SELECT n.* FROM nodes n
-                    JOIN nodes_fts f ON f.id = n.id
-                    WHERE nodes_fts MATCH ?
-                    ORDER BY rank LIMIT ?
-                """, (query, limit)).fetchall()
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                if node_type:
+                    rows = self._conn.execute("""
+                        SELECT n.* FROM nodes n
+                        JOIN nodes_fts f ON f.id = n.id
+                        WHERE nodes_fts MATCH ? AND n.type = ?
+                        ORDER BY rank LIMIT ?
+                    """, (query, node_type, limit)).fetchall()
+                else:
+                    rows = self._conn.execute("""
+                        SELECT n.* FROM nodes n
+                        JOIN nodes_fts f ON f.id = n.id
+                        WHERE nodes_fts MATCH ?
+                        ORDER BY rank LIMIT ?
+                    """, (query, limit)).fetchall()
+            except Exception as _e:
+                logger.error("FTS5 search failed in search_nodes: %s", _e)
 
         if rows:
             result = [dict(r) for r in rows]
@@ -460,19 +464,20 @@ class KnowledgeGraph:
         results:  list = []
         for word in words:
             pattern = f"%{word}%"
-            if node_type:
-                rows = self._conn.execute("""
-                    SELECT * FROM nodes
-                    WHERE (title LIKE ? OR content LIKE ?)
-                      AND type = ?
-                    LIMIT ?
-                """, (pattern, pattern, node_type, limit)).fetchall()
-            else:
-                rows = self._conn.execute("""
-                    SELECT * FROM nodes
-                    WHERE title LIKE ? OR content LIKE ?
-                    LIMIT ?
-                """, (pattern, pattern, limit)).fetchall()
+            with self._lock:
+                if node_type:
+                    rows = self._conn.execute("""
+                        SELECT * FROM nodes
+                        WHERE (title LIKE ? OR content LIKE ?)
+                          AND type = ?
+                        LIMIT ?
+                    """, (pattern, pattern, node_type, limit)).fetchall()
+                else:
+                    rows = self._conn.execute("""
+                        SELECT * FROM nodes
+                        WHERE title LIKE ? OR content LIKE ?
+                        LIMIT ?
+                    """, (pattern, pattern, limit)).fetchall()
             for r in rows:
                 d = dict(r)
                 if d["id"] not in seen_ids:
@@ -1068,8 +1073,8 @@ class KnowledgeGraph:
                             "confidence": r["confidence"] or 0.8,
                             "reason": f"依賴受影響節點（{n.get('title','')[:30]}）",
                         })
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("impact analysis graph traversal failed: %s", _e)
         # DEEP-03 補完: compute impact_score based on confidence and edge distance
         for idx, item in enumerate(affected):
             distance = 0 if item["reason"] == "直接匹配假設條件" else 1

@@ -234,18 +234,21 @@ class DecayEngine:
                 _bdb_cr   = _BDB_CR(self.workdir / ".brain")
                 _resolver = ConflictResolver(_bdb_cr, self.graph)
                 _contr_def = self._params.get("contradiction_penalty", CONTRADICTION_PENALTY)
+                # PERF-05: batch-fetch all contradiction node confidences in one query
+                _contr_ids = list({nid for pair in contradiction_pairs for nid in pair})
+                _ph = ",".join("?" * len(_contr_ids))
+                _conf_map: dict[str, float] = {
+                    r["id"]: float(r["confidence"] or 0.8)
+                    for r in self.graph._conn.execute(
+                        f"SELECT id, confidence FROM nodes WHERE id IN ({_ph})",
+                        _contr_ids,
+                    ).fetchall()
+                }
                 for _pair in contradiction_pairs:
                     _nid_a, _nid_b = list(_pair)[:2]
                     _res = _resolver.arbitrate(_nid_a, _nid_b)
-                    # 讀取原始 confidence
-                    _row_a = self.graph._conn.execute(
-                        "SELECT confidence FROM nodes WHERE id=?", (_nid_a,)
-                    ).fetchone()
-                    _row_b = self.graph._conn.execute(
-                        "SELECT confidence FROM nodes WHERE id=?", (_nid_b,)
-                    ).fetchone()
-                    _ca = float((_row_a or [0.8])[0] or 0.8)
-                    _cb = float((_row_b or [0.8])[0] or 0.8)
+                    _ca = _conf_map.get(_nid_a, 0.8)
+                    _cb = _conf_map.get(_nid_b, 0.8)
                     _fa, _fb = _resolver.apply_resolution(_res, _ca, _cb, _contr_def)
                     _pair_factors[_nid_a] = _fa
                     _pair_factors[_nid_b] = _fb
@@ -507,8 +510,8 @@ class DecayEngine:
                                      "Auto-detected by DecayEngine F4")
                                 )
                                 self.graph._conn.commit()
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            logger.debug("CONFLICTS_WITH edge add failed", exc_info=True)
                         break
 
         logger.debug("偵測到 %d 對矛盾知識", len(pairs))

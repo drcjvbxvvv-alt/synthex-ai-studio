@@ -132,14 +132,22 @@ class TestMultilingualEmbedderPriority(unittest.TestCase):
 
     def test_ollama_fallback_when_multilingual_unavailable(self):
         """MultilingualEmbedder 不可用時，應回落到 OllamaEmbedder。"""
+        import project_brain.embedder as _emb_mod
         from project_brain.embedder import get_embedder, MultilingualEmbedder, OllamaEmbedder
 
         mock_vec = [0.1] * 768
 
-        with patch.object(MultilingualEmbedder, "is_available", return_value=False), \
-             patch.object(OllamaEmbedder, "is_available", return_value=True), \
-             patch.object(OllamaEmbedder, "embed", return_value=mock_vec):
-            result = get_embedder()
+        # Clear module-level cache so is_available() is actually evaluated
+        saved_cache = dict(_emb_mod._embedder_cache)
+        _emb_mod._embedder_cache.clear()
+        try:
+            with patch.object(MultilingualEmbedder, "is_available", return_value=False), \
+                 patch.object(OllamaEmbedder, "is_available", return_value=True), \
+                 patch.object(OllamaEmbedder, "embed", return_value=mock_vec):
+                result = get_embedder()
+        finally:
+            _emb_mod._embedder_cache.clear()
+            _emb_mod._embedder_cache.update(saved_cache)
 
         self.assertIsInstance(result, OllamaEmbedder,
                               "Multilingual 不可用時應回落到 OllamaEmbedder（v0.3.0 決策）")

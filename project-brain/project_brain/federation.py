@@ -351,8 +351,8 @@ class FederationImporter:
             ).fetchone()
             if row:
                 return True
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("exact title dedup check failed: %s", _e)
 
         # Jaccard token 比對（只查前 200 筆避免全表掃描）
         title_tokens = set(re.findall(r'\w+', title.lower()))
@@ -372,8 +372,8 @@ class FederationImporter:
                 jaccard = len(title_tokens & existing_tokens) / len(union)
                 if jaccard > 0.8:
                     return True
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("Jaccard dedup check failed: %s", _e)
 
         # FED-02: semantic similarity check via TF-IDF cosine
         try:
@@ -394,8 +394,8 @@ class FederationImporter:
                 sims = _cos_sim(matrix[0:1], matrix[1:]).flatten()
                 if sims.max() >= 0.82:
                     return True
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("TF-IDF semantic dedup check failed: %s", _e)
 
         return False
 
@@ -426,8 +426,8 @@ class SubscriptionManager:
         try:
             if self._cfg_path.exists():
                 return json.loads(self._cfg_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("federation config load failed: %s", _e)
         return {"subscriptions": [], "blocked_sources": []}
 
     def _save(self, cfg: dict) -> None:

@@ -2,7 +2,10 @@
 import sys
 import os
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from project_brain.cli_utils import (
     R, B, D, G, Y, RE, C, P, GR, W,
     _workdir, _ok, _err, _info, _Spinner,
@@ -110,8 +113,8 @@ def cmd_add(args):
             b.graph._conn.execute(
                 "UPDATE nodes SET emotional_weight=? WHERE id=?", (ew, node_id))
             b.graph._conn.commit()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("emotional_weight update failed: %s", _e)
     _ok(f"知識已加入：{C}{B}{node_id}{R}")
     _info(f"類型：{kind}  標題：{title}")
     if not getattr(args, 'quiet', False):
@@ -123,8 +126,8 @@ def cmd_add(args):
                 if p.get("new_id") == node_id:
                     print(f"  {Y}⚠ 相似知識已存在（相似度 {p['similarity']:.0%}）：{p['existing_id'][:16]}{R}")
                     print(f"  {D}  若確認重複請執行：brain dedup --execute{R}")
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("near_duplicate event check failed: %s", _e)
         first_word = title.split()[0] if title.split() else title
         _info(f"查詢：{GR}brain ask \"{first_word}\"{R}")
 
@@ -324,8 +327,8 @@ def cmd_ask(args):
         chain = ce._build_causal_chain([n["id"] for n in hits[:3]], db=db)
         if chain:
             print(chain)
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("causal chain build failed in cmd_ask: %s", _e)
 
 
 def cmd_context(args):
@@ -350,8 +353,8 @@ def cmd_context(args):
                     print(f"  {Y}?{R}  {q['question']}")
                     print(f"     {GR}brain add --kind {q['node_type']} \"{q['question'][:40]}\"{R}")
                 print()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("nudge questions generation failed: %s", _e)
     if ctx:
         print(f"\n{C}{B}🧠  相關知識注入{R}\n{GR}{'─'*50}{R}")
         print(ctx)
@@ -434,8 +437,8 @@ def cmd_sync(args):
             linked = db.link_episode_to_nodes(ep, f"{message} {commit}")
             if linked > 0 and not quiet:
                 _info(f"L2→L3 連結 {linked} 個相關知識節點")
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("link_episode_to_nodes failed in sync: %s", _e)
 
         try:
             from project_brain.engine import ProjectBrain
@@ -443,8 +446,8 @@ def cmd_sync(args):
             learned = brain.learn_from_commit("HEAD")
             if learned > 0 and not quiet:
                 _info(f"L3 新增 {learned} 筆知識")
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("learn_from_commit failed in sync: %s", _e)
 
         if not quiet:
             _ok(f"Synced commit {commit}: {message[:50]}")
@@ -571,8 +574,8 @@ def _at_snapshot(db, at_str: str, workdir: str = "") -> None:
                 )
                 if r.returncode == 0 and r.stdout.strip():
                     resolved = r.stdout.strip()
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("git log date resolution failed: %s", _e)
 
     nodes = db.nodes_at_time(resolved, limit=50)
     print(f"\n{B}{C}  知識快照 — {resolved[:19]}{R}  {D}({len(nodes)} 個有效節點){R}")
@@ -874,8 +877,8 @@ def cmd_counterfactual(args):
                 if r["id"] not in seen_ids:
                     seen_ids.add(r["id"])
                     affected.append(dict(r))
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("counterfactual edge query failed: %s", _e)
 
     print(f"\n{C}{B}🔮  反事實分析：{hypothesis}{R}\n{GR}{'─'*50}{R}")
     if not affected:

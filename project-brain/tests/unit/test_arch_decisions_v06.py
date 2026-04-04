@@ -8,8 +8,8 @@ v0.6.0 架構決策驗收測試
             → NudgeEngine 接受 brain_db 參數（BrainDB bridge）
             → 搜尋失敗時回傳空 list，不拋例外
 
-  決策 K-2：Synonym Map 兩表均擴展至 46 條，keys 完全一致
-            → brain_db._SYNONYM_MAP 和 context.py._SYNONYM_MAP 均有 46 條
+  決策 K-2：Synonym Map 兩表均擴展至 51 條，keys 完全一致
+            → brain_db._SYNONYM_MAP 和 context.py._SYNONYM_MAP 均有 51 條
             → 兩表 keys 集合完全相同
 
   決策 K-3：brain config 單一指令顯示所有 6 處設定來源
@@ -96,27 +96,27 @@ class TestNudgeEngineSilentFailureElimination(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# 決策 K-2：Synonym Map 46 條，keys 完全一致
+# 決策 K-2：Synonym Map 51 條，keys 完全一致
 # ══════════════════════════════════════════════════════════════════════
 
 class TestSynonymMapSync(unittest.TestCase):
     """v0.6.0：brain_db 和 context 兩個 Synonym Map 必須完全同步。"""
 
-    def test_brain_db_synonym_map_has_46_entries(self):
-        """brain_db._SYNONYM_MAP 應有 46 個條目。"""
+    def test_brain_db_synonym_map_has_51_entries(self):
+        """brain_db._SYNONYM_MAP 應有 51 個條目。"""
         from project_brain.brain_db import _SYNONYM_MAP
         self.assertEqual(
-            len(_SYNONYM_MAP), 46,
-            f"brain_db._SYNONYM_MAP 應有 46 條（v0.6.0 SYNC-01 決策），實際 {len(_SYNONYM_MAP)}",
+            len(_SYNONYM_MAP), 51,
+            f"brain_db._SYNONYM_MAP 應有 51 條（v0.6.0 SYNC-01 決策），實際 {len(_SYNONYM_MAP)}",
         )
 
-    def test_context_synonym_map_has_46_entries(self):
-        """context.py ContextEngineer._SYNONYM_MAP 應有 46 個條目。"""
+    def test_context_synonym_map_has_51_entries(self):
+        """context.py ContextEngineer._SYNONYM_MAP 應有 51 個條目。"""
         from project_brain.context import ContextEngineer
         # _SYNONYM_MAP 是 class attribute
         self.assertEqual(
-            len(ContextEngineer._SYNONYM_MAP), 46,
-            f"ContextEngineer._SYNONYM_MAP 應有 46 條（v0.6.0 SYNC-01 決策），"
+            len(ContextEngineer._SYNONYM_MAP), 51,
+            f"ContextEngineer._SYNONYM_MAP 應有 51 條（v0.6.0 SYNC-01 決策），"
             f"實際 {len(ContextEngineer._SYNONYM_MAP)}",
         )
 

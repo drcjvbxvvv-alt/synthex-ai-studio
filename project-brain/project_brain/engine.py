@@ -299,8 +299,8 @@ class ProjectBrain:
                     for chunk in r.get("knowledge_chunks", []):
                         self._store_chunk(chunk, r.get("_meta", {}))
                         learned += 1
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("git history extraction failed during init: %s", _e)
 
         # ── 組裝輸出 ─────────────────────────────────────────
         if has_git and commit_count > 0:
@@ -582,8 +582,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                     cleaned = [l for l in lines
                                if not any(eid in l for eid in _linked)]
                     raw = '\n'.join(cleaned)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("episode dedup filter failed in git_log_raw: %s", _e)
 
         return raw
 
@@ -695,8 +695,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                 _vec  = _emb.embed(_text)
                 if _vec:
                     self.db.add_vector(node_id, _vec, model=getattr(_emb, 'MODEL', 'unknown'))
-        except Exception:
-            pass  # embedding failure must never block add_knowledge
+        except Exception as _e:
+            logger.warning("embedding failed for node %s", node_id, _e)  # embedding failure must never block add_knowledge
 
         # P3: near-duplicate check against FTS5 candidates (lightweight, non-blocking)
         try:
@@ -723,8 +723,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                     "new_id": node_id, "existing_id": _dup_id,
                     "similarity": _sim, "kind": kind,
                 })
-        except Exception:
-            pass  # dedup check must never block add_knowledge
+        except Exception as _e:
+            logger.warning("dedup check failed for node %s", node_id, _e)  # dedup check must never block add_knowledge
 
         return node_id
     def query(self, task: str, current_file: str = "",
@@ -752,8 +752,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                 _emb = get_embedder()
                 if _emb:
                     _vec = _emb.embed(task)
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("query embedder failed: %s", _e)
             nodes = self.db.hybrid_search(task, query_vector=_vec, scope=scope, limit=10)
             if not nodes:
                 return ContextResult.empty(scope=scope)
@@ -762,8 +762,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                 try:
                     self.db.record_access(n["id"])
                     self.db.record_feedback(n["id"], helpful=True)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.warning("record_access/feedback failed: %s", _e)
             # Build causal chain
             from .context import ContextEngineer
             cb    = ContextEngineer(self.graph, brain_dir=self.brain_dir,
@@ -778,8 +778,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                 from .nudge_engine import NudgeEngine
                 nudges = NudgeEngine(self.graph, brain_db=self._db).check(task, top_k=3)
                 nudge_msgs = [getattr(n,"message","") or str(n) for n in nudges]
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("nudge engine failed in query: %s", _e)
             avg_conf = sum(n.get("confidence",0.8) for n in nodes) / len(nodes)
             # A-19: opt-in Memory Synthesizer (BRAIN_SYNTHESIZE=1)
             from .memory_synthesizer import MemorySynthesizer, is_enabled
@@ -792,18 +792,18 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                         ss = SessionStore(brain_dir=self.brain_dir)
                         l1_data = [{"content": e.value, "category": e.category}
                                    for e in ss.list(limit=5)]
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.warning("session store L1 read failed: %s", _e)
                     # Read L2: recent episodes
                     l2_data = []
                     try:
                         l2_data = self.db.recent_episodes(limit=5)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.warning("recent_episodes L2 read failed: %s", _e)
                     synth = MemorySynthesizer(str(self.workdir))
                     ctx   = synth.fuse(l1_data, l2_data, ctx, task=task) or ctx
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.warning("MemorySynthesizer fuse failed: %s", _e)
             return ContextResult(
                 context       = ctx,
                 source_count  = len(nodes),
@@ -813,7 +813,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                 causal_chains = chain.count("\n") if chain else 0,
                 nudges        = nudge_msgs,
             )
-        except Exception:
+        except Exception as _e:
+            logger.warning("query() failed, returning empty context: %s", _e)
             return ContextResult.empty(scope=scope)
 
     def status(self) -> str:
@@ -919,8 +920,8 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                     confidence = chunk.get("confidence", 0.8),
                     valid_from = meta["date"],
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("db.add_node sync in _store_chunk failed: %s", _e)
 
 
 

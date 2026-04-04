@@ -9,10 +9,13 @@ One command does everything:
 """
 from __future__ import annotations
 import json
+import logging
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def generate_claude_md(workdir: str) -> str:
@@ -166,8 +169,8 @@ def run_setup(workdir: str = ".") -> bool:
             claude_dir.mkdir(exist_ok=True)
             claude_md.write_text(generate_claude_md(str(wd)))
             print(f"  {G}OK{R}  .claude/CLAUDE.md created  {D}(Claude Code auto-context){R}")
-        except Exception:
-            pass  # non-critical
+        except Exception as _e:
+            logger.debug("CLAUDE.md creation failed", exc_info=True)  # non-critical
     else:
         print(f"  {Y}??{R}  No git repo found -- skipping hook")
 
@@ -202,8 +205,8 @@ def run_setup(workdir: str = ".") -> bool:
             data["mcpServers"]["project-brain"] = mcp_entry
             cursor_cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2))
             installed.append("Cursor")
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Cursor MCP config install failed", exc_info=True)
 
     if installed:
         print(f"  {G}OK{R}  MCP installed  {D}({', '.join(installed)} -- restart required){R}")

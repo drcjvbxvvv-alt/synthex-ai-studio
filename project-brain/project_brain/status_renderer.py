@@ -6,9 +6,12 @@ core/brain/status_renderer.py — Project Brain status 彩色輸出渲染器
   與業務邏輯分離，易於測試和修改樣式。
 """
 from __future__ import annotations
+import logging
 import os, sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 # ── ANSI 顏色 ─────────────────────────────────────────────────
 RESET  = "\033[0m"
@@ -212,8 +215,8 @@ def render_status(
         node_count = graph._conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
         edge_count = graph._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
         lines.append(f"  {OK}  知識節點  {WHITE}{BOLD}{node_count}{RESET}  │  因果邊  {WHITE}{BOLD}{edge_count}{RESET}")
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("node/edge count query failed in status_renderer", exc_info=True)
 
     # Scope distribution
     try:
@@ -223,8 +226,8 @@ def render_status(
         if scopes and any(row['scope'] != 'global' for row in scopes):
             scope_str = "  ".join(f"{row['scope']}({row['c']})" for row in scopes)
             lines.append(f"  {INFO}  作用域分布  {GRAY}{scope_str}{RESET}")
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("scope distribution query failed in status_renderer", exc_info=True)
 
     # Memory Synthesizer
     import os as _os
@@ -248,8 +251,8 @@ def render_status(
             if _pending > 0:
                 lines.append(f"\n{YELLOW}{BOLD}  ⚠  KRB Staging：{_pending} 筆待審知識{RESET}")
                 lines.append(f"  {DIM}  執行 brain review list 查看並核准{RESET}")
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("KRB pending count query failed in status_renderer", exc_info=True)
 
     # ── FLY-03 飛輪健康度 ────────────────────────────────────
     _bdb2 = Path(brain_dir) / "brain.db"
@@ -279,8 +282,8 @@ def render_status(
                     _pt = str(_p[0])[:40]
                     _ac = _p[1]
                     lines.append(f"    {RED}⚠{RESET}  {WHITE}{_pt}{RESET}  {GRAY}×{_ac}{RESET}")
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("flywheel health query failed in status_renderer", exc_info=True)
 
     # ── 頁尾 ──────────────────────────────────────────────────
     lines.append(f"\n{hr('═')}")

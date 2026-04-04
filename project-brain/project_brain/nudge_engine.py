@@ -137,8 +137,8 @@ class NudgeEngine:
                     "count":    len(result),
                     "node_ids": [n.node_id for n in result],
                 })
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("nudge_triggered event emit failed", exc_info=True)
         # OBS-01: structured log for observability
         if result:
             logger.info(
@@ -222,8 +222,8 @@ class NudgeEngine:
                         vu = vu.replace(tzinfo=timezone.utc)
                     if vu < now:
                         continue
-                except Exception:
-                    pass  # malformed date — include the nudge to be safe
+                except Exception as _e:
+                    logger.debug("valid_until date parse failed, including nudge to be safe", exc_info=True)  # malformed date — include the nudge to be safe
             # BUG-02 fix ③: use explicit None-check instead of `or` so that
             # confidence=0.0 is not silently promoted to 0.7.
             raw_conf  = r.get("confidence")

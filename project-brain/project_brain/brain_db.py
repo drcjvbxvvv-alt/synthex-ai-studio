@@ -343,7 +343,8 @@ class BrainDB:
             access = int(node.get("access_count") or 0)
             f7     = min(0.15, access / 10 * 0.05)   # F7: access-count bonus
             return max(0.05, min(1.0, base * decay + f7))
-        except Exception:
+        except Exception as _e:
+            logger.error("decay score calculation failed: %s", _e)
             return base
 
     @contextlib.contextmanager
@@ -472,8 +473,8 @@ class BrainDB:
                     "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
                     (node_id, self._ngram(title), self._ngram(content), tags_json)
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.error("FTS index update failed in add_node: %s", _e)
             self.conn.commit()
         return node_id
 
@@ -507,8 +508,8 @@ class BrainDB:
                      ex.get("confidence"), ex.get("tags","[]"),
                      changed_by, change_note, "update")
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.error("node_history snapshot failed: %s", _e)
             self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
             if title is not None or content is not None:
                 nt = title   if title   is not None else ex["title"]
@@ -519,8 +520,8 @@ class BrainDB:
                         "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
                         (node_id, self._ngram(nt), self._ngram(nc), ex.get("tags","[]"))
                     )
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.error("FTS index update failed in update_node: %s", _e)
             self.conn.commit()
         # OPT-10 fix: evict stale embedder cache entries when content changes
         if content is not None:
@@ -530,8 +531,8 @@ class BrainDB:
                     (ex.get("content") or "").encode()
                 ).hexdigest()
                 _TFIDF_CACHE.pop(old_key, None)
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.error("embedder cache eviction failed: %s", _e)
         return True
 
     def get_node(self, node_id: str):
@@ -600,10 +601,11 @@ class BrainDB:
                     (query[:500], len(results), round(_ms, 2)),
                 )
                 self.conn.commit()
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.error("trace insert failed in search_nodes: %s", _e)
             return results
-        except Exception:
+        except Exception as _e:
+            logger.error("search_nodes failed: %s", _e)
             return []
 
     def prune_episodes(self, older_than_days: int = 365) -> int:
@@ -736,8 +738,8 @@ class BrainDB:
                 (node_id,)
             ).fetchall()
             replaced_by = [r[0] for r in rows]
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("REPLACED_BY edges query failed: %s", _e)
         status = "deprecated" if node.get("is_deprecated") else "active"
         return {
             "node_id":      node_id,
@@ -1034,8 +1036,8 @@ class BrainDB:
                         )
                         linked += 1
                     return linked
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("link_episode strategy A failed: %s", _e)
 
         # Strategy B: FTS5 keyword overlap fallback
         try:
@@ -1050,8 +1052,8 @@ class BrainDB:
                         content=f'auto-linked (fts overlap={overlap:.2f})'
                     )
                     linked += 1
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("link_episode strategy B failed: %s", _e)
         return linked
 
     def get_episode_links(self, episode_id: str) -> list:
@@ -1265,8 +1267,8 @@ class BrainDB:
                         dt = dt.replace(tzinfo=timezone.utc)
                     if now > dt:
                         expired += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.error("valid_until date parse failed: %s", _e)
             if not n.get("is_pinned"):
                 created = n.get("created_at", "")
                 try:
@@ -1275,8 +1277,8 @@ class BrainDB:
                         dt = dt.replace(tzinfo=timezone.utc)
                     if (now - dt).days > 90 and float(n.get("confidence", 0.8)) < 0.5:
                         stale += 1
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.error("created_at date parse failed: %s", _e)
 
         avg_conf    = round(sum(confs) / len(confs), 3) if confs else 0.0
         low_conf    = sum(1 for c in confs if c < 0.4)
@@ -1284,12 +1286,12 @@ class BrainDB:
         fts_count = vec_count = 0
         try:
             fts_count = self.conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("fts count query failed: %s", _e)
         try:
             vec_count = self.conn.execute("SELECT COUNT(*) FROM node_vectors").fetchone()[0]
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.error("vector count query failed: %s", _e)
 
         episodes = self.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
         sessions = self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
@@ -1651,7 +1653,7 @@ class BrainDB:
                     try:
                         meta = {}
                         try: meta = json.loads(d.get("meta") or "{}")
-                        except Exception: pass
+                        except Exception as _e: logger.error("meta json parse failed in migration: %s", _e)
                         self.add_node(d["id"], d["type"], d["title"],
                                       content=d.get("content",""),
                                       confidence=d.get("confidence", 0.8),
@@ -1659,7 +1661,7 @@ class BrainDB:
                                       emotional_weight=d.get("emotional_weight", 0.5),
                                       meta=meta)
                         imported["nodes"] += 1
-                    except Exception: pass
+                    except Exception as _e: logger.error("node migration row failed: %s", _e)
                 old.close()
             except Exception as e:
                 logger.warning("Legacy node migration: %s", e)
@@ -1679,7 +1681,7 @@ class BrainDB:
                                  str(d.get("value","")), str(d.get("category","general")))
                             )
                             imported["sessions"] += 1
-                    except Exception: pass
+                    except Exception as _e: logger.error("session migration table failed: %s", _e)
                 old.close()
             except Exception as e:
                 logger.warning("Legacy session migration: %s", e)
@@ -1693,7 +1695,7 @@ class BrainDB:
                         self.emit(d.get("event_type","legacy"),
                                   json.loads(d.get("payload") or "{}"))
                         imported["events"] += 1
-                    except Exception: pass
+                    except Exception as _e: logger.error("event migration row failed: %s", _e)
                 old.close()
             except Exception as e:
                 logger.warning("Legacy event migration: %s", e)

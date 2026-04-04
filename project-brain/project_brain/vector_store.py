@@ -103,8 +103,8 @@ class VectorStore:
                     break
             return results
 
-        except Exception:
-            pass  # fall through to pure-Python path
+        except Exception as _e:
+            logger.debug("sqlite-vec path failed, falling back to pure-Python", exc_info=True)  # fall through to pure-Python path
 
         # ── Path B: pure-Python cosine similarity ─────────────────
         try:

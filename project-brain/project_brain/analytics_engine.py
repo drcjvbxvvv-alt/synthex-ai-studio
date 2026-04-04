@@ -14,9 +14,12 @@ project_brain/analytics_engine.py — ROI 指標計算引擎（PH1-05）
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class AnalyticsEngine:
@@ -97,8 +100,8 @@ class AnalyticsEngine:
                 total += 1
                 if p.get("was_useful"):
                     useful += 1
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("feedback payload parse failed", exc_info=True)
 
         return round(useful / total, 3) if total else None
 

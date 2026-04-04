@@ -346,7 +346,8 @@ class TestKnowledgeDistiller(unittest.TestCase):
         """LoRA 蒸餾應生成 JSONL 訓練數據"""
         from project_brain.knowledge_distiller import KnowledgeDistiller
         d    = KnowledgeDistiller(self.graph, Path(self.tmpdir))
-        path = d._distill_lora_dataset(d._get_all_nodes())
+        result = d._distill_lora_dataset(d._get_all_nodes())
+        path = result[0] if isinstance(result, tuple) else result
         self.assertTrue(path.exists())
         lines = path.read_text(encoding="utf-8").strip().split("\n")
         self.assertGreater(len(lines), 0)
@@ -1488,13 +1489,13 @@ class TestEngineWithMockedLLM:
         r = subprocess.run(
             [sys.executable, "brain.py", "setup", "--workdir", str(tmp_path)],
             capture_output=True, text=True,
-            cwd="/home/claude/project-brain"
+            cwd=str(Path(__file__).parent.parent.parent)
         )
         r2 = subprocess.run(
             [sys.executable, "brain.py", "add",
              "--workdir", str(tmp_path), "JWT 必須使用 RS256"],
             capture_output=True, text=True,
-            cwd="/home/claude/project-brain"
+            cwd=str(Path(__file__).parent.parent.parent)
         )
         assert r2.returncode == 0, f"add positional failed: {r2.stderr}"
 
@@ -1777,7 +1778,7 @@ class TestB24RealUserPath:
         r1 = subprocess.run(
             ['python','brain.py','setup','--workdir',str(tmp_path)],
             capture_output=True, text=True,
-            cwd='/home/claude/project-brain'
+            cwd=str(Path(__file__).parent.parent.parent)
         )
         assert r1.returncode == 0, f"setup failed: {r1.stderr}"
         assert (tmp_path / '.brain').exists(), ".brain dir not created"
@@ -1787,7 +1788,7 @@ class TestB24RealUserPath:
             ['python','brain.py','add','--workdir',str(tmp_path),
              'JWT 必須使用 RS256，不能用 HS256'],
             capture_output=True, text=True,
-            cwd='/home/claude/project-brain'
+            cwd=str(Path(__file__).parent.parent.parent)
         )
         assert r2.returncode == 0, f"add failed: {r2.stderr}"
         out2 = strip(r2.stdout)
@@ -1799,7 +1800,7 @@ class TestB24RealUserPath:
         r3 = subprocess.run(
             ['python','brain.py','ask','--workdir',str(tmp_path),'JWT'],
             capture_output=True, text=True,
-            cwd='/home/claude/project-brain'
+            cwd=str(Path(__file__).parent.parent.parent)
         )
         assert r3.returncode == 0, f"ask failed: {r3.stderr}"
         out3 = strip(r3.stdout)
@@ -1812,7 +1813,7 @@ class TestB24RealUserPath:
         r4 = subprocess.run(
             ['python','brain.py','status','--workdir',str(tmp_path)],
             capture_output=True, text=True,
-            cwd='/home/claude/project-brain'
+            cwd=str(Path(__file__).parent.parent.parent)
         )
         assert r4.returncode == 0, f"status failed: {r4.stderr}"
         out4 = strip(r4.stdout)
@@ -1829,7 +1830,7 @@ class TestB24RealUserPath:
         strip = lambda s: re.sub(r'\x1b\[[0-9;]*m','',s)
 
         subprocess.run(['python','brain.py','setup','--workdir',str(tmp_path)],
-                       capture_output=True, cwd='/home/claude/project-brain')
+                       capture_output=True, cwd=str(Path(__file__).parent.parent.parent))
 
         entries = [
             ('JWT RS256 規則',    'Rule'),
@@ -1841,7 +1842,7 @@ class TestB24RealUserPath:
                 ['python','brain.py','add','--workdir',str(tmp_path),
                  text,'--kind',kind],
                 capture_output=True, text=True,
-                cwd='/home/claude/project-brain'
+                cwd=str(Path(__file__).parent.parent.parent)
             )
             assert r.returncode == 0, f"add {kind} failed: {r.stderr}"
 
@@ -1850,7 +1851,7 @@ class TestB24RealUserPath:
             r = subprocess.run(
                 ['python','brain.py','ask','--workdir',str(tmp_path), query],
                 capture_output=True, text=True,
-                cwd='/home/claude/project-brain'
+                cwd=str(Path(__file__).parent.parent.parent)
             )
             out = strip(r.stdout)
             assert expected in out or query in out, (
@@ -1866,7 +1867,7 @@ class TestB24RealUserPath:
         svc = tmp_path / 'payment_service'
         svc.mkdir()
         subprocess.run(['python','brain.py','setup','--workdir',str(tmp_path)],
-                       capture_output=True, cwd='/home/claude/project-brain')
+                       capture_output=True, cwd=str(Path(__file__).parent.parent.parent))
 
         # Add from payment_service directory (scope should auto-infer)
         orig_dir = os.getcwd()
@@ -1876,7 +1877,7 @@ class TestB24RealUserPath:
                 ['python','brain.py','add','--workdir',str(tmp_path),
                  'Stripe idempotency_key required'],
                 capture_output=True, text=True,
-                cwd='/home/claude/project-brain'
+                cwd=str(Path(__file__).parent.parent.parent)
             )
         finally:
             os.chdir(orig_dir)
@@ -1893,7 +1894,7 @@ class TestB24RealUserPath:
                        cwd=tmp_path, capture_output=True)
 
         subprocess.run(['python','brain.py','setup','--workdir',str(tmp_path)],
-                       capture_output=True, cwd='/home/claude/project-brain')
+                       capture_output=True, cwd=str(Path(__file__).parent.parent.parent))
 
         claude_md = tmp_path / '.claude' / 'CLAUDE.md'
         assert claude_md.exists(), ".claude/CLAUDE.md not generated by brain setup"
@@ -2646,7 +2647,7 @@ class TestDef01WriteLock:
         """多執行緒並發 add_node() 不應導致資料損壞。"""
         import threading
         from project_brain.brain_db import BrainDB
-        db = BrainDB(tmp_path)
+        db = BrainDB(tmp_path / "isolated.db")
         errors = []
 
         def _write(i):
@@ -2963,7 +2964,8 @@ class TestOpt03EmbeddingCache:
         text = "__cache_test_unique__"
         _    = emb.embed(text)      # populate cache
         import hashlib
-        key  = hashlib.md5(text.encode()).hexdigest()
+        # Cache key includes DIM prefix (see embedder.py:261)
+        key  = hashlib.md5(f"{emb.DIM}:{text}".encode()).hexdigest()
         assert key in _TFIDF_CACHE
 
     def test_different_texts_give_different_vectors(self):

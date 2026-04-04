@@ -7,8 +7,11 @@ Imported by all cli_*.py sub-modules.
 """
 import sys
 import os
+import logging
 from pathlib import Path
 from project_brain.constants import DEFAULT_SEARCH_LIMIT
+
+logger = logging.getLogger(__name__)
 
 # ── ANSI 顏色 ────────────────────────────────────────────────
 R="\033[0m"; B="\033[1m"; D="\033[2m"
@@ -147,8 +150,8 @@ def _infer_scope(workdir: str, current_file: str = "") -> str:
             _m = _re.search(r'[:/]([^/]+?)(?:\.git)?$', _url)
             if _m:
                 return _re.sub(r'[^a-z0-9_]', '_', _m.group(1).lower())
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("scope inference from git remote failed", exc_info=True)
 
     # 2. Sub-directory heuristic
     _skip = {'src','test','tests','docs','scripts','build','dist','.'}
@@ -235,8 +238,8 @@ def _load_dotenv():
                     val = val.strip().strip(chr(34)).strip(chr(39))
                     if key and key not in os.environ:
                         os.environ[key] = val
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("env file load failed", exc_info=True)
             break
 
 

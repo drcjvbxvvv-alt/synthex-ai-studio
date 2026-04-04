@@ -440,8 +440,8 @@ class SessionStore:
             """, (query, now, limit)).fetchall()
             if rows:
                 return [self._row_to_entry(r) for r in rows]
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("FTS search failed in session_store, falling back to LIKE", exc_info=True)
 
         # Step 2: LIKE 模糊搜尋（中文子詞備援）
         seen_ids: set = set()

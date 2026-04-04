@@ -249,8 +249,8 @@ fi
                             "UPDATE brain_events SET error=? WHERE id=?",
                             (str(e)[:200], event_id)
                         ).connection.commit()
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.debug("event error update failed", exc_info=True)
 
         # 每個 handler 在獨立 daemon 執行緒執行（不阻塞主執行緒）
         threads = []
@@ -269,8 +269,8 @@ fi
             self._conn().execute(
                 "UPDATE brain_events SET processed=1 WHERE id=?", (event_id,)
             ).connection.commit()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("event processed mark failed", exc_info=True)
 
         return len(handlers)  # 返回啟動的 handler 數，不等待完成
 
