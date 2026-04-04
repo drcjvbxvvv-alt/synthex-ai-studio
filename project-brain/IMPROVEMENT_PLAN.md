@@ -17,33 +17,9 @@
 
 ## P1 — 正確性缺陷
 
-### BUG-B02 — Decay 時間基準錯誤
+~~BUG-B02~~ ✅ **已修復（2026-04-04）**：`_effective_confidence()`（`brain_db.py`）和 `decay_engine._factor_time()`（`decay_engine.py`）改用 `MAX(created_at, updated_at)` 作為衰減時間基準。820 天前建立但 3 天前更新的節點，effective_confidence 從 0.077 恢復至 0.892。
 
-**問題**：`_effective_confidence()`（`brain_db.py:292`）和 `decay_engine._factor_time()`（`decay_engine.py:371`）都以 `created_at` 計算時間衰減，而非 `MAX(created_at, updated_at)`。
-
-**實際影響**：
-```
-節點建立：2024-01-01（820 天前）
-節點上週被更新內容
-→ days = 820，decay = exp(-0.003 × 820) ≈ 0.085
-→ 剛更新的知識被誤判為「嚴重過時」，搜尋中排名墊底
-```
-
-**根本原因**：`updated_at` 欄位在 schema 中存在（`brain_db.py:76`），且每次 `update_node()` 都會刷新，但 decay 計算從未引用它。
-
-**修復方案**：
-```python
-# _effective_confidence — 取兩欄中較新者
-ref_date = node.get("updated_at") or node.get("created_at") or ""
-# 若 updated_at 為空則 fallback 到 created_at
-
-# decay_engine._factor_time — 同樣改用 MAX 邏輯
-updated = row.get("updated_at") or ""
-created = row.get("created_at") or ""
-ref = updated if updated > created else created  # ISO 字串可直接比較
-```
-
-**工時**：2 小時（修改兩處 + 補測試）
+> P1 項目全數完成，本節保留供 CHANGELOG 同步後移除。
 
 ---
 

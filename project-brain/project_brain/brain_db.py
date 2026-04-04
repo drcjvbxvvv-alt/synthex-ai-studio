@@ -293,10 +293,14 @@ class BrainDB:
         if not created:
             return base
         try:
-            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-            if created_dt.tzinfo is None:
-                created_dt = created_dt.replace(tzinfo=timezone.utc)
-            days   = max(0, (datetime.now(timezone.utc) - created_dt).days)
+            # BUG-B02: use MAX(created_at, updated_at) so a recently-updated
+            # node is not penalised for its original creation date.
+            updated  = node.get("updated_at") or ""
+            ref_time = updated if updated > created else created
+            ref_dt = datetime.fromisoformat(ref_time.replace("Z", "+00:00"))
+            if ref_dt.tzinfo is None:
+                ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+            days   = max(0, (datetime.now(timezone.utc) - ref_dt).days)
             decay  = math.exp(-0.003 * days)          # F1: BASE_DECAY_RATE=0.003
             access = int(node.get("access_count") or 0)
             f7     = min(0.15, access / 10 * 0.05)   # F7: access-count bonus

@@ -261,7 +261,7 @@ class DecayEngine:
         while True:
             rows = self.graph._conn.execute("""
                 SELECT id, type, title, content, tags,
-                       source_url, created_at, is_pinned,
+                       source_url, created_at, updated_at, is_pinned,
                        importance, confidence AS meta_confidence,
                        access_count
                 FROM nodes
@@ -277,7 +277,10 @@ class DecayEngine:
                 node_id  = row["id"]
                 title    = row["title"] or ""
                 content  = row["content"] or ""
+                # BUG-B02: use MAX(created_at, updated_at) as decay reference
                 created  = row["created_at"] or ""
+                updated  = row.get("updated_at") or ""
+                ref_time = updated if updated > created else created
                 src_url  = row["source_url"] or ""
 
                 # 初始信心（從 meta 或預設）
@@ -294,8 +297,8 @@ class DecayEngine:
                 report = DecayReport(node_id, title, orig_conf)
                 new_conf = orig_conf
 
-                # F1：時間衰減
-                f1 = self._factor_time(created)
+                # F1：時間衰減（BUG-B02：以 ref_time 為基準，非 created_at）
+                f1 = self._factor_time(ref_time)
                 new_conf *= f1
                 report.factors["F1_time"] = f1
 
@@ -368,13 +371,17 @@ class DecayEngine:
 
     # ── 因子計算 ────────────────────────────────────────────────
 
-    def _factor_time(self, created_at: str) -> float:
-        """F1：時間衰減，指數模型"""
-        if not created_at:
+    def _factor_time(self, ref_time: str) -> float:
+        """F1：時間衰減，指數模型。
+
+        BUG-B02：參數改為 ref_time = MAX(created_at, updated_at)，
+        確保節點更新後衰減從更新日重算，而非從原始建立日算起。
+        """
+        if not ref_time:
             return 1.0
         try:
-            created  = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            days     = max(0, (datetime.now(timezone.utc) - created).days)
+            ref      = datetime.fromisoformat(ref_time.replace("Z", "+00:00"))
+            days     = max(0, (datetime.now(timezone.utc) - ref).days)
             base_rate = self._params.get("base_decay_rate", BASE_DECAY_RATE)
             return max(DECAY_FLOOR, math.exp(-base_rate * days))
         except (ValueError, TypeError):
