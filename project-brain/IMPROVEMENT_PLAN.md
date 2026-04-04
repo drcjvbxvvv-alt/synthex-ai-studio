@@ -26,6 +26,7 @@
 | **P1** | TEST-01 | 15 個測試失敗（chaos 路徑、web_ui AttributeError、lora、embedding cache） | 修復或標記 skip；確保 CI 全綠 | 無 | 🎯 高價值 |
 | **P1** | PERF-05 | Decay `_detect_contradictions()` N+1 查詢：每對矛盾各一次 `SELECT confidence` | 批次預取所有節點信心值至 dict | 無 | ⚡ 快速獲益 |
 | **P1** | BUG-E01 | `_search_batch(terms[:8])` 截斷使「版本號」「路徑」等關鍵詞被丟棄，Rule 類 False Negative | ① 改 `terms[:15]`；② 補 API 同義詞；③ Rule 配額 2→3 | 無 | 🎯 高價值 |
+| **P2** | FEAT-07 | `archaeologist` 掃描 git 歷史後所有節點 `created_at = today`，舊專案 F1 衰減從零開始等 7 天 | ① `add_node()` 接受 `created_at` 參數；② 改 `INSERT OR REPLACE` → `UPSERT` 保留原始日期；③ 新增 `brain backfill-git` 指令 | 無 | 🎯 高價值 |
 | **P2** | PERF-06 | 缺少 `nodes(type, confidence DESC)` 複合索引，type 過濾搜尋全表掃描 | SCHEMA_VERSION=21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)` | 無 | ⚡ 快速獲益 |
 | **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 24h） | 無 | 🔵 填空 |
 | **P2** | BUG-D04 | `session_store.py` per-thread 連線從未關閉，長執行伺服器 FD 洩漏 | 在 `threading.local` 清除時呼叫 `conn.close()`；或改用單一共享連線 | 無 | 📋 計劃執行 |
@@ -302,6 +303,150 @@ python tests/benchmarks/benchmark_recall.py
 
 ## P2 — 核心功能品質
 
+### FEAT-07 — Git 歷史時間回填：舊專案衰減從零開始問題
+
+**問題**：`brain archaeologist`（或 `brain init`）掃描舊專案的 git 歷史後，知識節點的 `created_at` 全部等於今天。原因有兩層：
+
+#### 根因 A：`add_node()` 不接受 `created_at` 參數
+
+`archaeologist._scan_git_history()`（`archaeologist.py:159–181`）正確地從 git log 中取得 `commit_date`：
+
+```python
+commit_date = meta.get("date", "")   # e.g. "2023-08-14 10:22:31 +0800"
+```
+
+但呼叫 `graph.add_node()` 時完全不傳這個日期：
+
+```python
+self.graph.add_node(
+    node_id   = node_id,
+    node_type = chunk["type"],
+    title     = chunk["title"],
+    content   = chunk["content"],
+    source_url= commit_hash,
+    # ← commit_date 完全被丟棄
+)
+```
+
+`graph.add_node()` 和 `brain_db.add_node()` 的 INSERT 語句都不包含 `created_at`，全靠 SQLite `DEFAULT (datetime('now'))` 填入。
+
+#### 根因 B：`INSERT OR REPLACE` 每次都重置 `created_at`
+
+`brain_db.add_node()` 使用 `INSERT OR REPLACE`，這在 SQLite 中等於先 DELETE 再 INSERT。`DEFAULT` 重新觸發，即使是「更新」既有節點，`created_at` 也會被重置為現在。
+
+**影響**：
+
+- 掃描一個有 3 年 git 歷史的專案後，所有節點 `created_at = today`
+- 衰減引擎 F1 factor = `e^(-λ × 0 days)` = **1.0** — 完全無衰減
+- 7 天後才開始衰減，但 3 年前的 commit 理論上應該已衰減至 0.3–0.5
+- `_effective_confidence` 不反映實際知識時效性，知識庫信心分布失真
+
+---
+
+#### 修復方案
+
+**Fix-1：`graph.add_node()` 新增 `created_at` 參數**（`graph.py:232`）
+
+```python
+def add_node(self, node_id, node_type, title,
+             content="", tags=None, source_url="", author="",
+             meta=None, created_at: str = "") -> str:
+    ...
+    # INSERT 時：若未提供 created_at，用 DEFAULT；若提供，優先用提供值
+    if created_at:
+        self._conn.execute("""
+            INSERT OR IGNORE INTO nodes (id, type, ..., created_at) VALUES (...)
+        """, (..., created_at))
+        self._conn.execute("UPDATE nodes SET type=?, title=?, ... WHERE id=?", (...))
+    else:
+        # 原有邏輯
+```
+
+更好的寫法：改用 SQLite UPSERT（`INSERT ... ON CONFLICT DO UPDATE`），保留 `created_at` 不覆蓋：
+
+```python
+self._conn.execute("""
+    INSERT INTO nodes (id, type, title, content, tags,
+                       source_url, author, meta, confidence, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
+    ON CONFLICT(id) DO UPDATE SET
+        type=excluded.type,
+        title=excluded.title,
+        content=excluded.content,
+        updated_at=datetime('now')
+        -- created_at 不更新，永遠保留初始值
+""", (..., created_at or None))
+```
+
+同樣修改 `brain_db.add_node()`（`brain_db.py:442`）。
+
+**Fix-2：`archaeologist._scan_git_history()` 傳入 `commit_date`**（`archaeologist.py:170`）
+
+```python
+self.graph.add_node(
+    node_id    = node_id,
+    node_type  = chunk["type"],
+    title      = chunk["title"],
+    content    = chunk["content"],
+    source_url = commit_hash,
+    author     = meta.get("author", ""),
+    meta       = {"confidence": chunk.get("confidence", 0.8)},
+    created_at = commit_date,   # ← 新增這一行
+)
+```
+
+**Fix-3：新增 `brain backfill-git` CLI 指令**
+
+針對已建立的 DB（舊節點 `created_at` 已錯誤設為 today），提供修正指令：
+
+```bash
+brain backfill-git [--workdir DIR] [--dry-run]
+```
+
+邏輯：
+1. 讀取所有 `source_url` 為 commit hash 格式（40 hex chars）的節點
+2. 執行 `git show --format="%ai" <hash>` 取得該 commit 的 author date
+3. `UPDATE nodes SET created_at=<commit_date>, updated_at=<commit_date> WHERE id=?`
+4. 若 `source_url` 是檔案路徑，執行 `git log --follow --format="%ai" -- <file> | tail -1` 取得檔案最早 commit 日期
+
+```python
+# cli_admin.py 新增
+def _cmd_backfill_git(args):
+    db = BrainDB(brain_dir)
+    nodes = db.conn.execute(
+        "SELECT id, source_url FROM nodes WHERE created_at > date('now', '-1 day')"
+    ).fetchall()
+    updated = 0
+    for node in nodes:
+        src = node["source_url"]
+        git_date = _resolve_git_date(src, workdir)
+        if git_date:
+            db.conn.execute(
+                "UPDATE nodes SET created_at=?, updated_at=? WHERE id=?",
+                (git_date, git_date, node["id"])
+            )
+            updated += 1
+    db.conn.commit()
+    print(f"回填完成：{updated}/{len(nodes)} 個節點時間戳已更新")
+```
+
+---
+
+#### 驗收標準
+
+```bash
+brain archaeologist --workdir /my-old-project
+brain backfill-git  --workdir /my-old-project --dry-run  # 預覽
+brain backfill-git  --workdir /my-old-project            # 執行
+brain report                                              # 衰減報告應出現非 1.0 的 F1 值
+```
+
+3 年前的 commit 的節點應顯示 `confidence ≈ 0.3–0.5`（依 `base_decay_rate` 而定），而非 0.87。
+
+**工時**：Fix-1+2 共 2 小時；Fix-3（`brain backfill-git`）4 小時，含測試共 1 天。
+
+---
+
 ### PERF-06 — 缺少 type+confidence 複合索引
 
 **問題**：`search_nodes(node_type=...)` 呼叫產生：
@@ -468,7 +613,7 @@ db.emit("decay_run", {
 | 版本 | 主題 | 主要工作 | Gate |
 |------|------|---------|------|
 | **v0.12.0** | 正確性修復 | SEC-03, BUG-D01, BUG-D02, BUG-E01, TEST-01, PERF-05, TEST-03 | 0 failing tests；所有 P1 修復通過；benchmark 召回率 ≥ 50%（FTS5 only） |
-| **v0.13.0** | 品質強化 | PERF-06, BUG-D03, BUG-D04, ARCH-07, OBS-02, OBS-03, SEC-04 | 無 bare except/pass（高危路徑）；index 效能驗收 |
+| **v0.13.0** | 品質強化 | FEAT-07, PERF-06, BUG-D03, BUG-D04, ARCH-07, OBS-02, OBS-03, SEC-04 | 舊專案回填後 F1 衰減正確反映 commit 時間；無 bare except/pass（高危路徑） |
 | **v0.14.0** | 長期改善 | FEAT-06, ARCH-08, TEST-02, FEAT-05（視餘力） | REV-02 90天數據就位後 |
 | **v0.15.0** | 量測驗收 | REV-02 decay 效用量測與報告 | `brain report` 顯示衰減效用指標 |
 
@@ -482,7 +627,7 @@ db.emit("decay_run", {
 | L2 Episodes / Temporal | ✅ | — |
 | L3 KnowledgeGraph | ✅ | — |
 | BrainDB | ✅ SCHEMA v20 | PERF-06 缺 type+conf 索引（v21）|
-| DecayEngine | ✅ 7/7 因子 | PERF-05 N+1；OBS-02 因子量測缺失 |
+| DecayEngine | ⚠️ 7/7 因子 | PERF-05 N+1；OBS-02 因子量測缺失；FEAT-07 舊專案 created_at 全為 today |
 | ContextEngineer | ⚠️ | BUG-E01 `_search_batch[:8]` 截斷；BUG-D01 部分 except/pass |
 | NudgeEngine | ✅ | — |
 | ConflictResolver | ✅ | ARCH-08 快取無 TTL 淘汰 |
