@@ -97,9 +97,9 @@
 |----|------|------|---------|------|
 | REF-01 | BrainDB 1797 行，承擔 10+ 職責（God Object） | 難以維護，重構前需測試覆蓋率 ≥ 70% | 逐步抽離：`VectorStore`（add/search vector）、`FeedbackTracker`（record_feedback）、`SynonymIndex`（synonyms.py） | 2 週+ |
 | ARCH-04 | scope 三路控制流（`--global` / `--scope` / 自動推斷）讓使用者困惑 | UX 複雜，Breaking change | 合併 `--global` / `--scope` 為單一 `--scope global`；保留自動推斷 | 1 週 |
-| REF-04 | 魔法數字散落（`0.003`、`800`、`limit=8` 等） | 維護時難以追蹤意圖 | 新增 `constants.py`，遷入衰減率、budget、預設 limit | 半天 |
-| PERF-03 | CJK token 計數逐字迭代，無快取 | 高頻呼叫時浪費 CPU | `_count_tokens()` 加 `@lru_cache` | 30 分 |
-| BUG-A03 | `engine.py` double-checked locking 無 volatile 語意 | 極低概率的競態條件 | 改用 `threading.Lock` 正確包裹 | 1 小時 |
+| REF-04 | 魔法數字散落（`0.003`、`800`、`limit=8` 等） | 維護時難以追蹤意圖 | 新增 `constants.py`，遷入衰減率、budget、預設 limit | 半天 | 📋 測試計劃：`tests/unit/test_ref04_constants.py` |
+| PERF-03 | CJK token 計數逐字迭代，無快取 | 高頻呼叫時浪費 CPU | `_count_tokens()` 加 `@lru_cache` | 30 分 | 📋 測試計劃：`tests/unit/test_perf03_token_cache.py` |
+| BUG-A03 | `engine.py` double-checked locking 無 volatile 語意 | 極低概率的競態條件 | 改用各屬性獨立 `threading.Lock`（拆分 `_init_lock`） | 1 小時 | 📋 測試計劃：`tests/unit/test_bug_a03_locking.py` |
 
 ---
 
