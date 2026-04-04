@@ -4,6 +4,35 @@
 
 ---
 
+## v0.15.0（2026-04-05）— 審計與 PII 安全版
+
+### OBS-03 — rollback_node() 審計記錄
+
+- **`brain_db.py`** `update_node()` 新增 `change_type: str = "update"` 參數，並傳入 `node_history` INSERT，取代原本硬編碼的 `"update"`
+- **`brain_db.py`** `rollback_node()` 新增 `actor: str = "system"` 參數；改為傳入 `changed_by=actor, change_type="rollback"`，使 rollback 記錄與普通 update 可明確區分
+- 查詢方式：`get_node_history(node_id)` 回傳的記錄中，還原操作 `change_type='rollback'`，`changed_by` 為呼叫方傳入的操作者
+
+### SEC-04 — Federation PII 過濾擴充
+
+- **`federation.py`** 新增 3 條 regex：
+  - `_PII_PRIVATE_IP`：覆蓋 RFC-1918 私有 IP（10.x.x.x、172.16–31.x.x、192.168.x.x）→ `[redacted-ip]`
+  - `_PII_SLACK`：Slack workspace URL（`*.slack.com`）→ `[redacted-slack-url]`
+  - `_PII_CLOUD_URL`：AWS / GCP / Azure 服務 URL（`.amazonaws.com`、`.googleapis.com`、`.azure.com`、`.azurewebsites.net`、`.blob.core.windows.net`）→ `[redacted-cloud-url]`
+- `_strip_pii()` 串接所有新規則，匯出 Bundle 前自動清除
+
+---
+
+## v0.14.0（2026-04-05）— 可觀測性強化版
+
+### OBS-02 — Decay Engine F1–F7 因子量測輸出
+
+- **`decay_engine.py`** `DecayEngine.__init__()` 新增 `db` 參數（`BrainDB` 引用）
+- **`decay_engine.py`** `_apply_decay()` 新增 `factors` 參數；寫入 DB 後呼叫 `db.emit("decay_factors", {...})`，payload 包含 `node_id`、各因子值（`F1_time`、`F2_version`、`F3_activity`、`F4_contradiction`、`F5_code_ref`、`F6_adoption`、`F7_access_count`，依節點情況出現）、`final`（最終信心值）、`delta`（變化量）
+- **`engine.py`** `decay_engine` 屬性初始化時傳入 `db=self._db`，使 emit 路徑生效
+- 可透過 `brain_db.recent_events("decay_factors")` 查詢所有衰減因子記錄，支援調參分析
+
+---
+
 ## v0.13.0（2026-04-05）— P2 改善版
 
 本版本完成所有 P2 改善項目。

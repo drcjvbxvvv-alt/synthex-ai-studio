@@ -1,6 +1,6 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.13.0（2026-04-05）
+> **當前版本**：v0.15.0（2026-04-05）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
 > **分析基準**：873 tests collected；v0.13.0 所有 P1+P2 已完成，867 passed / 5 skipped / 1 intermittent。
 
@@ -31,9 +31,9 @@
 | **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 7 天） | 無 | 🔵 填空 | ✅ v0.13.0 |
 | **P2** | BUG-D04 | `session_store.py` per-thread 連線從未關閉，長執行伺服器 FD 洩漏 | 改用單一共享連線 `check_same_thread=False`（WAL 模式安全） | 無 | 📋 計劃執行 | ✅ v0.13.0 |
 | **P2** | ARCH-07 | `cli_utils._infer_scope()` 與 `brain_db.infer_scope()` 邏輯重複（兩套實作）| 保留 `brain_db.infer_scope()` 為單一來源，`cli_utils` 委派呼叫 | 無 | 📋 計劃執行 | ✅ v0.13.0 |
-| **P2** | OBS-02 | `decay_engine` 缺乏 F1–F7 各因子的量測輸出（無法調參） | 在 `_apply_decay()` 結束時 `db.emit("decay_factors", {f1, f2, ..., f7, final})`  | OBS-01 ✅ | 📋 計劃執行 | 待辦 |
-| **P2** | OBS-03 | `rollback_node()` 無審計記錄（誰在何時還原了什麼）| `node_history` 新增 `changed_by TEXT`；`rollback_node()` 寫入還原事件 | FEAT-01 ✅ | 📋 計劃執行 | 待辦 |
-| **P2** | SEC-04 | Federation PII 過濾缺失 IP（`192.168.x.x`）、Slack URL、Cloud service URL | 擴充 `_strip_pii()` regex 模式集 | 無 | 📋 計劃執行 | 待辦 |
+| **P2** | OBS-02 | `decay_engine` 缺乏 F1–F7 各因子的量測輸出（無法調參） | 在 `_apply_decay()` 結束時 `db.emit("decay_factors", {f1, f2, ..., f7, final})`  | OBS-01 ✅ | 📋 計劃執行 | ✅ v0.14.0 |
+| **P2** | OBS-03 | `rollback_node()` 無審計記錄（誰在何時還原了什麼）| `node_history` 新增 `changed_by TEXT`；`rollback_node()` 寫入還原事件 | FEAT-01 ✅ | 📋 計劃執行 | ✅ v0.15.0 |
+| **P2** | SEC-04 | Federation PII 過濾缺失 IP（`192.168.x.x`）、Slack URL、Cloud service URL | 擴充 `_strip_pii()` regex 模式集 | 無 | 📋 計劃執行 | ✅ v0.15.0 |
 | **P2** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天數據後執行對比測試；`analytics_engine` 新增 `decay_impact_score()` | 90天數據 | ⏳ 等待 | 待辦 |
 | **P3** | FEAT-05 | `analytics_engine` 無時序圖表：知識庫成長曲線、信心分布遷移無法可視化 | `generate_timeseries()` 方法；`brain report --format html` 輸出 Chart.js 圖表 | OBS-01 ✅ | 🏗 長期 |
 | **P3** | FEAT-06 | `brain doctor` 只做基礎健康檢查，無法偵測矛盾節點比例、deprecated 比例 | 新增矛盾節點數量報告；deprecated 比例警告（> 20% 觸發 ⚠） | ARCH-06 ✅ | 📋 計劃執行 |

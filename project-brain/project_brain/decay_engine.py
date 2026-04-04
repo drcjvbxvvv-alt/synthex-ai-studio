@@ -134,8 +134,10 @@ class DecayEngine:
     """
 
     def __init__(self, graph: KnowledgeGraph,
-                 workdir: str = ""):
+                 workdir: str = "",
+                 db: Any = None):
         self.graph    = graph
+        self._db      = db          # OBS-02: BrainDB reference for emit()
         self.workdir  = Path(workdir).resolve() if workdir else Path.cwd()
         self._decay_log: list[dict] = []
 
@@ -365,7 +367,7 @@ class DecayEngine:
                     reports.append(report)
                     if not dry_run:
                         self._apply_decay(node_id, orig_conf, new_conf,
-                                          report.deprecated)
+                                          report.deprecated, report.factors)
 
                 processed += 1
 
@@ -542,8 +544,9 @@ class DecayEngine:
         return min(1.2, 1.0 + max(0, adoption_count) * 0.02)
 
     def _apply_decay(self, node_id: str, old_conf: float,
-                     new_conf: float, deprecated: bool) -> None:
-        """把衰減結果寫入知識圖譜"""
+                     new_conf: float, deprecated: bool,
+                     factors: "dict | None" = None) -> None:
+        """把衰減結果寫入知識圖譜，並 emit decay_factors 事件（OBS-02）"""
         try:
             row = self.graph._conn.execute(
                 "SELECT meta, is_deprecated FROM nodes WHERE id=?", (node_id,)
@@ -576,6 +579,17 @@ class DecayEngine:
                 "decay_applied | node_id=%s old_conf=%.4f new_conf=%.4f deprecated=%s",
                 node_id, old_conf, new_conf, deprecated
             )
+            # OBS-02: emit per-node factor breakdown for observability / tuning
+            if self._db is not None and factors:
+                try:
+                    self._db.emit("decay_factors", {
+                        "node_id": node_id,
+                        **{k: round(float(v), 4) for k, v in factors.items()},
+                        "final":   round(new_conf, 4),
+                        "delta":   round(new_conf - old_conf, 4),
+                    })
+                except Exception as _emit_exc:
+                    logger.debug("decay_factors emit 失敗 (%s): %s", node_id, _emit_exc)
         except Exception as e:
             logger.error("_apply_decay 寫入失敗 (%s): %s", node_id, e)
 

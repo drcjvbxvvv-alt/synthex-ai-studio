@@ -503,7 +503,8 @@ class BrainDB:
 
     def update_node(self, node_id: str, title=None, content=None,
                     confidence=None, importance=None,
-                    changed_by: str = "", change_note: str = "") -> bool:
+                    changed_by: str = "", change_note: str = "",
+                    change_type: str = "update") -> bool:
         ex = self.get_node(node_id)
         if not ex:
             return False
@@ -529,7 +530,7 @@ class BrainDB:
                     "changed_by,change_note,change_type) VALUES(?,?,?,?,?,?,?,?,?)",
                     (node_id, last_ver + 1, ex.get("title"), ex.get("content"),
                      ex.get("confidence"), ex.get("tags","[]"),
-                     changed_by, change_note, "update")
+                     changed_by, change_note, change_type)  # OBS-03: use caller-supplied change_type
                 )
             except Exception as _e:
                 logger.error("node_history snapshot failed: %s", _e)
@@ -705,8 +706,15 @@ class BrainDB:
         except Exception:
             return []
 
-    def rollback_node(self, node_id: str, to_version: int) -> bool:
-        """FEAT-06: 將節點恢復到指定版本的快照狀態。"""
+    def rollback_node(self, node_id: str, to_version: int,
+                      actor: str = "system") -> bool:
+        """FEAT-06 / OBS-03: 將節點恢復到指定版本的快照狀態，並寫入 change_type='rollback' 審計記錄。
+
+        Args:
+            node_id:    目標節點 ID
+            to_version: 要恢復的版本號（node_history.version）
+            actor:      執行還原的操作者（呼叫方傳入，預設 "system"）
+        """
         rows = self.conn.execute(
             "SELECT * FROM node_history WHERE node_id=? AND version=?",
             (node_id, to_version)
@@ -716,11 +724,12 @@ class BrainDB:
         snap = dict(rows)
         return self.update_node(
             node_id,
-            title      = snap.get("title"),
-            content    = snap.get("content"),
-            confidence = snap.get("confidence"),
-            changed_by = "rollback",
+            title       = snap.get("title"),
+            content     = snap.get("content"),
+            confidence  = snap.get("confidence"),
+            changed_by  = actor,
             change_note = f"Rolled back to v{to_version}",
+            change_type = "rollback",   # OBS-03: distinguish from regular updates
         )
 
     def deprecate_node(self, node_id: str, replaced_by: str = "",

@@ -212,6 +212,7 @@ class ProjectBrain:
                     self._decay = DecayEngine(
                         graph   = self.graph,
                         workdir = str(self.workdir),
+                        db      = self._db,   # OBS-02: pass db for decay_factors emit
                     )
         return self._decay
 

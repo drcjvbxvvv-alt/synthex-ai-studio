@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 _PII_EMAIL    = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
 _PII_INTERNAL = re.compile(r'(?i)\b(?:internal|corp|intranet)\.[a-zA-Z0-9.-]+')
 _PII_LOCAL    = re.compile(r'(?i)[a-zA-Z0-9_-]+\.local\b')
+# SEC-04: 私有 IP、Slack URL、Cloud service URL
+_PII_PRIVATE_IP = re.compile(
+    r'\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}'        # 10.x.x.x
+    r'|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}'  # 172.16–31.x.x
+    r'|192\.168\.\d{1,3}\.\d{1,3})\b'             # 192.168.x.x
+)
+_PII_SLACK     = re.compile(r'https?://[a-zA-Z0-9_-]+\.slack\.com\S*')
+_PII_CLOUD_URL = re.compile(
+    r'https?://\S*(?:'
+    r'\.amazonaws\.com'
+    r'|\.googleapis\.com'
+    r'|\.azure\.com'
+    r'|\.azurewebsites\.net'
+    r'|\.blob\.core\.windows\.net'
+    r'|\.s3\.[a-z0-9-]+\.amazonaws\.com'
+    r')\S*'
+)
 
 # ── 聯邦設定路徑 ──────────────────────────────────────────────
 _FED_CONFIG_NAME   = "federation.json"
@@ -44,10 +61,13 @@ _MAX_CONTENT_LEN   = 600
 
 
 def _strip_pii(text: str) -> str:
-    """移除電子郵件與常見內部主機名稱"""
+    """移除電子郵件、內部主機名稱、私有 IP、Slack URL 及 Cloud service URL（SEC-04）"""
     text = _PII_EMAIL.sub("[redacted-email]", text)
     text = _PII_INTERNAL.sub("[redacted-internal]", text)
     text = _PII_LOCAL.sub("[redacted-local]", text)
+    text = _PII_PRIVATE_IP.sub("[redacted-ip]", text)
+    text = _PII_SLACK.sub("[redacted-slack-url]", text)
+    text = _PII_CLOUD_URL.sub("[redacted-cloud-url]", text)
     return text
 
 
