@@ -303,8 +303,8 @@
 | v0.3.0 | ANN index fallback 為 LinearScan（純 Python）              | sqlite-vec 是 C 擴充，確保零依賴環境仍可運作           |
 | v0.2.0 | `BRAIN_WORKDIR` 改為非必要（自動偵測為主）                 | 多專案工作流不應被環境變數綁死                         |
 | v0.2.0 | 查詢展開限每詞 3 個同義詞，總上限 15                       | 原本 30 個同義詞造成大量無關結果                       |
-| v0.1.0 | 使用 SQLite WAL 而非 PostgreSQL                            | 零依賴部署，備份 = 複製一個文件                        |
-| v0.1.0 | 知識衰減不刪除節點，只降低可見度                           | 歷史記錄有考古價值，刪除不可逆                         |
+| v0.1.0 | 使用 SQLite WAL 而非 PostgreSQL                            | 零依賴部署，備份 = 複製一個文件。**✅ 測試保護**：`test_arch_decisions_v01.py::TestWALDecision`（3 個測試） |
+| v0.1.0 | 知識衰減不刪除節點，只降低可見度                           | 歷史記錄有考古價值，刪除不可逆。**✅ 測試保護**：`test_arch_decisions_v01.py::TestDecayNoDeleteDecision`（5 個測試） |
 
 ---
 

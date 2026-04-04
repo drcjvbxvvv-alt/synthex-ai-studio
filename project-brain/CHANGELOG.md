@@ -50,6 +50,13 @@
   - 配置管理（`配置` / `config`）
   - `context.py` 補齊缺少的 `db`、`database`、`test`、`error` 4 條獨立鍵
 
+### 架構決策驗收測試（v0.1.0 decisions）
+
+- **`tests/unit/test_arch_decisions_v01.py`**：新增 8 個測試確保 v0.1.0 兩項核心決策在所有版本永久成立：
+  - **WAL 決策**（3 個測試）：`BrainDB`、`KnowledgeGraph`、`KnowledgeReviewBoard` 連線均驗證 `PRAGMA journal_mode = wal`
+  - **衰減不刪除決策**（5 個測試）：`_apply_decay` 後節點仍存在；`confidence` 欄位被更新；`meta.deprecated` 正確設置；`DECAY_FLOOR > 0`；批次衰減後節點總數不變
+  - 8/8 通過（0.48s）
+
 ### 文件更新（HON-01）
 
 - **HON-01 標記為 N/A**：`brain distill` 指令已於 v10.x 移除（COMMANDS.md 有記錄），README LoRA 說明已無對象。計劃中該項目標記為不適用並關閉
