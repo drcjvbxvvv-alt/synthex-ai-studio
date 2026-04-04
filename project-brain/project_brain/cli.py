@@ -136,22 +136,51 @@ def _brain(workdir: str):
     return ProjectBrain(workdir)
 
 def _infer_scope(workdir: str, current_file: str = "") -> str:
-    """Phase 5: Auto-infer scope from directory.
-    /project/payment_service/stripe.py → 'payment_service'"""
+    """
+    FLY-02: Auto-infer scope.  Priority:
+      1. git remote origin → repo name (e.g. "org/my-service" → "my_service")
+      2. Sub-directory name under workdir (service / module heuristic)
+      3. workdir directory name
+      4. 'global' as last resort
+    """
     import re as _re
+    import subprocess as _sp
+
+    # 1. git remote origin → 取 repo 名稱
+    try:
+        _res = _sp.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(workdir), capture_output=True, text=True, timeout=3
+        )
+        if _res.returncode == 0:
+            _url = _res.stdout.strip()
+            # git@github.com:org/repo.git  或  https://github.com/org/repo.git
+            _m = _re.search(r'[:/]([^/]+?)(?:\.git)?$', _url)
+            if _m:
+                return _re.sub(r'[^a-z0-9_]', '_', _m.group(1).lower())
+    except Exception:
+        pass
+
+    # 2. Sub-directory heuristic
     _skip = {'src','test','tests','docs','scripts','build','dist','.'}
     _svc  = ['service','module','pkg','app','api','lib','handler','domain']
     base  = Path(current_file) if current_file else Path(os.getcwd())
     try:
         parts = list(base.relative_to(Path(workdir).resolve()).parts)
+        for part in parts:
+            pl = part.lower()
+            if any(k in pl for k in _svc):
+                return _re.sub(r'[^a-z0-9_]', '_', pl)
+        if parts and parts[0].lower() not in _skip:
+            return _re.sub(r'[^a-z0-9_]', '_', parts[0].lower())
     except ValueError:
-        return 'global'
-    for part in parts:
-        pl = part.lower()
-        if any(k in pl for k in _svc):
-            return _re.sub(r'[^a-z0-9_]', '_', pl)
-    if parts and parts[0].lower() not in _skip:
-        return _re.sub(r'[^a-z0-9_]', '_', parts[0].lower())
+        pass
+
+    # 3. workdir name
+    _wd_name = Path(workdir).name.lower()
+    if _wd_name and _wd_name not in _skip:
+        return _re.sub(r'[^a-z0-9_]', '_', _wd_name)
+
     return 'global'
 
 
@@ -349,9 +378,19 @@ def cmd_add(args):
         _err("請提供 --title"); return
     ew = getattr(args, 'emotional_weight', 0.5)
     b = _brain(wd)
-    _scope  = getattr(args, 'scope', 'global') or 'global'
-    if _scope == 'global':  # auto-infer if not set
+    # FLY-02: 優先從 git remote 推斷 scope；--global flag 強制寫入 global
+    _explicit_global = getattr(args, 'global_scope', False)
+    _raw_scope = getattr(args, 'scope', None)
+    if _explicit_global:
+        _scope = 'global'
+    elif _raw_scope and _raw_scope != 'global':
+        _scope = _raw_scope
+    else:
         _scope = _infer_scope(wd)
+    # STB-04: 若最終 scope 為 global，提示使用者（避免無意識的跨專案污染）
+    if _scope == 'global' and not _explicit_global and not getattr(args, 'quiet', False):
+        _info(f"⚠ 此知識將寫入 global scope（跨所有專案可見）。"
+              f"如需隔離請加 --scope <名稱>，或加 --global 確認寫入 global。")
     _conf   = getattr(args, 'confidence', 0.8) or 0.8
     node_id = b.add_knowledge(title, content, kind, tags,
                              scope=_scope, confidence=_conf)
@@ -2458,8 +2497,10 @@ def main():
                    help='信心分數 0.0~1.0（預設 0.8）')
     p.add_argument('--quiet', action='store_true',
                    help='靜默模式（不輸出確認）')
-    p.add_argument('--scope', default='global',
-                   help='作用域（空=自動推導）')
+    p.add_argument('--scope', default=None,
+                   help='作用域（預設：從 git remote 自動推斷；global = 所有專案共享）')
+    p.add_argument('--global', dest='global_scope', action='store_true',
+                   help='FLY-02/STB-04：明確寫入 global scope（跨專案共享，謹慎使用）')
     p.add_argument('--kind',    default='Note',
                    choices=['Decision','Pitfall','Rule','ADR','Component','Note'],
                    help='類型（預設：Pitfall）')

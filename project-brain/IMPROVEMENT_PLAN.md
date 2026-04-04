@@ -114,13 +114,13 @@ VISION 完成率：5/5（100%）✅  → 見 CHANGELOG.md v0.4.0
 
 | ID | 失效位置 | 現狀 | 修復方式 | 等級 |
 | -- | -------- | ---- | -------- | ---- |
-| STB-01 | `engine.py:83` BrainDB 初始化失敗 | `except Exception: pass`，完全靜默 | 改為 `logging.warning`，並在 `brain status` 輸出警告 | P1 |
-| STB-02 | `context.py:246` `access_count` 遞增失敗 | `try/except pass`，統計資料丟失 | 加 `logging.debug`，`brain doctor` 時可偵測 | P1 |
-| STB-03 | Decay Engine 從未執行 | Agent 看到過期高分知識，無任何提示 | `context.py` 讀節點時加 `effective_age` 欄位，超過 90 天未 decay 標記 `[⚠ 未更新]` | P1 |
-| STB-04 | Scope 預設 global | 跨專案污染，無警告 | `brain add` 未指定 scope 時輸出一行 info：「⚠ 寫入 global scope，如需隔離請加 --scope」 | P1 |
-| STB-05 | Context budget 截斷 | Agent 看不到排名 3~5 的 Pitfall | 截斷後在 context 末尾加：`[⚠ 另有 N 筆相關知識因長度限制未顯示，執行 brain search "..." 查看]` | P1 |
+| STB-01 | `engine.py:83` BrainDB 初始化失敗 | `except Exception: pass`，完全靜默 | ✅ v0.5.0：`context.py` 改為 `logging.warning`，含「執行 brain doctor 查看詳情」 | P1 |
+| STB-02 | `context.py:246` `access_count` 遞增失敗 | `try/except pass`，統計資料丟失 | ✅ v0.5.0：兩處 except 改為 `logging.debug`，含節點 ID 與錯誤訊息 | P1 |
+| STB-03 | Decay Engine 從未執行 | Agent 看到過期高分知識，無任何提示 | ✅ v0.5.0：`_fmt_node` 無 `effective_confidence` 且 `updated_at` > 90 天時加 `⏰ 信心分數超過 90 天未更新，建議執行 brain decay` | P1 |
+| STB-04 | Scope 預設 global | 跨專案污染，無警告 | ✅ v0.5.0：`brain add` 最終落為 global 時輸出警告；`--global` flag 明確確認 | P1 |
+| STB-05 | Context budget 截斷 | Agent 看不到排名 3~5 的 Pitfall | ✅ v0.5.0：footer 加 `⚠ 另有 N 筆相關知識因 context 長度限制未顯示` | P1 |
 
-**目標版本：v0.5.0**。這五個修復都是單行到十行的改動，沒有架構風險。不修就不應該說系統「穩定」。
+**v0.5.0 已完成**（STB-01 ～ STB-05 全數修復）。
 
 ---
 
@@ -164,8 +164,8 @@ VISION 完成率：5/5（100%）✅  → 見 CHANGELOG.md v0.4.0
 
 | ID | 項目 | 版本目標 | 說明 |
 | -- | ---- | -------- | ---- |
-| FLY-01 | 冷啟動引導訊息 | **v0.5.0**（鎖定） | 空 Brain `get_context` 回傳引導文字：「目前無相關知識。建議執行：brain add "<你剛才遇到的問題>" --kind Pitfall」 |
-| FLY-02 | Scope 自動推斷 | **v0.5.0**（鎖定） | `brain add` 從 `git remote get-url origin` 推斷 scope；無 git 時用目錄名；仍可 `--global` 覆蓋 |
+| FLY-01 | 冷啟動引導訊息 | ✅ **v0.5.0** | 空 Brain 回傳引導文字含建議指令，而非空字串 |
+| FLY-02 | Scope 自動推斷 | ✅ **v0.5.0** | `_infer_scope` 優先 git remote → 子目錄 → workdir 名稱；`--global` flag 明確覆蓋 |
 | FLY-03 | 知識庫健康度首頁 | v0.6.0 | `brain status` 輸出「知識庫評分」：節點數、最近 7 天新增數、最常被查到的 3 個 Pitfall。讓用戶看到飛輪在轉 |
 
 ---
@@ -206,7 +206,7 @@ VISION 完成率：5/5（100%）✅  → 見 CHANGELOG.md v0.4.0
 
 | 版本 | 主題 | 鎖定目標 | 發布條件 |
 | ---- | ---- | -------- | -------- |
-| **v0.5.0** | 品質基線 | STB-01~05（靜默失效修復）+ FLY-01~02（冷啟動 + Scope 推斷）+ DIR-01（補建驗收標準） | 五個靜默失效全部修復；`brain doctor` 可偵測並回報 |
+| **v0.5.0** ✅ | 品質基線 | STB-01~05（靜默失效修復）+ FLY-01~02（冷啟動 + Scope 推斷） | 五個靜默失效全數修復；冷啟動有引導；Scope 自動推斷 |
 | **v0.6.0** | 飛輪啟動 | FLY-03（知識庫健康度）+ REV-01（自我驗證實驗完成）+ UNQ-03（基準測試建立） | 有至少一份可公開的效果驗證數據 |
 | **v0.7.0** | 護城河強化 | MON-01~02（聯邦貢獻者標記 + 公開模板庫）+ TECH-01（完成度標記）+ 資料庫索引修復 | 聯邦 bundle 可被第三方驗證引用；DB 查詢在 10k 節點下延遲 < 50ms |
 | **v1.0.0** | 企業就緒 | 品質達 7.5/10 以上；PH3-04 Cloud 基礎架構；競品差距量化文件存在 | 內外部 QA 通過；知識庫在真實專案跑滿 30 天的效果數據 |

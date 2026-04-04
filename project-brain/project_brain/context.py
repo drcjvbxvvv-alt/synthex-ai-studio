@@ -80,8 +80,12 @@ class ContextEngineer:
                 try:
                     from .brain_db import BrainDB as _BDB
                     brain_db = _BDB(Path(brain_dir))
-                except Exception:
-                    pass
+                except Exception as _e:
+                    # STB-01: 不再靜默吞下，確保問題可觀察
+                    logger.warning(
+                        "ContextEngineer: BrainDB 初始化失敗，降級為 KnowledgeGraph-only 模式。"
+                        "執行 brain doctor 查看詳情。錯誤：%s", _e
+                    )
         self._brain_db = brain_db  # A-11/A-13
 
         # PH2-05: load custom synonyms from .brain/synonyms.json if present,
@@ -110,6 +114,7 @@ class ContextEngineer:
         """
         sections = []
         budget   = MAX_CONTEXT_TOKENS
+        self._budget_skipped = 0  # STB-05: reset per build()
         logger.debug("context.build start: task=%r file=%r budget=%d", task[:60], current_file, budget)
 
         # 1. 找出和任務/檔案相關的組件
@@ -251,8 +256,9 @@ class ContextEngineer:
                             (node['id'],)
                         )
                         self._brain_db.conn.commit()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    # STB-02: 統計資料丟失需可觀察，不可靜默吞下
+                    logger.debug("access_count 遞增失敗（節點 %s）：%s", node.get('id','?'), _e)
                 budget = self._add_if_budget(sections, s, budget)
 
         # 4. 依賴關係（當前檔案的相關組件）
@@ -266,16 +272,33 @@ class ContextEngineer:
                 section = "## 依賴關係（修改時需注意影響範圍）\n" + "\n".join(deps)
                 budget  = self._add_if_budget(sections, section, budget)
 
-        # 5. 沒有找到任何知識時的提示
+        # 5. 沒有找到任何知識時的提示（FLY-01：冷啟動引導）
         if not sections:
-            return ""
+            _hint = (
+                "---\n"
+                "## 📖 Project Brain — 尚無相關知識\n\n"
+                f"目前知識庫中找不到與「{task[:60]}」相關的記錄。\n\n"
+                "建議立即記錄你遇到的問題或決策，讓 Brain 下次能提供幫助：\n"
+                "```\n"
+                f'brain add "遇到的問題或決策" --kind Pitfall\n'
+                "```\n"
+                "或透過 MCP：`add_knowledge(title=..., content=..., kind=\"Pitfall\")`\n"
+                "---\n"
+            )
+            return _hint
 
         header = (
             "---\n"
             "## 📖 Project Brain — 專案歷史知識\n"
             "（以下是從程式碼歷史自動提取的相關知識，供參考）\n\n"
         )
-        footer = "\n---\n"
+        # STB-05: 截斷提示，讓 Agent 知道有更多知識未顯示
+        _skipped = getattr(self, "_budget_skipped", 0)
+        footer = (
+            f"\n\n> ⚠ 另有 {_skipped} 筆相關知識因 context 長度限制未顯示，"
+            f"執行 `brain search \"{task[:30]}\"` 查看完整結果。\n---\n"
+            if _skipped > 0 else "\n---\n"
+        )
 
         # A-3：輸出前語意去重（只在 scikit-learn 已安裝時啟用）
         # BUG-05 fix: pre-assign result so that any exception after this point
@@ -310,8 +333,9 @@ class ContextEngineer:
                             [(nid,) for nid in _node_ids]
                         )
                         self.graph._conn.commit()
-                except Exception:
-                    pass  # SR 失敗不影響主流程
+                except Exception as _e:
+                    # STB-02: SR 失敗需可觀察
+                    logger.debug("Spaced Repetition 批次更新失敗：%s", _e)
         except Exception:
             pass
         # P1-B: prepend causal chain conclusions to result
@@ -599,6 +623,7 @@ class ContextEngineer:
 
     def _fmt_node(self, label: str, node: dict, max_chars: int = 400) -> str:
         from project_brain.utils import confidence_label
+        import datetime as _dt
         title   = node.get("title", "")
         content = node.get("content", "")
         if len(content) > max_chars:
@@ -608,13 +633,26 @@ class ContextEngineer:
         # H-1: attach semantic confidence tier so agents know how much to trust this node
         conf   = float(node.get("effective_confidence") or node.get("confidence") or 0.8)
         clabel = confidence_label(conf)
+        # STB-03: 若無 effective_confidence（Decay Engine 從未執行）且節點超過 90 天，
+        # 加上提示避免 Agent 對過時高分知識過度信任
+        stale_warning = ""
+        if not node.get("effective_confidence"):
+            _raw_date = node.get("updated_at") or node.get("created_at") or ""
+            if _raw_date:
+                try:
+                    _date = _dt.datetime.fromisoformat(_raw_date.replace("Z", "+00:00"))
+                    _now  = _dt.datetime.now(_dt.timezone.utc)
+                    if (_now - _date.replace(tzinfo=_date.tzinfo or _dt.timezone.utc)).days > 90:
+                        stale_warning = " ⏰ 信心分數超過 90 天未更新，建議執行 brain decay"
+                except Exception:
+                    pass
         # v7.0 Meta-Knowledge (H-4 fix: meta was built but never included in output)
         ac = node.get("applicability_condition", "") or ""
         ic = node.get("invalidation_condition",  "") or ""
         meta = ""
         if ac: meta += f"\n  ⚠ 適用條件：{ac[:120]}"
         if ic: meta += f"\n  🚫 失效條件：{ic[:120]}"
-        return f"### {label}：{title} [{clabel}]\n{content}\n{tag_str}{meta}"
+        return f"### {label}：{title} [{clabel}{stale_warning}]\n{content}\n{tag_str}{meta}"
 
     def _format_pitfalls(self, pitfalls: list) -> str:
         lines = ["## ⚠ 已知陷阱（務必先看）"]
@@ -624,11 +662,13 @@ class ContextEngineer:
         return "\n".join(lines)
 
     def _add_if_budget(self, sections: list, section: str, budget: int) -> int:
-        """如果還有 token 預算，加入此段落"""
+        """如果還有 token 預算，加入此段落；否則累計跳過計數（STB-05）"""
         cost = _count_tokens(section)
         if cost <= budget:
             sections.append(section)
             return budget - cost
+        # STB-05: 追蹤因 budget 被截掉的節點數
+        self._budget_skipped = getattr(self, "_budget_skipped", 0) + 1
         return budget
 
     def summarize_brain(self) -> str:

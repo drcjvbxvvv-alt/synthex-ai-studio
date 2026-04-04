@@ -4,6 +4,23 @@
 
 ---
 
+## v0.5.0（2026-04-04）— 品質基線版
+
+### 靜默失效修復（STB-01 ～ STB-05）
+
+- **STB-01**：`context.py` ContextEngineer 初始化 BrainDB 失敗時改為 `logging.warning`，不再靜默吞下。錯誤訊息含「執行 brain doctor 查看詳情」，使失效可觀察
+- **STB-02**：`context.py` `access_count` 遞增失敗（兩處）改為 `logging.debug`，含節點 ID 與錯誤內容。Spaced Repetition 批次更新失敗同樣記錄，確保統計資料丟失可察覺
+- **STB-03**：`context.py` `_fmt_node` 新增衰減過期偵測：若節點無 `effective_confidence`（Decay Engine 從未執行）且 `updated_at` 超過 90 天，在信心標籤後加 `⏰ 信心分數超過 90 天未更新，建議執行 brain decay`
+- **STB-04**：`cli.py` `brain add` Scope 行為重設：未指定 `--scope` 時從 git remote 自動推斷；最終落為 global 且無 `--global` flag 時輸出 info 警告。新增 `--global` flag 讓使用者明確確認寫入 global scope
+- **STB-05**：`context.py` `_add_if_budget` 追蹤因 budget 截斷的節點數；`build()` 完成時若有截斷，在 footer 加 `⚠ 另有 N 筆相關知識因 context 長度限制未顯示，執行 brain search "..." 查看完整結果`
+
+### 飛輪啟動（FLY-01 ～ FLY-02）
+
+- **FLY-01（冷啟動引導訊息）**：`context.py` 空 Brain 不再回傳空字串，改為回傳含任務名稱的引導段落，建議具體指令讓使用者即時記錄知識，閉合飛輪
+- **FLY-02（Scope 自動推斷）**：`cli.py` `_infer_scope` 重寫，優先從 `git remote get-url origin` 取 repo 名稱，回退目錄啟發式，最後用 workdir 名稱；`--global` flag 強制覆蓋；無需使用者手動指定 scope
+
+---
+
 ## v0.4.0（2026-04-04）— 長期願景版
 
 ### 長期願景實現（VISION-01 ～ VISION-05）
