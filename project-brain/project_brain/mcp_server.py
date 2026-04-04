@@ -35,6 +35,7 @@ import time
 import logging
 import argparse
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -510,11 +511,20 @@ def create_server(workdir: str) -> Any:
                     pass
 
             edges = db.temporal_query(at_time=resolved_time, limit=limit)
+            # FEAT-03: also return nodes valid at the given time
+            nodes = db.nodes_at_time(resolved_time or datetime.now(timezone.utc).isoformat(),
+                                     limit=limit)
             return json.dumps({
                 "at_time":    resolved_time or "current",
                 "git_branch": git_branch,
-                "count":      len(edges),
+                "edge_count": len(edges),
+                "node_count": len(nodes),
                 "edges":      edges,
+                "nodes": [
+                    {"id": n["id"], "type": n["type"], "title": n["title"],
+                     "confidence": n["confidence"], "valid_from": n.get("valid_from")}
+                    for n in nodes
+                ],
             }, ensure_ascii=False, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e), "edges": []})

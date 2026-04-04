@@ -52,7 +52,7 @@
 | ~~**P2**~~ ✅ | ~~FED-02~~ | Jaccard 去重無法偵測語義近似知識，知識庫膨脹 | `_is_duplicate()` 組合 Jaccard OR 向量相似度（threshold=0.9） | FED-01 | ✅ 完成 | 需向量化依賴可用；搭配 FED-01 同步發布 |
 | ~~**P2**~~ ✅ | ~~CLI-02~~ | `sync_all()` 完成但無 CLI 入口，VISION-03 無法使用 | `brain fed sync/export/import/subscribe/unsubscribe` | FED-01 | ✅ 完成 | 補全 Federation 最後一哩路 |
 | ~~**P2**~~ ✅ | ~~FEAT-04~~ | L1a session 結束清空，長工作階段洞察遺失 | `SessionStore.archive()`；導出 `.brain/sessions/<id>.md`；90 天自動清理 | 無 | ✅ 完成 | 低頻場景，有餘力時處理 |
-| **P2** | FEAT-03 | `temporal_query` 只有骨架，無時間過濾邏輯 | `valid_from`/`valid_until` 欄位；從 git log 推斷有效期；`brain history --at <date>` | 無 | 🔵 填空 | 邊界場景，需 git 整合 |
+| ~~**P2**~~ ✅ | ~~FEAT-03~~ | `temporal_query` 只有骨架，無時間過濾邏輯 | `valid_from`/`valid_until` 欄位；從 git log 推斷有效期；`brain history --at <date>` | 無 | ✅ 完成 | `nodes_at_time()`；SCHEMA_VERSION=19；`brain history --at` CLI |
 | ~~**P3**~~ ✅ | ~~REF-01~~ | BrainDB ~1800 行承擔 10+ 職責（God Object） | 逐步抽離 `VectorStore`、`FeedbackTracker` | 覆蓋率≥70% | ✅ 完成 | `vector_store.py` + `feedback_tracker.py`；BrainDB 以 delegation 模式保持 backward compat |
 | ~~**P3**~~ ✅ | ~~CLI-01~~ | `cli.py` 2864 行，31 個函數無法維護 | 按功能拆分子模組；抽取 `@require_brain_dir` 裝飾器 | 整合測試 | ✅ 完成 | `cli_utils.py`、`cli_knowledge.py`、`cli_admin.py`、`cli_serve.py`、`cli_fed.py`；`cli.py` 精簡至 ≤500 行 |
 | ~~**P3**~~ ✅ | ~~ARCH-04~~ | scope 三路控制流讓使用者困惑 | 合併 `--global`/`--scope` 為單一 `--scope global` | v0.10.0 | ✅ 完成 | `--global` 保留但印棄用警告，導引使用 `--scope global` |
@@ -151,6 +151,20 @@ v0.10.0     ──→ ARCH-04  ✅ 完成
 **依賴**：DEEP-04 ✅、DEEP-05 ✅
 
 ---
+
+### ~~FEAT-03~~ ✅ — 時間感知查詢（Temporal Query）**（已完成 2026-04-04）**
+
+**問題**：`temporal_query` MCP 工具只查詢 `temporal_edges` 表，無法回答「某個時間點有哪些節點有效」。`nodes` 表只有 `valid_until`，沒有 `valid_from`，也沒有 git 日期推斷邏輯。
+
+**實作**：
+
+- `brain_db.py` SCHEMA_VERSION=19：`ALTER TABLE nodes ADD COLUMN valid_from TEXT DEFAULT NULL`
+- `add_node()` 新增 `valid_from` kwarg；INSERT OR REPLACE 前先讀取現有值，確保 OR REPLACE 後 `valid_from` 不遺失
+- `nodes_at_time(at_time, limit, node_type)` 方法：查詢 `valid_from <= at_time AND (valid_until IS NULL OR valid_until > at_time)`
+- `engine.py` `learn_from_commit()`：使用 `git log -1 --pretty=%aI` 取得實際 commit 日期（非 `datetime.now()`）；`_store_chunk()` 同步寫入 `brain.db` 並帶 `valid_from`
+- `mcp_server.py` `temporal_query` 工具：回傳 `edges` + `nodes`（節點時間快照）
+- `cli_knowledge.py` `cmd_history` + `_at_snapshot()`：`brain history --at <date|ref>` 顯示時間點知識快照；支援 git branch/tag 名稱解析
+- `cli_utils.py` `history` parser：`node_id` 改為 `nargs='?'`；新增 `--at` 參數
 
 ### REV-02 — Decay 實際效用未量測
 

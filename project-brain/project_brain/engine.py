@@ -611,9 +611,17 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
         except Exception:
             return 0
 
+        # FEAT-03: get actual commit date for valid_from (not "now")
+        try:
+            commit_date = subprocess.check_output(
+                ["git", "log", "-1", "--pretty=%aI", commit_hash],
+                cwd=str(self.workdir), text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            commit_date = datetime.now().isoformat()
+
         result = self.extractor.from_git_commit(commit_hash, msg, diff)
-        meta   = {"commit": commit_hash, "author": author,
-                  "date": datetime.now().isoformat()}
+        meta   = {"commit": commit_hash, "author": author, "date": commit_date}
         learned = 0
         for chunk in result.get("knowledge_chunks", []):
             self._store_chunk(chunk, meta)
@@ -900,6 +908,19 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             author    = meta.get("author", ""),
             meta      = {"confidence": chunk.get("confidence", 0.8)},
         )
+        # FEAT-03: sync valid_from to brain.db so temporal_query works on nodes
+        if meta.get("date"):
+            try:
+                self.db.add_node(
+                    node_id    = node_id,
+                    node_type  = chunk["type"],
+                    title      = chunk["title"],
+                    content    = chunk["content"],
+                    confidence = chunk.get("confidence", 0.8),
+                    valid_from = meta["date"],
+                )
+            except Exception:
+                pass
 
 
 

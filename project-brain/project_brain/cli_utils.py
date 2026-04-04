@@ -617,8 +617,10 @@ def _build_parser():
     p.add_argument('node_id', help='節點 ID')
     p.add_argument('--to', type=int, required=True, help='目標版本號')
 
-    p = mkp('history', 'FEAT-01：顯示節點版本歷史（含 change_type）')
-    p.add_argument('node_id', help='節點 ID 或標題')
+    p = mkp('history', 'FEAT-01/FEAT-03：顯示節點版本歷史，或 --at <date> 查看時間快照')
+    p.add_argument('node_id', nargs='?', default='', help='節點 ID 或標題（與 --at 二擇一）')
+    p.add_argument('--at', default='', metavar='DATE_OR_REF',
+                   help='FEAT-03：查看該時間點的知識快照（ISO 日期或 git ref）')
 
     p = mkp('restore', 'FEAT-01：還原節點到指定版本')
     p.add_argument('node_id', help='節點 ID')

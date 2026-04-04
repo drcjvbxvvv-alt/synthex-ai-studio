@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 18          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 19          # DEF-04: bump on every schema change
 
 # REF-02: single source of truth in synonyms.py
 from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -254,6 +254,9 @@ class BrainDB:
                  imported_at TEXT NOT NULL DEFAULT (datetime('now')),
                  notes       TEXT NOT NULL DEFAULT ''
              )"""),
+            # v19: FEAT-03 — valid_from on nodes for temporal query
+            ("valid_from column on nodes",
+             "ALTER TABLE nodes ADD COLUMN valid_from TEXT DEFAULT NULL"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -439,19 +442,27 @@ class BrainDB:
         meta       = kw.get("meta", {})
         confidence = float(kw.get("confidence",
                            meta.get("confidence", 0.8) if isinstance(meta, dict) else 0.8))
+        # FEAT-03: git commit date; preserve existing value if not re-provided
+        valid_from = kw.get("valid_from")
+        if not valid_from:
+            existing = self.conn.execute(
+                "SELECT valid_from FROM nodes WHERE id=?", (node_id,)
+            ).fetchone()
+            if existing:
+                valid_from = existing[0]  # carry over from previous write
         with self._write_guard():  # DEF-01 fix: cross-process write lock
             self.conn.execute("""
                 INSERT OR REPLACE INTO nodes
                     (id,type,title,content,tags,confidence,importance,
-                     emotional_weight,source_url,author,meta,scope)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                     emotional_weight,source_url,author,meta,scope,valid_from)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (node_id, node_type, title, content, tags_json,
                   confidence,
                   float(kw.get("importance", 0.5)),
                   float(kw.get("emotional_weight", 0.5)),
                   kw.get("source_url",""), kw.get("author",""),
                   json.dumps(meta if isinstance(meta, dict) else {}, ensure_ascii=False),
-                  scope))
+                  scope, valid_from))
             try:
                 self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
                 self.conn.execute(
@@ -1094,6 +1105,48 @@ class BrainDB:
             WHERE valid_from<=? AND (valid_until IS NULL OR valid_until>?)
             ORDER BY valid_from DESC LIMIT ?
         """, (at, at, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def nodes_at_time(
+        self,
+        at_time: str,
+        limit:     int = 50,
+        node_type: str = "",
+    ) -> list[dict]:
+        """
+        FEAT-03: Return nodes that were valid at the given ISO timestamp.
+
+        A node is valid at `at_time` if:
+          - valid_from IS NULL (pre-dates temporal tracking) OR valid_from <= at_time
+          - valid_until IS NULL (still current) OR valid_until > at_time
+          - is_deprecated = 0
+
+        Args:
+            at_time:   ISO timestamp string (e.g. "2025-01-01T00:00:00Z")
+            limit:     Maximum results (default 50)
+            node_type: Optional filter, e.g. "Rule", "Pitfall", "Decision"
+
+        Returns:
+            list of node dicts sorted by confidence DESC
+        """
+        at     = at_time or datetime.now(timezone.utc).isoformat()
+        params: list = [at, at]
+        type_clause = ""
+        if node_type:
+            type_clause = "AND type=?"
+            params.append(node_type)
+        params.append(limit)
+        rows = self.conn.execute(f"""
+            SELECT id, type, title, content, confidence,
+                   valid_from, valid_until, created_at
+            FROM nodes
+            WHERE (valid_from IS NULL OR valid_from <= ?)
+              AND (valid_until IS NULL OR valid_until > ?)
+              AND is_deprecated = 0
+              {type_clause}
+            ORDER BY confidence DESC
+            LIMIT ?
+        """, params).fetchall()
         return [dict(r) for r in rows]
 
     # -- events --

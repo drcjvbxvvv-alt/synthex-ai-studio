@@ -512,17 +512,25 @@ def cmd_timeline(args):
 
 
 def cmd_history(args):
-    """FEAT-01: brain history <node_id> — 顯示版本歷史（含 change_type）"""
-    wd    = _workdir(args)
-    query = getattr(args, 'node_id', '') or ''
-    if not query:
-        _err("用法：brain history <node_id_or_title>"); return
-    bd = Path(wd) / ".brain"
+    """FEAT-01/FEAT-03: brain history <node_id|--at date> — 版本歷史 or 時間快照"""
+    wd     = _workdir(args)
+    query  = getattr(args, 'node_id', '') or ''
+    at_str = getattr(args, 'at', None) or ''
+    bd     = Path(wd) / ".brain"
     if not bd.exists():
         _err("Brain 尚未初始化"); return
 
     from project_brain.brain_db import BrainDB
-    db   = BrainDB(bd)
+    db = BrainDB(bd)
+
+    # FEAT-03: --at mode — show knowledge snapshot at a given date
+    if at_str:
+        _at_snapshot(db, at_str, workdir=wd)
+        return
+
+    if not query:
+        _err("用法：brain history <node_id_or_title>  或  brain history --at <date>"); return
+
     node = db.get_node(query)
     if not node:
         hits = db.search_nodes(query, limit=1)
@@ -546,6 +554,39 @@ def cmd_history(args):
         if h.get("title"):
             print(f"       標題：{h['title'][:60]}")
     print()
+
+
+def _at_snapshot(db, at_str: str, workdir: str = "") -> None:
+    """FEAT-03: Print a temporal snapshot — which nodes were valid at `at_str`."""
+    import re as _re, subprocess as _sp
+
+    # Try to resolve branch/tag name via git
+    resolved = at_str.strip()
+    if not _re.match(r'^\d{4}-\d{2}-\d{2}', resolved):
+        if _re.match(r'^[a-zA-Z0-9._\-/]+$', resolved):
+            try:
+                r = _sp.run(
+                    ["git", "log", "-1", "--pretty=%aI", resolved],
+                    capture_output=True, text=True, cwd=workdir or ".", timeout=5,
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    resolved = r.stdout.strip()
+            except Exception:
+                pass
+
+    nodes = db.nodes_at_time(resolved, limit=50)
+    print(f"\n{B}{C}  知識快照 — {resolved[:19]}{R}  {D}({len(nodes)} 個有效節點){R}")
+    print(f"{D}{'─'*68}{R}")
+    if not nodes:
+        _info("該時間點尚無有效知識節點（valid_from 為 NULL 的節點不計入）")
+        _info("提示：git sync 後才會記錄節點的 valid_from")
+        return
+    kind_icons = {"Rule": "📋", "Pitfall": "⚠️ ", "Decision": "🎯", "ADR": "📐"}
+    for n in nodes:
+        icon = kind_icons.get(n["type"], "•")
+        vf   = (n.get("valid_from") or "")[:10]
+        print(f"  {icon} {n['type']:<10} conf={n['confidence']:.2f}  {vf}  {n['title'][:50]}")
+    print(f"\n{D}  brain history --at <date>  查看其他時間點{R}\n")
 
 
 def cmd_restore(args):
