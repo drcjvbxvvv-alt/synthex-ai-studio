@@ -290,19 +290,19 @@
 
 | 版本   | 決策                                                       | 理由                                                   |
 | ------ | ---------------------------------------------------------- | ------------------------------------------------------ |
-| v0.6.0 | 全面清除靜默失效路徑，補齊 NudgeEngine + BrainDB 缺口      | 飛輪要轉，所有進入點必須一致；可觀察性是信任的前提     |
-| v0.6.0 | Synonym Map 兩表均擴展至 **46 條**，keys 完全一致          | 兩個查詢入口不對稱讓 `search_knowledge` 成為二等公民   |
-| v0.6.0 | `brain config` 單一指令顯示所有 6 處設定來源               | 設定分散是 debug 地獄；統一入口降低用戶認知負擔        |
-| v0.6.0 | `review_board.db` 加 `schema_meta` 表追蹤版本；DB 損壞轉為 `RuntimeError` 含 `brain doctor` 提示 | 所有 DB 都需版本可追蹤；stack trace 對使用者毫無意義   |
-| v0.6.0 | SR access_count 遞增移至 `_add_if_budget` 之後，用 `_shown_node_ids` 取代 title 子字串比對 | title 比對在含截斷/emoji 時必然誤判；budget 截斷前遞增是邏輯錯誤 |
-| v0.5.0 | STB/FLY 修復優先於新功能                                   | 靜默失效比崩潰更危險，信任建立先於功能擴展             |
-| v0.3.0 | OllamaClient duck-typed，不強制 anthropic SDK              | 讓 KRB 審核可離線運行，降低企業採購門檻                |
-| v0.3.0 | MultilingualEmbedder 優先級高於 Ollama embedder            | sentence-transformers 對中英混搜效果顯著優於 nomic     |
-| v0.3.0 | federation export 時清理 PII，而非 import 時               | bundle 本身即安全，接收方無需信任發送方的清理          |
+| v0.6.0 | 全面清除靜默失效路徑，補齊 NudgeEngine + BrainDB 缺口      | 飛輪要轉，所有進入點必須一致；可觀察性是信任的前提。**✅ 測試保護**：`test_arch_decisions_v06.py::TestNudgeEngineSilentFailureElimination`（4 個測試） |
+| v0.6.0 | Synonym Map 兩表均擴展至 **46 條**，keys 完全一致          | 兩個查詢入口不對稱讓 `search_knowledge` 成為二等公民。**✅ 測試保護**：`test_arch_decisions_v06.py::TestSynonymMapSync`（3 個測試） |
+| v0.6.0 | `brain config` 單一指令顯示所有 6 處設定來源               | 設定分散是 debug 地獄；統一入口降低用戶認知負擔。**✅ 測試保護**：`test_arch_decisions_v06.py::TestBrainConfigSixSources`（3 個測試） |
+| v0.6.0 | `review_board.db` 加 `schema_meta` 表追蹤版本；DB 損壞轉為 `RuntimeError` 含 `brain doctor` 提示 | 所有 DB 都需版本可追蹤；stack trace 對使用者毫無意義。**✅ 測試保護**：`test_arch_decisions_v06.py::TestReviewBoardSchemaVersion`（4 個測試） |
+| v0.6.0 | SR access_count 遞增移至 `_add_if_budget` 之後，用 `_shown_node_ids` 取代 title 子字串比對 | title 比對在含截斷/emoji 時必然誤判；budget 截斷前遞增是邏輯錯誤。**✅ 測試保護**：`test_arch_decisions_v06.py::TestSRShownNodeIds`（3 個測試） |
+| v0.5.0 | STB/FLY 修復優先於新功能                                   | 靜默失效比崩潰更危險，信任建立先於功能擴展。**✅ 測試保護**：`test_arch_decisions_v05.py`（12 個測試：STB-04 global 警告、FLY-01 冷啟動引導、FLY-02 scope 推斷優先序） |
+| v0.3.0 | OllamaClient duck-typed，不強制 anthropic SDK              | 讓 KRB 審核可離線運行，降低企業採購門檻。**✅ 測試保護**：`test_arch_decisions_v03.py::TestOllamaClientDuckTyped`（4 個測試） |
+| v0.3.0 | MultilingualEmbedder 優先級高於 Ollama embedder            | sentence-transformers 對中英混搜效果顯著優於 nomic。**✅ 測試保護**：`test_arch_decisions_v03.py::TestMultilingualEmbedderPriority`（3 個測試） |
+| v0.3.0 | federation export 時清理 PII，而非 import 時               | bundle 本身即安全，接收方無需信任發送方的清理。**✅ 測試保護**：`test_arch_decisions_v03.py::TestFederationPIIOnExport`（5 個測試） |
 | ~~v0.3.0~~ | ~~LoRA 訓練設定生成三套（Axolotl / Unsloth / LLaMA-Factory）~~ | ~~不綁定單一框架，使用者選擇熟悉工具~~ **（`brain distill` 已於 v10.x 移除，此決策已失效）** |
-| v0.3.0 | ANN index fallback 為 LinearScan（純 Python）              | sqlite-vec 是 C 擴充，確保零依賴環境仍可運作           |
-| v0.2.0 | `BRAIN_WORKDIR` 改為非必要（自動偵測為主）                 | 多專案工作流不應被環境變數綁死                         |
-| v0.2.0 | 查詢展開限每詞 3 個同義詞，總上限 15                       | 原本 30 個同義詞造成大量無關結果                       |
+| v0.3.0 | ANN index fallback 為 LinearScan（純 Python）              | sqlite-vec 是 C 擴充，確保零依賴環境仍可運作。**✅ 測試保護**：`test_arch_decisions_v03.py::TestANNIndexFallback`（4 個測試） |
+| v0.2.0 | `BRAIN_WORKDIR` 改為非必要（自動偵測為主）                 | 多專案工作流不應被環境變數綁死。**✅ 測試保護**：`test_arch_decisions_v02.py::TestBrainWorkdirDecision`（6 個測試） |
+| v0.2.0 | 查詢展開限每詞 3 個同義詞，總上限 15                       | 原本 30 個同義詞造成大量無關結果。**✅ 測試保護**：`test_arch_decisions_v02.py::TestQueryExpansionDecision`（7 個測試） |
 | v0.1.0 | 使用 SQLite WAL 而非 PostgreSQL                            | 零依賴部署，備份 = 複製一個文件。**✅ 測試保護**：`test_arch_decisions_v01.py::TestWALDecision`（3 個測試） |
 | v0.1.0 | 知識衰減不刪除節點，只降低可見度                           | 歷史記錄有考古價值，刪除不可逆。**✅ 測試保護**：`test_arch_decisions_v01.py::TestDecayNoDeleteDecision`（5 個測試） |
 

@@ -57,6 +57,42 @@
   - **衰減不刪除決策**（5 個測試）：`_apply_decay` 後節點仍存在；`confidence` 欄位被更新；`meta.deprecated` 正確設置；`DECAY_FLOOR > 0`；批次衰減後節點總數不變
   - 8/8 通過（0.48s）
 
+### 架構決策驗收測試（v0.2.0 decisions）
+
+- **`tests/unit/test_arch_decisions_v02.py`**：新增 13 個測試確保 v0.2.0 兩項核心決策在所有版本永久成立：
+  - **BRAIN_WORKDIR 自動偵測決策**（6 個測試）：`_find_brain_root()` 能從子目錄往上找 `.brain/`；找不到回傳 `None`；處理檔案路徑、尾斜線；`BRAIN_WORKDIR` env var 不存在時不拋錯
+  - **查詢展開上限決策**（7 個測試）：`_expand_query()` 總詞數不超過 `EXPAND_LIMIT=15`；每詞最多 3 個同義詞；`EXPAND_LIMIT` 可透過 `BRAIN_EXPAND_LIMIT` env var 調整；空查詢不拋錯
+  - 13/13 通過（0.49s）
+
+### 架構決策驗收測試（v0.6.0 decisions）
+
+- **`tests/unit/test_arch_decisions_v06.py`**：新增 17 個測試確保 v0.6.0 五項核心決策在所有版本永久成立：
+  - **NudgeEngine 靜默失效消除**（4 個測試）：例外均有 logger.warning/debug；接受 brain_db 參數；graph 失敗時回傳 list 不拋錯
+  - **Synonym Map 同步**（3 個測試）：brain_db 和 context 兩表均有 46 條；keys 集合完全一致
+  - **brain config 6 處來源**（3 個測試）：原始碼涵蓋 6 個編號來源；含 BRAIN_* env vars；含 config.json
+  - **ReviewBoard schema_meta**（4 個測試）：RB_SCHEMA_VERSION 常數存在；schema_meta 表建立；版本號記錄正確；DB 損壞拋含 brain doctor 的 RuntimeError
+  - **SR _shown_node_ids（STAB-07）**（3 個測試）：_shown_node_ids 在 build() 入口宣告；SR 區塊使用 _shown_node_ids；access_count+1 在 _shown_node_ids.append 之後
+  - 17/17 通過（0.51s）
+  - **已知坑**：`source.find("access_count")` 會找到 SQL 欄位名稱的早期出現，應搜尋 `"access_count+1"` 才能精確定位遞增語句
+
+### 架構決策驗收測試（v0.5.0 decisions）
+
+- **`tests/unit/test_arch_decisions_v05.py`**：新增 12 個測試確保 v0.5.0 核心決策「STB/FLY 修復優先於新功能」在所有版本永久成立：
+  - **STB 靜默失效消除**（3 個測試）：核心模組均 import logging；`cli.py` 含 STB-04 global scope 警告；警告訊息不被靜默吞掉
+  - **FLY-01 冷啟動引導**（4 個測試）：空知識庫 `build()` 回傳非空字串；含 `brain add` / `add_knowledge` 提示；含任務描述（個人化）；有知識時不顯示引導訊息
+  - **FLY-02 scope 推斷優先序**（5 個測試）：原始碼確認 git > 子目錄 > workdir > global 順序；workdir 名稱推斷正確；skip-list 目錄回傳 global；服務關鍵字識別；結果僅含安全字元
+  - 12/12 通過（0.48s）
+  - **已知限制**：v0.5.0 文件提及的 `context.py` 4 處 `except: pass` 在當前版本仍為選填功能守衛（embedding / causal chain 渲染），非真實靜默失效，測試不強制要求（否則誤報）
+
+### 架構決策驗收測試（v0.3.0 decisions）
+
+- **`tests/unit/test_arch_decisions_v03.py`**：新增 16 個測試確保 v0.3.0 四項核心決策在所有版本永久成立：
+  - **OllamaClient duck-typed 決策**（4 個測試）：`OllamaClient` 無需 `anthropic` 套件；具備 `.messages.create` 介面；`KRBAIAssistant` 接受任意 duck-type client
+  - **MultilingualEmbedder 優先級決策**（3 個測試）：原始碼結構確認 Multilingual 在 Ollama 之前；兩者皆可用時選 Multilingual；Multilingual 不可用時回落 Ollama
+  - **Federation PII export-time 決策**（5 個測試）：`_strip_pii` 移除 email / internal hostname / .local；`_sanitise_node` 套用清理；`import_bundle` 不呼叫 `_strip_pii`
+  - **ANN LinearScan fallback 決策**（4 個測試）：`LinearScanIndex` 無外部依賴；`get_ann_index()` 在 sqlite-vec 不可用時回傳 `LinearScanIndex`；兩者共享相同介面；add/search 功能正確
+  - 16/16 通過（0.53s）
+
 ### 文件更新（HON-01）
 
 - **HON-01 標記為 N/A**：`brain distill` 指令已於 v10.x 移除（COMMANDS.md 有記錄），README LoRA 說明已無對象。計劃中該項目標記為不適用並關閉
