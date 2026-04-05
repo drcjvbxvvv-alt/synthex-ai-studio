@@ -12,6 +12,7 @@ import re
 import json
 import hashlib
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 import anthropic
@@ -123,35 +124,54 @@ class KnowledgeExtractor:
         prompt = EXTRACTION_PROMPT + "\n\n---\n\n" + content[:4000]
         _empty = {"knowledge_chunks": [], "components_mentioned": [],
                   "dependencies_detected": []}
-        try:
-            if self.provider == "openai":
-                # OpenAI 相容格式（Ollama、LM Studio）— keep json.loads() path
-                resp = self.client.chat.completions.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    messages=[{"role": "user", "content": prompt}]
+        _last_err: Exception | None = None
+        # OPT-06: exponential backoff retry (max 3 attempts) for transient API errors
+        for _attempt in range(3):
+            try:
+                if self.provider == "openai":
+                    # OpenAI 相容格式（Ollama、LM Studio）— keep json.loads() path
+                    resp = self.client.chat.completions.create(
+                        model=self.model,
+                        max_tokens=max_tokens,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    text = resp.choices[0].message.content or ""
+                    text = re.sub(r"```json\n?", "", text)
+                    text = re.sub(r"```\n?",     "", text)
+                    return json.loads(text.strip())
+                else:
+                    # AUTO-03: Anthropic — tool_use guarantees structured output
+                    resp = self.client.messages.create(
+                        model=self.model,
+                        max_tokens=max_tokens,
+                        tools=[_EXTRACT_TOOL],
+                        tool_choice={"type": "tool", "name": "store_knowledge"},
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    tool_block = next(
+                        (b for b in resp.content if b.type == "tool_use"), None
+                    )
+                    if tool_block is None:
+                        return _empty
+                    return tool_block.input  # already a dict, no json.loads needed
+            except Exception as e:
+                _last_err = e
+                # Only retry on rate limit or transient errors
+                _is_retryable = any(
+                    kw in type(e).__name__.lower() or kw in str(e).lower()
+                    for kw in ("ratelimit", "rate_limit", "timeout", "overload", "529", "503")
                 )
-                text = resp.choices[0].message.content or ""
-                text = re.sub(r"```json\n?", "", text)
-                text = re.sub(r"```\n?",     "", text)
-                return json.loads(text.strip())
-            else:
-                # AUTO-03: Anthropic — tool_use guarantees structured output
-                resp = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    tools=[_EXTRACT_TOOL],
-                    tool_choice={"type": "tool", "name": "store_knowledge"},
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                tool_block = next(
-                    (b for b in resp.content if b.type == "tool_use"), None
-                )
-                if tool_block is None:
-                    return _empty
-                return tool_block.input  # already a dict, no json.loads needed
-        except Exception as e:
-            return {**_empty, "_error": str(e)}
+                if _is_retryable and _attempt < 2:
+                    _delay = 2 ** _attempt  # 1s, 2s
+                    import logging as _l
+                    _l.getLogger(__name__).warning(
+                        "OPT-06: _call attempt %d failed (%s), retrying in %ds",
+                        _attempt + 1, type(e).__name__, _delay
+                    )
+                    time.sleep(_delay)
+                else:
+                    break
+        return {**_empty, "_error": str(_last_err)}
 
     def from_git_commit(self, commit_hash: str, commit_msg: str, diff: str) -> dict:
         """從 git commit 提取知識"""
@@ -228,6 +248,7 @@ Comments found:
                 cwd=str(self.workdir),
                 stderr=subprocess.DEVNULL,
                 text=True,
+                timeout=30,  # OPT-03: prevent hang on large repos
             )
 
             for line in log_output.strip().split("\n"):
@@ -246,6 +267,11 @@ Comments found:
                 if any(re.match(p, message, re.IGNORECASE) for p in skip_patterns):
                     continue
 
+                # SEC-03: validate commit_hash format before passing to subprocess
+                if not re.fullmatch(r"[0-9a-f]{7,40}", commit_hash):
+                    logger.warning("SEC-03: invalid commit hash skipped: %r", commit_hash)
+                    continue
+
                 # 取得 diff
                 try:
                     diff = subprocess.check_output(
@@ -254,7 +280,11 @@ Comments found:
                         cwd=str(self.workdir),
                         stderr=subprocess.DEVNULL,
                         text=True,
+                        timeout=30,  # OPT-03: prevent git from blocking indefinitely
                     )[:2000]
+                except subprocess.TimeoutExpired:
+                    logger.warning("OPT-03: git show timed out for commit %s", commit_hash)
+                    diff = ""
                 except Exception:
                     diff = ""
 

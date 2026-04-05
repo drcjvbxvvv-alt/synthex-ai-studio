@@ -1,8 +1,8 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.24.0（2026-04-06）
+> **當前版本**：v0.26.0（2026-04-06）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
-> **測試基準**：903 passed / 5 skipped（45 unit tests in `test_mem_improvements.py`）
+> **測試基準**：624 passed（59 unit tests in `test_mem_improvements.py`）
 > **分析基準**：2026-04-06 全程式碼審計，涵蓋 brain_db / engine / context / decay / mcp_server / graph / session_store / extractor
 
 ---
@@ -29,19 +29,19 @@
 | **P1** | BUG-04 | Session Dedup 記憶體洩漏（無主動 cleanup daemon） | ✅ v0.25.0 |
 | **P1** | BUG-05 | `except Exception: pass` 吞掉真實 Bug，無聲故障 | ✅ v0.25.0 |
 | **P1** | BUG-06 | KnowledgeGraph 節點無樂觀鎖，並發修改遺失 | ✅ v0.25.0 |
-| **P2** | SEC-01 | workdir symlink 路徑遍歷檢查時序錯誤 | ☐ 待實作 |
-| **P2** | SEC-02 | scope 白名單正則缺 anchor，可繞過 | ☐ 待實作 |
-| **P2** | SEC-03 | subprocess commit_hash 無清理，命令注入風險 | ☐ 待實作 |
-| **P2** | SEC-04 | `_brain_cache` 無大小限制，DoS 風險 | ☐ 待實作 |
-| **P2** | OPT-01 | Impact Analysis N+1 查詢 | ☐ 待實作 |
-| **P2** | OPT-02 | SessionStore purge_expired 單條 DELETE × N | ☐ 待實作 |
-| **P2** | OPT-03 | subprocess 無 timeout 防護（extractor.py） | ☐ 待實作 |
-| **P2** | OPT-04 | FTS5 N-gram 切詞三處重複，維護不同步 | ☐ 待實作 |
-| **P2** | OPT-05 | Hybrid Search FTS/Vector 權重硬編碼，無法調整 | ☐ 待實作 |
-| **P2** | OPT-06 | Extractor LLM 呼叫無重試，單次失敗整個 commit 跳過 | ☐ 待實作 |
-| **P2** | FEAT-01 | Decay Engine 無自動觸發（只有手動 CLI） | ☐ 待實作 |
-| **P2** | FEAT-02 | MCP 工具缺 `batch_add_knowledge` | ☐ 待實作 |
-| **P2** | FEAT-03 | ContextEngineer 節點類型預算無上限，Pitfall 可擠爆 | ☐ 待實作 |
+| **P2** | SEC-01 | workdir symlink 路徑遍歷檢查時序錯誤 | ✅ v0.26.0 |
+| **P2** | SEC-02 | scope 白名單正則缺 anchor，可繞過 | ✅ v0.25.0 |
+| **P2** | SEC-03 | subprocess commit_hash 無清理，命令注入風險 | ✅ v0.26.0 |
+| **P2** | SEC-04 | `_brain_cache` 無大小限制，DoS 風險 | ✅ v0.26.0 |
+| **P2** | OPT-01 | Impact Analysis N+1 查詢 | ✅ v0.26.0 |
+| **P2** | OPT-02 | SessionStore purge_expired 單條 DELETE × N | ✅ v0.25.0 |
+| **P2** | OPT-03 | subprocess 無 timeout 防護（extractor.py） | ✅ v0.26.0 |
+| **P2** | OPT-04 | FTS5 N-gram 切詞三處重複，維護不同步 | ✅ v0.25.0 |
+| **P2** | OPT-05 | Hybrid Search FTS/Vector 權重硬編碼，無法調整 | ✅ v0.26.0 |
+| **P2** | OPT-06 | Extractor LLM 呼叫無重試，單次失敗整個 commit 跳過 | ✅ v0.26.0 |
+| **P2** | FEAT-01 | Decay Engine 無自動觸發（只有手動 CLI） | ✅ v0.26.0 |
+| **P2** | FEAT-02 | MCP 工具缺 `batch_add_knowledge` | ✅ v0.26.0 |
+| **P2** | FEAT-03 | ContextEngineer 節點類型預算無上限，Pitfall 可擠爆 | ✅ v0.26.0 |
 | **P3** | FEAT-04 | 知識節點缺版本 diff 視圖（`brain history <id> --diff`） | ☐ 待實作 |
 | **P3** | FEAT-05 | 匯入/匯出格式只有 CSV，缺 JSON / GraphML | ☐ 待實作 |
 | **P3** | FEAT-06 | BrainDB 無備份策略，毀損無恢復 | ☐ 待實作 |

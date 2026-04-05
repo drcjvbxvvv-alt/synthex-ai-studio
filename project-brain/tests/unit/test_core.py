@@ -2909,29 +2909,30 @@ class TestDef04SchemaMigrations:
 class TestOpt02AdaptiveWeights:
     """OPT-02: _adaptive_weights() returns correct (fts_w, vec_w) for queries."""
 
-    def test_short_query_favours_fts(self):
+    def test_short_query_favours_fts(self, tmp_path):
         """1–2 term query → fts_weight > vec_weight."""
         from project_brain.brain_db import BrainDB
-        fw, vw = BrainDB._adaptive_weights("JWT")
+        fw, vw = BrainDB(tmp_path)._adaptive_weights("JWT")
         assert fw > vw, f"Short query should favour FTS (fw={fw}, vw={vw})"
 
-    def test_long_query_favours_vector(self):
+    def test_long_query_favours_vector(self, tmp_path):
         """5+ term query → vec_weight > fts_weight."""
         from project_brain.brain_db import BrainDB
-        fw, vw = BrainDB._adaptive_weights("how do I configure JWT RS256 in microservices")
+        fw, vw = BrainDB(tmp_path)._adaptive_weights("how do I configure JWT RS256 in microservices")
         assert vw > fw, f"Long query should favour vector (fw={fw}, vw={vw})"
 
-    def test_weights_sum_to_one(self):
+    def test_weights_sum_to_one(self, tmp_path):
         """fts_weight + vec_weight must equal 1.0 for any query."""
         from project_brain.brain_db import BrainDB
+        db = BrainDB(tmp_path)
         for q in ["JWT", "short", "this is a medium length query text", "a b c d e f g"]:
-            fw, vw = BrainDB._adaptive_weights(q)
+            fw, vw = db._adaptive_weights(q)
             assert abs(fw + vw - 1.0) < 1e-9, f"Weights don't sum to 1 for '{q}'"
 
-    def test_cjk_heavy_query_favours_fts(self):
+    def test_cjk_heavy_query_favours_fts(self, tmp_path):
         """CJK-heavy query → fts_weight ≥ vec_weight."""
         from project_brain.brain_db import BrainDB
-        fw, vw = BrainDB._adaptive_weights("身份驗證JWT設定")
+        fw, vw = BrainDB(tmp_path)._adaptive_weights("身份驗證JWT設定")
         assert fw >= vw, f"CJK query should favour FTS (fw={fw}, vw={vw})"
 
     def test_hybrid_search_uses_adaptive_weights(self, tmp_path):

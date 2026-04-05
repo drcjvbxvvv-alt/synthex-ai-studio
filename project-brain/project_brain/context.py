@@ -66,6 +66,44 @@ EXPAND_LIMIT = int(os.environ.get("BRAIN_EXPAND_LIMIT", "15"))
 # Lower (e.g. 0.70) = more aggressive dedup, fewer redundant sections.
 DEDUP_THRESHOLD = float(os.environ.get("BRAIN_DEDUP_THRESHOLD", "0.85"))
 
+# FEAT-03: per-type context budget limits (env var overrides)
+# Override with BRAIN_LIMIT_PITFALL, BRAIN_LIMIT_DECISION, etc.
+_DEFAULT_TYPE_LIMITS: dict[str, int] = {
+    "Pitfall":  3,
+    "Decision": 2,
+    "Rule":     3,
+    "ADR":      1,
+    "Note":     2,
+}
+
+
+def _get_type_limit(node_type: str, brain_dir: "Path | None" = None) -> int:
+    """FEAT-03: Return per-type context limit, resolved from (in priority order):
+    1. Env var BRAIN_LIMIT_<TYPE> (e.g. BRAIN_LIMIT_PITFALL=5)
+    2. .brain/config.json  {"context": {"limits": {"Pitfall": 5}}}
+    3. Hardcoded defaults in _DEFAULT_TYPE_LIMITS
+    """
+    # 1. Env var
+    env_val = os.environ.get(f"BRAIN_LIMIT_{node_type.upper()}")
+    if env_val:
+        try:
+            return max(1, int(env_val))
+        except ValueError:
+            pass
+    # 2. config.json
+    if brain_dir is not None:
+        try:
+            cfg_path = Path(brain_dir) / "config.json"
+            if cfg_path.exists():
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                lim = cfg.get("context", {}).get("limits", {}).get(node_type)
+                if lim is not None:
+                    return max(1, int(lim))
+        except Exception:
+            pass
+    # 3. Default
+    return _DEFAULT_TYPE_LIMITS.get(node_type, 2)
+
 
 @functools.lru_cache(maxsize=1024)  # PERF-03: cache repeated token counts
 def _count_tokens(text: str) -> int:
@@ -185,10 +223,12 @@ class ContextEngineer:
             # v1.1：向量語義搜尋（若 chromadb 已安裝）
             if self.vm and self.vm.available:
                 vm_results = self.vm.search(task, top_k=8)
-                pitfalls  = [r for r in vm_results if r.get("type") == "Pitfall"][:3]
-                decisions = [r for r in vm_results if r.get("type") == "Decision"][:2]
-                rules     = [r for r in vm_results if r.get("type") == "Rule"][:2]
-                adrs      = [r for r in vm_results if r.get("type") == "ADR"][:1]
+                # FEAT-03: per-type limits from env/config
+                _bd = self.brain_dir
+                pitfalls  = [r for r in vm_results if r.get("type") == "Pitfall" ][:_get_type_limit("Pitfall",  _bd)]
+                decisions = [r for r in vm_results if r.get("type") == "Decision"][:_get_type_limit("Decision", _bd)]
+                rules     = [r for r in vm_results if r.get("type") == "Rule"    ][:_get_type_limit("Rule",     _bd)]
+                adrs      = [r for r in vm_results if r.get("type") == "ADR"     ][:_get_type_limit("ADR",      _bd)]
 
             # FTS5 備援：向量搜尋空結果或未安裝時啟用
             # A-1：查詢擴展 — 多個搜尋詞 OR 組合，解決同義詞召回問題
@@ -233,11 +273,13 @@ class ContextEngineer:
                             merged.append(r)
                             seen_ids.add(r.get("id"))
                     return merged[:limit]
-                pitfalls  = _search_batch(expanded_terms, node_type="Pitfall",  limit=3)
-                decisions = _search_batch(expanded_terms, node_type="Decision", limit=2)
-                rules     = _search_batch(expanded_terms, node_type="Rule",     limit=3)  # BUG-E01: 2→3
-                adrs      = _search_batch(expanded_terms, node_type="ADR",      limit=1)
-                notes     = _search_batch(expanded_terms, node_type="Note",     limit=2)  # A-24
+                # FEAT-03: per-type limits from env/config (overrides hardcoded defaults)
+                _bd = self.brain_dir
+                pitfalls  = _search_batch(expanded_terms, node_type="Pitfall",  limit=_get_type_limit("Pitfall",  _bd))
+                decisions = _search_batch(expanded_terms, node_type="Decision", limit=_get_type_limit("Decision", _bd))
+                rules     = _search_batch(expanded_terms, node_type="Rule",     limit=_get_type_limit("Rule",     _bd))
+                adrs      = _search_batch(expanded_terms, node_type="ADR",      limit=_get_type_limit("ADR",      _bd))
+                notes     = _search_batch(expanded_terms, node_type="Note",     limit=_get_type_limit("Note",     _bd))
 
             # v5.1 修正：先到先服務偏見 → importance + confidence 加權排序後填充
             # 原本按搜尋順序直接填，導致長文低品質知識擠佔高品質短知識的 Budget

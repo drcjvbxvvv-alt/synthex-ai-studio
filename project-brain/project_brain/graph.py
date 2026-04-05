@@ -705,19 +705,35 @@ class KnowledgeGraph:
                 """, (node_id,)).fetchall()
             return [dict(r) for r in rows]
 
-        # BFS 多跳查詢
+        # OPT-01: BFS 多跳查詢 — 批量 IN 查詢取代逐節點 N+1
         visited = {node_id}
         frontier = [node_id]
         all_results = []
         for _ in range(depth):
+            if not frontier:
+                break
+            placeholders = ",".join("?" * len(frontier))
+            if relation:
+                sql = (
+                    f"SELECT n.*, e.relation, e.note FROM edges e "
+                    f"JOIN nodes n ON n.id = e.target_id "
+                    f"WHERE e.source_id IN ({placeholders}) AND e.relation = ?"
+                )
+                rows = self._conn.execute(sql, frontier + [relation]).fetchall()
+            else:
+                sql = (
+                    f"SELECT n.*, e.relation, e.note FROM edges e "
+                    f"JOIN nodes n ON n.id = e.target_id "
+                    f"WHERE e.source_id IN ({placeholders})"
+                )
+                rows = self._conn.execute(sql, frontier).fetchall()
             next_frontier = []
-            for nid in frontier:
-                neighbors = self.neighbors(nid, relation, depth=1)
-                for nb in neighbors:
-                    if nb["id"] not in visited:
-                        visited.add(nb["id"])
-                        next_frontier.append(nb["id"])
-                        all_results.append(nb)
+            for row in rows:
+                nb = dict(row)
+                if nb["id"] not in visited:
+                    visited.add(nb["id"])
+                    next_frontier.append(nb["id"])
+                    all_results.append(nb)
             frontier = next_frontier
         return all_results
 
@@ -744,12 +760,14 @@ class KnowledgeGraph:
     # ── 查詢輔助 ──────────────────────────────────────────────────
 
     def impact_analysis(self, component_id: str) -> dict:
-        """衝擊分析：修改 component 可能影響哪些地方"""
-        direct    = self.neighbors(component_id, "DEPENDS_ON", depth=1)
+        """衝擊分析：修改 component 可能影響哪些地方（OPT-01: 減少 N+1 查詢）"""
+        # Single query for all depth-1 neighbors (covers direct, pitfalls, rules)
+        all_direct = self.neighbors(component_id, depth=1)
+        direct   = [n for n in all_direct if n.get("relation") == "DEPENDS_ON"]
+        pitfalls = [n for n in all_direct if n.get("relation") == "CAUSED_BY"]
+        rules    = [n for n in all_direct if n.get("type") == "Rule"]
+        # depth=2 BFS is now batch-queried (OPT-01)
         indirect  = self.neighbors(component_id, depth=2)
-        pitfalls  = self.neighbors(component_id, "CAUSED_BY",  depth=1)
-        rules     = [n for n in self.neighbors(component_id)
-                     if n.get("type") == "Rule"]
         return {
             "target":    self.get_node(component_id),
             "direct":    direct,

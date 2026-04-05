@@ -35,6 +35,7 @@ import time
 import logging
 import argparse
 import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,9 @@ _SESSION_TTL_SECS = 1800  # 30 分鐘無呼叫自動清除
 _CLEANUP_DAEMON_INTERVAL = 300  # 每 5 分鐘執行一次清理
 _cleanup_daemon_started = False  # BUG-04: guard against multiple starts
 _cleanup_daemon_lock = threading.Lock()
+_DECAY_DAEMON_INTERVAL = int(os.environ.get("BRAIN_DECAY_INTERVAL", str(24 * 3600)))  # FEAT-01: daily decay
+_decay_daemon_started = False
+_decay_daemon_lock = threading.Lock()
 
 
 def _cleanup_expired_sessions() -> None:
@@ -102,6 +106,12 @@ def _safe_str(value: Any, max_len: int, field: str) -> str:
     return cleaned
 
 
+_FORBIDDEN_ROOTS: tuple[Path, ...] = tuple(
+    Path(p) for p in ("/etc", "/sys", "/proc", "/dev", "/boot", "/run")
+    if Path(p).exists()
+)
+
+
 def _validate_workdir(workdir: str) -> Path:
     """驗證工作目錄：存在、無路徑遍歷、已初始化"""
     if not workdir:
@@ -112,6 +122,7 @@ def _validate_workdir(workdir: str) -> Path:
     if ".." in raw.parts:
         raise ValueError("工作目錄路徑不允許包含 ..")
 
+    # SEC-01: resolve symlinks first, then validate resolved path
     path = raw.resolve()
 
     if not path.exists():
@@ -119,6 +130,15 @@ def _validate_workdir(workdir: str) -> Path:
 
     if not path.is_dir():
         raise NotADirectoryError(f"工作目錄不是目錄：{path}")
+
+    # SEC-01: block symlink-based traversal into forbidden system directories
+    for forbidden in _FORBIDDEN_ROOTS:
+        try:
+            path.relative_to(forbidden)
+            raise ValueError(f"工作目錄不允許位於系統目錄 {forbidden} 內")
+        except ValueError as _ve:
+            if "系統目錄" in str(_ve):
+                raise
 
     # 確認已初始化
     brain_dir = path / ".brain"
@@ -141,9 +161,10 @@ def _find_brain_root(start: str) -> Path | None:
     return None
 
 
-# 多工作目錄 Brain 實例快取（key = resolved path str）
-_brain_cache: dict[str, Any] = {}
-_cache_lock  = threading.Lock()   # SEC-05: protect _brain_cache concurrent writes
+# SEC-04: LRU cache with max size to prevent DoS via unlimited workdir creation
+_MAX_BRAIN_CACHE = int(os.environ.get("BRAIN_CACHE_SIZE", "32"))
+_brain_cache: "OrderedDict[str, Any]" = OrderedDict()  # LRU: oldest entry at front
+_cache_lock  = threading.Lock()                         # SEC-05: protect _brain_cache concurrent writes
 
 
 # ── MCP Server 主體 ─────────────────────────────────────────────
@@ -176,11 +197,18 @@ def create_server(workdir: str) -> Any:
         key = str(root)
         with _cache_lock:   # SEC-05: atomic read-check-write
             if key not in _brain_cache:
+                # SEC-04: evict oldest entry if cache is full
+                if len(_brain_cache) >= _MAX_BRAIN_CACHE:
+                    oldest_key, _ = _brain_cache.popitem(last=False)
+                    logger.debug("SEC-04: evicted brain cache entry %s", oldest_key)
                 try:
                     _brain_cache[key] = ProjectBrain(key)
                 except Exception as _e:
                     logger.warning("ProjectBrain init failed for %s, falling back: %s", key, _e)
                     return brain
+            else:
+                # LRU: move to end (most recently used)
+                _brain_cache.move_to_end(key)
             return _brain_cache[key]
 
     # Minimal FastMCP init — different versions have different kwargs
@@ -487,6 +515,70 @@ def create_server(workdir: str) -> Any:
         except Exception as e:
             logger.error("add_knowledge 內部錯誤：%s", e)
             return {"node_id": "", "success": False, "error": "加入失敗"}
+
+    # ── Tool 4b：批量加入知識 (FEAT-02) ────────────────────────
+    @mcp.tool()
+    def batch_add_knowledge(
+        items:   "list[dict]",
+        workdir: str = "",
+    ) -> dict:
+        """
+        批量加入多筆知識到知識庫（單次呼叫，降低 MCP round-trip 開銷）。
+
+        Args:
+            items:   知識清單，每筆格式與 add_knowledge 相同：
+                     {"title": str, "content": str, "kind": str,
+                      "scope": str, "tags": list, "confidence": float,
+                      "description": str}
+                     最多 50 筆。
+            workdir: Claude Code 當前工作目錄
+
+        Returns:
+            {"ok": true, "created": N, "node_ids": [...], "errors": [...]}
+        """
+        _rate_check()
+        MAX_BATCH = 50
+        raw_items = items[:MAX_BATCH] if isinstance(items, list) else []
+        b = _resolve_brain(workdir)
+        valid_kinds = {"Note", "Decision", "Pitfall", "Rule", "ADR", "Component"}
+        node_ids: list[str] = []
+        errors:   list[str] = []
+
+        for idx, item in enumerate(raw_items):
+            if not isinstance(item, dict):
+                errors.append(f"item[{idx}] is not a dict")
+                continue
+            try:
+                title_c   = _safe_str(str(item.get("title", "")),   MAX_TITLE_LEN,   "title")
+                content_c = _safe_str(str(item.get("content", "")), MAX_CONTENT_LEN, "content")
+                desc_c    = _safe_str(str(item.get("description", "")), 300, "description")
+                kind      = item.get("kind", "Note")
+                kind      = kind if kind in valid_kinds else "Note"
+                scope     = str(item.get("scope", "global"))
+                conf      = float(max(0.0, min(1.0, item.get("confidence", 0.8))))
+                safe_tags = [
+                    _safe_str(str(t), 50, "tag")
+                    for t in (item.get("tags") or [])[:MAX_TAGS_COUNT]
+                    if t
+                ]
+                node_id = b.add_knowledge(
+                    title=title_c, content=content_c, kind=kind,
+                    tags=safe_tags, confidence=conf, description=desc_c,
+                )
+                if scope and scope != "global" and node_id:
+                    try:
+                        b.db.conn.execute(
+                            "UPDATE nodes SET scope=? WHERE id=?", (scope, node_id)
+                        )
+                        b.db.conn.commit()
+                    except Exception as _se:
+                        logger.warning("batch scope update failed for %s: %s", node_id, _se)
+                node_ids.append(node_id)
+            except Exception as _e:
+                errors.append(f"item[{idx}]: {_e}")
+                logger.warning("FEAT-02: batch_add item[%d] failed: %s", idx, _e)
+
+        return {"ok": True, "created": len(node_ids), "node_ids": node_ids, "errors": errors}
 
     # ── Tool 5：知識庫狀態 ──────────────────────────────────────
     @mcp.tool()
@@ -1123,10 +1215,15 @@ def create_server(workdir: str) -> Any:
                 continue
             try:
                 key = str(root)
-                with _cache_lock:   # SEC-05: atomic read-check-write
+                with _cache_lock:   # SEC-05: atomic read-check-write + SEC-04 LRU
                     if key not in _brain_cache:
+                        if len(_brain_cache) >= _MAX_BRAIN_CACHE:
+                            oldest_key, _ = _brain_cache.popitem(last=False)
+                            logger.debug("SEC-04: evicted brain cache entry %s", oldest_key)
                         from project_brain.engine import ProjectBrain as _PB
                         _brain_cache[key] = _PB(key)
+                    else:
+                        _brain_cache.move_to_end(key)
                     b_inst = _brain_cache[key]
                 project_name = root.name
                 # Get context snippets
@@ -1211,6 +1308,30 @@ def create_server(workdir: str) -> Any:
         except Exception as e:
             logger.error("federation_sync 內部錯誤：%s", e)
             return {"error": str(e), "synced": 0, "skipped": 0, "errors": 1, "details": []}
+
+    # FEAT-01: start daily decay daemon (once per process)
+    global _decay_daemon_started
+    with _decay_daemon_lock:
+        if not _decay_daemon_started:
+            def _decay_daemon_fn():
+                while True:
+                    time.sleep(_DECAY_DAEMON_INTERVAL)
+                    try:
+                        from project_brain.decay_engine import DecayEngine as _DE
+                        _de = _DE(brain.graph, workdir=str(brain.workdir), db=brain.db)
+                        _de.run()
+                        logger.info("FEAT-01: decay pass completed")
+                    except Exception as _e:
+                        logger.debug("FEAT-01: decay daemon error: %s", _e)
+
+            _dt = threading.Thread(
+                target=_decay_daemon_fn,
+                daemon=True,
+                name="brain-decay",
+            )
+            _dt.start()
+            _decay_daemon_started = True
+            logger.debug("FEAT-01: decay daemon started (interval=%ds)", _DECAY_DAEMON_INTERVAL)
 
     # BUG-04: start session cleanup daemon (once per process)
     global _cleanup_daemon_started

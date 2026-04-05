@@ -380,9 +380,25 @@ class BrainDB:
         with self._write_lock:
             yield
 
-    @staticmethod
-    def _adaptive_weights(query: str) -> tuple:
-        """OPT-02: Compute adaptive (fts_weight, vec_weight) based on query.
+    def _load_search_config(self) -> dict:
+        """OPT-05: Load hybrid search weight overrides from .brain/config.json."""
+        try:
+            cfg_path = self.brain_dir / "config.json"
+            if cfg_path.exists():
+                import json as _json
+                data = _json.loads(cfg_path.read_text(encoding="utf-8"))
+                return data.get("search", {})
+        except Exception:
+            pass
+        return {}
+
+    def _adaptive_weights(self, query: str) -> tuple:
+        """OPT-02+OPT-05: Compute adaptive (fts_weight, vec_weight) based on query.
+
+        Weight resolution order (first match wins):
+          1. Env vars BRAIN_FTS_WEIGHT / BRAIN_VEC_WEIGHT (overrides everything)
+          2. .brain/config.json  {"search": {"fts_weight": 0.5, "vec_weight": 0.5}}
+          3. Adaptive heuristics (OPT-02 baseline)
 
         Heuristics:
           - Short query (≤ 2 terms) or CJK-heavy → favour FTS5 (exact bigram index).
@@ -391,7 +407,37 @@ class BrainDB:
 
         Returns: (fts_weight, vec_weight) that sum to 1.0.
         """
-        import re
+        import os as _os, re
+        # 1. Env var overrides
+        _env_fts = _os.environ.get("BRAIN_FTS_WEIGHT")
+        _env_vec = _os.environ.get("BRAIN_VEC_WEIGHT")
+        if _env_fts or _env_vec:
+            try:
+                fw = float(_env_fts) if _env_fts else None
+                vw = float(_env_vec) if _env_vec else None
+                if fw is not None and vw is None:
+                    vw = 1.0 - fw
+                elif vw is not None and fw is None:
+                    fw = 1.0 - vw
+                total = fw + vw
+                if total > 0:
+                    return (fw / total, vw / total)
+            except (ValueError, TypeError):
+                pass
+
+        # 2. .brain/config.json overrides
+        scfg = self._load_search_config()
+        if "fts_weight" in scfg or "vec_weight" in scfg:
+            try:
+                fw = float(scfg.get("fts_weight", 0.4))
+                vw = float(scfg.get("vec_weight", 0.6))
+                total = fw + vw
+                if total > 0:
+                    return (fw / total, vw / total)
+            except (ValueError, TypeError):
+                pass
+
+        # 3. Adaptive heuristics
         tokens = re.findall(r"[a-zA-Z0-9_]{2,}", query)
         cjk    = re.findall(r"[\u4e00-\u9fff]", query)
         n_terms = len(tokens) + len(cjk) // 2    # every 2 CJK chars ≈ 1 semantic term

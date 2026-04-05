@@ -4,6 +4,69 @@
 
 ---
 
+## v0.26.0（2026-04-06）— P2 安全強化 + 效能優化 + 功能補全
+
+測試基準：624 passed（59 unit tests in `test_mem_improvements.py`）
+
+### SEC-01 — workdir 符號連結路徑遍歷防護
+
+- `mcp_server.py` `_validate_workdir()`：新增 `_FORBIDDEN_ROOTS` 常數（`/etc`, `/sys`, `/proc`, `/dev`, `/boot`, `/run`）
+- 先 `.resolve()` 再驗證解析後路徑不在禁止根目錄內，防止 symlink 繞過
+- 防護點：先前只檢查 `..` in parts，symlink `/tmp/evil -> /etc` 可完全繞過
+
+### SEC-03 — subprocess commit_hash 注入防護
+
+- `extractor.py`：`re.fullmatch(r"[0-9a-f]{7,40}", commit_hash)` 驗證後再執行 git subprocess
+- 無效 hash 直接 skip 並 `logger.warning`，不進入 subprocess
+
+### SEC-04 — `_brain_cache` LRU 大小限制
+
+- `mcp_server.py`：`_brain_cache: dict` 改為 `OrderedDict`（from collections）
+- 新增 `_MAX_BRAIN_CACHE = int(os.environ.get("BRAIN_CACHE_SIZE", "32"))`
+- `_resolve_brain()`：cache hit → `move_to_end(key)`；cache miss + 超限 → `popitem(last=False)` 淘汰最舊
+- `multi_brain_query` 的直接 cache 操作同步套用 LRU 邏輯
+
+### OPT-01 — Impact Analysis N+1 查詢消滅
+
+- `graph.py` `neighbors()` BFS 多跳改為批量 `IN (?)` 查詢，從每節點一次 DB 呼叫降為每跳一次
+- `impact_analysis()`：原 4 次 `neighbors()` 呼叫合併為 1 次 `neighbors(depth=1)`，再按 `relation` / `type` 分流
+
+### OPT-03 — subprocess timeout 防護
+
+- `extractor.py` 所有 `subprocess.check_output` 加 `timeout=30`
+- `TimeoutExpired` 捕獲後 `logger.warning` + 設 `diff = ""`，不中斷整個掃描
+
+### OPT-05 — Hybrid Search 權重可設定化
+
+- `brain_db.py` `_adaptive_weights()` 從 `@staticmethod` 改為 instance method
+- 權重解析優先順序：1. env var `BRAIN_FTS_WEIGHT` / `BRAIN_VEC_WEIGHT` → 2. `.brain/config.json` `{"search": {"fts_weight": X}}` → 3. 自適應啟發
+- 新增 `_load_search_config()` 讀取 `.brain/config.json` 的 `search` 節
+
+### OPT-06 — Extractor LLM 指數退避重試
+
+- `extractor.py` `_call()`：最多 3 次重試，延遲 1s / 2s
+- 可重試條件：`ratelimit` / `rate_limit` / `timeout` / `overload` / `529` / `503` 類型錯誤
+
+### FEAT-01 — Decay Engine 日常自動執行
+
+- `mcp_server.py`：新增 `_DECAY_DAEMON_INTERVAL`（預設 86400s，可 `BRAIN_DECAY_INTERVAL` 覆寫）
+- `create_server()` 結尾啟動 `brain-decay` daemon thread，每日呼叫 `DecayEngine.run()`
+- 以 `_decay_daemon_started` 旗標防止多次啟動
+
+### FEAT-02 — `batch_add_knowledge` MCP 工具
+
+- 新增 `batch_add_knowledge(items: list[dict], workdir: str)` MCP tool
+- 最多 50 筆批量新增，單次 MCP round-trip，減少逐筆呼叫的網路開銷
+- 回傳 `{"ok": True, "created": N, "node_ids": [...], "errors": [...]}`
+
+### FEAT-03 — ContextEngineer 節點類型預算可設定化
+
+- `context.py`：新增 `_DEFAULT_TYPE_LIMITS` 與 `_get_type_limit(node_type, brain_dir)` 函式
+- 限制解析優先順序：1. env var `BRAIN_LIMIT_PITFALL` 等 → 2. `.brain/config.json` `{"context": {"limits": {"Pitfall": N}}}` → 3. 原始預設值
+- 向量搜尋路徑與 FTS 路徑均套用可設定限制
+
+---
+
 ## v0.25.0（2026-04-06）— P1 Bug Blitz：資料正確性六項修復
 
 測試基準：468 passed（+14 新測試），原 454 passed 基準
