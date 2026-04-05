@@ -176,8 +176,8 @@ class _Handler(BaseHTTPRequestHandler):
                         f"SELECT {cols} FROM nodes LIMIT ?", (limit,)
                     ).fetchall()
             except sqlite3.OperationalError:
-                # legacy schema: 'type' instead of 'kind', no confidence/is_pinned
-                cols2 = "id, type as kind, title, content, tags, created_at"
+                # legacy schema: 'type' instead of 'kind'
+                cols2 = "id, type as kind, title, content, tags, created_at, confidence, is_pinned, scope"
                 if kind:
                     sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
                     rows = conn.execute(
@@ -241,22 +241,28 @@ class _Handler(BaseHTTPRequestHandler):
                     "SELECT COUNT(*) FROM edges").fetchone()[0]
             except Exception:
                 edges = 0
+            # low_conf / pinned 獨立查詢，不受 kind 欄位不存在影響
+            try:
+                low_conf = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE confidence < 0.3"
+                ).fetchone()[0]
+            except Exception:
+                low_conf = 0
+            try:
+                pinned = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE is_pinned = 1"
+                ).fetchone()[0]
+            except Exception:
+                pinned = 0
             try:
                 by_kind = conn.execute(
                     "SELECT kind, COUNT(*) cnt, AVG(confidence) avg_conf "
                     "FROM nodes GROUP BY kind ORDER BY cnt DESC"
                 ).fetchall()
-                low_conf = conn.execute(
-                    "SELECT COUNT(*) FROM nodes WHERE confidence < 0.3"
-                ).fetchone()[0]
-                pinned = conn.execute(
-                    "SELECT COUNT(*) FROM nodes WHERE is_pinned = 1"
-                ).fetchone()[0]
             except sqlite3.OperationalError:
                 by_kind = conn.execute(
                     "SELECT type as kind, COUNT(*) cnt FROM nodes GROUP BY type ORDER BY cnt DESC"
                 ).fetchall()
-                low_conf = pinned = 0
             try:
                 conf_dist = conn.execute("""
                     SELECT
@@ -355,8 +361,8 @@ class _Handler(BaseHTTPRequestHandler):
                 ).fetchone()
             except sqlite3.OperationalError:
                 row = conn.execute(
-                    "SELECT id, type as kind, title, content, tags, created_at "
-                    "FROM nodes WHERE id=?", (safe,)
+                    "SELECT id, type as kind, title, content, tags, created_at, "
+                    "confidence, is_pinned, scope FROM nodes WHERE id=?", (safe,)
                 ).fetchone()
             if not row:
                 self._json({"error": "節點不存在"}, 404)
@@ -1360,7 +1366,7 @@ def create_app(workdir, **_):
                         f"SELECT {cols} FROM nodes LIMIT ?", (limit,)
                     ).fetchall()
             except sqlite3.OperationalError:
-                cols2 = "id, type as kind, title, content, tags, created_at"
+                cols2 = "id, type as kind, title, content, tags, created_at, confidence, is_pinned, scope"
                 if kind:
                     sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
                     rows = conn.execute(
@@ -1484,8 +1490,8 @@ def create_app(workdir, **_):
                 ).fetchone()
             except sqlite3.OperationalError:
                 row = conn.execute(
-                    "SELECT id, type as kind, title, content, tags, created_at "
-                    "FROM nodes WHERE id=?", (safe,)
+                    "SELECT id, type as kind, title, content, tags, created_at, "
+                    "confidence, is_pinned, scope FROM nodes WHERE id=?", (safe,)
                 ).fetchone()
             if not row:
                 return jsonify({"error": "節點不存在"}), 404
