@@ -257,6 +257,17 @@ class _Handler(BaseHTTPRequestHandler):
                     "SELECT type as kind, COUNT(*) cnt FROM nodes GROUP BY type ORDER BY cnt DESC"
                 ).fetchall()
                 low_conf = pinned = 0
+            try:
+                conf_dist = conn.execute("""
+                    SELECT
+                        SUM(CASE WHEN confidence >= 0.80 THEN 1 ELSE 0 END) as hi,
+                        SUM(CASE WHEN confidence >= 0.60 AND confidence < 0.80 THEN 1 ELSE 0 END) as med,
+                        SUM(CASE WHEN confidence >= 0.30 AND confidence < 0.60 THEN 1 ELSE 0 END) as low,
+                        SUM(CASE WHEN confidence < 0.30 THEN 1 ELSE 0 END) as vlow
+                    FROM nodes
+                """).fetchone()
+            except Exception:
+                conf_dist = None
         finally:
             conn.close()
         self._json({
@@ -264,6 +275,12 @@ class _Handler(BaseHTTPRequestHandler):
             "total_edges":  edges,
             "low_confidence": low_conf,
             "pinned":       pinned,
+            "conf_dist": {
+                "hi":   int(conf_dist["hi"]  or 0) if conf_dist else 0,
+                "med":  int(conf_dist["med"] or 0) if conf_dist else 0,
+                "low":  int(conf_dist["low"] or 0) if conf_dist else 0,
+                "vlow": int(conf_dist["vlow"] or 0) if conf_dist else 0,
+            },
             "by_kind": [
                 {
                     "kind":  r["kind"] or "Note",
@@ -642,6 +659,11 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
     <div class="s-sec">
       <div class="s-lbl">節點分佈</div>
       <div id="kind-list"></div>
+    </div>
+
+    <div class="s-sec">
+      <div class="s-lbl">信心分布</div>
+      <div id="conf-dist-list"></div>
     </div>
 
     <!-- Search results (shown when searching) -->
@@ -1175,6 +1197,25 @@ async function loadStats() {{
       <span class="kind-name">${{KIND_LABEL[k.kind]||k.kind}}</span>
       <span class="kind-conf">${{(k.avg_confidence*100|0)}}%</span>
       <span class="kind-count">${{k.count}}</span>
+    </div>`).join('');
+  // Confidence distribution
+  const cd = d.conf_dist || {{}};
+  const cdTotal = (cd.hi||0) + (cd.med||0) + (cd.low||0) + (cd.vlow||0) || 1;
+  const cdItems = [
+    {{ label: '✓✓ 權威', count: cd.hi||0,   color: '#34d399', pct: ((cd.hi||0)/cdTotal*100).toFixed(0) }},
+    {{ label: '✓ 已驗證', count: cd.med||0,  color: '#86efac', pct: ((cd.med||0)/cdTotal*100).toFixed(0) }},
+    {{ label: '~ 推斷',   count: cd.low||0,  color: '#fbbf24', pct: ((cd.low||0)/cdTotal*100).toFixed(0) }},
+    {{ label: '⚠ 推測',  count: cd.vlow||0, color: '#f87171', pct: ((cd.vlow||0)/cdTotal*100).toFixed(0) }},
+  ];
+  document.getElementById('conf-dist-list').innerHTML = cdItems.map(c => `
+    <div style="margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+        <span style="color:${{c.color}}">${{c.label}}</span>
+        <span style="color:var(--text2)">${{c.count}} 筆</span>
+      </div>
+      <div style="background:var(--border);border-radius:3px;height:5px">
+        <div style="background:${{c.color}};width:${{c.pct}}%;height:100%;border-radius:3px;transition:width .4s"></div>
+      </div>
     </div>`).join('');
   // Update pill counts
   const countMap = {{}};
