@@ -51,7 +51,7 @@
 | **P1** | REL-01 | `update_node()` FTS 同步失敗後未 rollback，節點資料與 FTS 索引不一致 | FTS 區塊加 `try/except` 後補 `self.conn.rollback()` 並重新 raise | 無 | ⚡ 快速獲益 | ✅ v0.20.0 |
 | **P2** | TEST-04 | `test_web_ui.py` 189 行覆蓋 1604 行 server.py（覆蓋率 < 12%）；信心分布、is_pinned、filterConf 完全無測試 | 補充 Flask test_client 整合測試：stats API、pin/unpin 持久化、conf_dist 結構、圖篩選 | 無 | 🎯 高價值 | 🔲 待辦 |
 | **P2** | UX-01 | WebUI 篩選狀態（kind/信心/釘選/搜尋）刷新即失，大圖（200+ 節點）無法書籤 | 將篩選狀態序列化至 URL hash（`#kind=Rule&conf=hi&q=auth`）；`loadGraph` / `filterConf` 讀寫 `location.hash` | 無 | 📋 計劃執行 | 🔲 待辦 |
-| **P2** | FEAT-08 | WebUI 純唯讀，節點內容只能 CLI 或直接改 DB；日常微調知識需跳出瀏覽器 | 節點面板新增「編輯」模式：可修改 title/content/confidence；`POST /api/node/<id>` 後端端點 | 無 | 📋 計劃執行 | 🔲 待辦 |
+| **P2** | FEAT-08 | WebUI 純唯讀，節點內容只能 CLI 或直接改 DB；日常微調知識需跳出瀏覽器 | 節點面板新增「編輯」模式：可修改 title/content/confidence；`POST /api/node/<id>` 後端端點 | 無 | 📋 計劃執行 | ⏸ 擱置（維持唯讀設計） |
 | **P3** | PERF-07 | `session_store.py` 多處 `SELECT *` 拉取完整 value blob，僅需 metadata 的場景浪費 I/O | 依需求指定欄位：list 操作用 `SELECT key, created_at, expires_at`，content 操作才 `SELECT *` | 無 | 🔵 填空 | 🔲 待辦 |
 | **P3** | FEAT-09 | `brain backfill-git` 預設掃描 200 commits，大型專案無進度回饋，使用者不知道在跑 | Phase 1 每 10 commit 輸出一次進度（`\r[{i}/{total}] ...`）；`--limit 0` 表示不限制 | 無 | 🔵 填空 | 🔲 待辦 |
 | **P3** | OBS-04 | `brain status` 只顯示 DB 檔案統計；無法確認 MCP server 是否真的在回應 | `brain health [--mcp-port N]`：做 TCP connect + 送 `ping` JSON-RPC，回報延遲或錯誤 | 無 | 🏗 長期 | 🔲 待辦 |
@@ -243,7 +243,7 @@ function _restoreHash() {
 
 ---
 
-### FEAT-08 — WebUI 節點行內編輯
+### FEAT-08 — WebUI 節點行內編輯 ⏸ 擱置
 
 **問題**：知識庫管理完全依賴 CLI（`brain update`）或直接改 DB。
 已有節點面板，但只能讀取。日常校正信心分數、修正錯誤描述需要離開瀏覽器。
