@@ -910,7 +910,7 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             author    = meta.get("author", ""),
             meta      = {"confidence": chunk.get("confidence", 0.8)},
         )
-        # FEAT-03: sync valid_from to brain.db so temporal_query works on nodes
+        # FEAT-03: sync valid_from + created_at to brain.db so temporal_query works
         if meta.get("date"):
             try:
                 self.db.add_node(
@@ -920,6 +920,7 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                     content    = chunk["content"],
                     confidence = chunk.get("confidence", 0.8),
                     valid_from = meta["date"],
+                    created_at = meta["date"],  # use actual commit date, not now
                 )
             except Exception as _e:
                 logger.warning("db.add_node sync in _store_chunk failed: %s", _e)

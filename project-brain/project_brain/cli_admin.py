@@ -855,49 +855,15 @@ def _cmd_backfill_git(args):
                 print(f"  ✗ {label} → 跳過（{exc}）")
         print(f"\n  共新增 {total_learned} 個知識節點\n")
 
-    # ── 4. 補正已存在節點的時間戳（原有邏輯，現為輔助步驟）─────────
-    _HASH_RE = _re.compile(r'^[0-9a-f]{7,40}$', _re.I)
-    nodes = db.conn.execute(
-        "SELECT id, source_url, created_at FROM nodes WHERE source_url != ''"
-    ).fetchall()
-
-    ts_updated = 0
-    for row in nodes:
-        node_id, source_url, old_date = row
-        source_url = source_url or ""
-        git_date   = None
-
-        if _HASH_RE.match(source_url):
-            try:
-                r2 = subprocess.run(
-                    ["git", "-C", str(workdir), "show", "-s",
-                     "--format=%aI", source_url],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if r2.returncode == 0:
-                    git_date = r2.stdout.strip().splitlines()[0].strip()
-            except Exception:
-                pass
-        else:
-            try:
-                r2 = subprocess.run(
-                    ["git", "-C", str(workdir), "log", "--follow",
-                     "--format=%aI", "--", source_url],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if r2.returncode == 0:
-                    lines = r2.stdout.strip().splitlines()
-                    if lines:
-                        git_date = lines[-1].strip()   # oldest commit
-            except Exception:
-                pass
-
-        if git_date and git_date != old_date:
-            db.conn.execute(
-                "UPDATE nodes SET created_at=?, updated_at=? WHERE id=?",
-                (git_date, git_date, node_id),
-            )
-            ts_updated += 1
+    # ── 4. 補正 created_at：用 valid_from 覆蓋錯誤的 datetime('now') ────
+    # valid_from 由 _store_chunk 從 commit date 寫入，是可靠的真實時間來源。
+    # 格式：ISO 8601 "2026-04-01T16:13:00+08:00" → 正規化為 "2026-04-01 16:13:00"
+    ts_updated = db.conn.execute("""
+        UPDATE nodes
+        SET created_at = replace(substr(valid_from, 1, 19), 'T', ' ')
+        WHERE length(valid_from) > 0
+          AND substr(valid_from, 1, 10) < substr(created_at, 1, 10)
+    """).rowcount
 
     db.conn.commit()
     print(f"[backfill-git] 時間戳補正：{ts_updated} 個節點")
