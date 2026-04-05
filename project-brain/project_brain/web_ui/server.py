@@ -509,6 +509,10 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 .stat-card .sk{{font-size:10px;color:var(--text2);margin-top:2px}}
 .stat-card.warn .sv{{color:var(--red)}}
 .stat-card.ok .sv{{color:var(--green)}}
+.stat-card.filter-active{{border-color:var(--accent);box-shadow:0 0 0 2px rgba(88,166,255,0.3)}}
+.conf-row{{cursor:pointer;padding:3px 4px;border-radius:4px;margin:-3px -4px}}
+.conf-row:hover{{background:rgba(88,166,255,0.08)}}
+.conf-row.filter-active{{background:rgba(88,166,255,0.15);outline:1px solid var(--accent)}}
 
 /* Filters */
 #filter-wrap{{display:flex;gap:4px;flex-wrap:wrap}}
@@ -644,8 +648,8 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
       <div class="stat-grid">
         <div class="stat-card"><div class="sv" id="s-nodes">—</div><div class="sk">節點</div></div>
         <div class="stat-card"><div class="sv" id="s-edges">—</div><div class="sk">關係</div></div>
-        <div class="stat-card warn"><div class="sv" id="s-low">—</div><div class="sk">低信心</div></div>
-        <div class="stat-card ok"><div class="sv" id="s-pin">—</div><div class="sk">已釘選</div></div>
+        <div class="stat-card warn" id="card-low" onclick="filterConf('vlow')" title="篩選低信心節點" style="cursor:pointer"><div class="sv" id="s-low">—</div><div class="sk">低信心</div></div>
+        <div class="stat-card ok"   id="card-pin" onclick="filterPinned()"    title="篩選已釘選節點"  style="cursor:pointer"><div class="sv" id="s-pin">—</div><div class="sk">已釘選</div></div>
       </div>
     </div>
 
@@ -1012,17 +1016,57 @@ function clearSelection() {{
   applyOpacity();
 }}
 
+// ── Confidence / pinned filters ──────────────────
+let confFilter   = null;   // 'hi'|'med'|'low'|'vlow'|null
+let pinnedFilter = false;
+
+const CONF_RANGE = {{
+  hi:   nd => nd.confidence >= 0.80,
+  med:  nd => nd.confidence >= 0.60 && nd.confidence < 0.80,
+  low:  nd => nd.confidence >= 0.30 && nd.confidence < 0.60,
+  vlow: nd => nd.confidence  < 0.30,
+}};
+
+function filterConf(key) {{
+  confFilter   = (confFilter === key) ? null : key;
+  pinnedFilter = false;
+  const pin = document.getElementById('card-pin');
+  if (pin) pin.classList.remove('filter-active');
+  ['hi','med','low','vlow'].forEach(k => {{
+    const el = document.getElementById('conf-row-' + k);
+    if (el) el.classList.toggle('filter-active', k === confFilter);
+  }});
+  applyOpacity();
+}}
+
+function filterPinned() {{
+  pinnedFilter = !pinnedFilter;
+  confFilter   = null;
+  ['hi','med','low','vlow'].forEach(k => {{
+    const el = document.getElementById('conf-row-' + k);
+    if (el) el.classList.remove('filter-active');
+  }});
+  const pin = document.getElementById('card-pin');
+  if (pin) pin.classList.toggle('filter-active', pinnedFilter);
+  applyOpacity();
+}}
+
 // ── Opacity (filter + search) ───────────────────
 function applyOpacity() {{
   allNodes.forEach(nd => {{
     let vis = true;
-    if (searchHits !== null) vis = searchHits.has(nd.id);
+    if (searchHits  !== null) vis = searchHits.has(nd.id);
+    if (vis && confFilter)    vis = CONF_RANGE[confFilter]?.(nd) ?? true;
+    if (vis && pinnedFilter)  vis = !!nd.is_pinned;
     nd._g.setAttribute('opacity', vis ? (nd.id===selectedId ? 1 : 0.88) : 0.08);
     nd._lbl.setAttribute('opacity', vis ? 0.42 : 0.04);
   }});
   allLinks.forEach(l => {{
-    const vis = searchHits === null || (l._src && l._tgt && searchHits.has(l._src.id) && searchHits.has(l._tgt.id));
-    l._el.setAttribute('opacity', vis ? (selectedId && (l._src?.id===selectedId||l._tgt?.id===selectedId) ? 1 : 0.5) : 0.04);
+    const src = l._src, tgt = l._tgt;
+    let vis = searchHits === null || (src && tgt && searchHits.has(src.id) && searchHits.has(tgt.id));
+    if (vis && confFilter)   vis = (CONF_RANGE[confFilter]?.(src) ?? true) || (CONF_RANGE[confFilter]?.(tgt) ?? true);
+    if (vis && pinnedFilter) vis = !!(src?.is_pinned || tgt?.is_pinned);
+    l._el.setAttribute('opacity', vis ? (selectedId && (src?.id===selectedId||tgt?.id===selectedId) ? 1 : 0.5) : 0.04);
   }});
 }}
 
@@ -1208,13 +1252,13 @@ async function loadStats() {{
   const cd = d.conf_dist || {{}};
   const cdTotal = (cd.hi||0) + (cd.med||0) + (cd.low||0) + (cd.vlow||0) || 1;
   const cdItems = [
-    {{ label: '✓✓ 權威', count: cd.hi||0,   color: '#34d399', pct: ((cd.hi||0)/cdTotal*100).toFixed(0) }},
-    {{ label: '✓ 已驗證', count: cd.med||0,  color: '#86efac', pct: ((cd.med||0)/cdTotal*100).toFixed(0) }},
-    {{ label: '~ 推斷',   count: cd.low||0,  color: '#fbbf24', pct: ((cd.low||0)/cdTotal*100).toFixed(0) }},
-    {{ label: '⚠ 推測',  count: cd.vlow||0, color: '#f87171', pct: ((cd.vlow||0)/cdTotal*100).toFixed(0) }},
+    {{ key: 'hi',   label: '✓✓ 權威', count: cd.hi||0,   color: '#34d399', pct: ((cd.hi||0)/cdTotal*100).toFixed(0) }},
+    {{ key: 'med',  label: '✓ 已驗證', count: cd.med||0,  color: '#86efac', pct: ((cd.med||0)/cdTotal*100).toFixed(0) }},
+    {{ key: 'low',  label: '~ 推斷',   count: cd.low||0,  color: '#fbbf24', pct: ((cd.low||0)/cdTotal*100).toFixed(0) }},
+    {{ key: 'vlow', label: '⚠ 推測',  count: cd.vlow||0, color: '#f87171', pct: ((cd.vlow||0)/cdTotal*100).toFixed(0) }},
   ];
   document.getElementById('conf-dist-list').innerHTML = cdItems.map(c => `
-    <div style="margin-bottom:6px">
+    <div class="conf-row" id="conf-row-${{c.key}}" onclick="filterConf('${{c.key}}')" style="margin-bottom:6px" title="點擊篩選">
       <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
         <span style="color:${{c.color}}">${{c.label}}</span>
         <span style="color:var(--text2)">${{c.count}} 筆</span>
