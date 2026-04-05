@@ -760,78 +760,147 @@ def cmd_index(args):
 
 
 def _cmd_backfill_git(args):
-    """FEAT-07: 回填 git 歷史時間戳，修正 created_at = today 問題。"""
+    """FEAT-07: 從 git 歷史回填知識節點（含正確 created_at 時間戳）。
+
+    兩階段處理：
+    1. 掃描 git log，對尚未學習的 commit 呼叫 learn_from_commit()
+    2. 補正已存在節點中 source_url 可對應到 commit 的時間戳
+    """
     import re as _re
     import subprocess
     from .brain_db import BrainDB
 
-    workdir = Path(_workdir(args)).resolve()
+    workdir  = Path(_workdir(args)).resolve()
     brain_dir = workdir / ".brain"
     if not brain_dir.exists():
         print(f"[backfill-git] 找不到 .brain 目錄：{brain_dir}", file=sys.stderr)
         return 1
 
+    dry_run = getattr(args, "dry_run", False)
+    limit   = getattr(args, "limit", 200)
+
+    # ── 1. 取得 git 歷史 ─────────────────────────────────────────────
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workdir), "log",
+             f"--max-count={limit}", "--pretty=%H|%s|%aI"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            print("[backfill-git] 找不到 git 歷史", file=sys.stderr)
+            return 1
+        all_commits: list[tuple[str, str, str]] = []
+        for line in result.stdout.strip().splitlines():
+            parts = line.split("|", 2)
+            if len(parts) >= 2:
+                all_commits.append((
+                    parts[0].strip(),
+                    parts[1].strip(),
+                    parts[2].strip() if len(parts) > 2 else "",
+                ))
+    except Exception as exc:
+        print(f"[backfill-git] git log 失敗：{exc}", file=sys.stderr)
+        return 1
+
+    # ── 2. 找出已處理的 commit hash ──────────────────────────────────
     db = BrainDB(brain_dir)
-    # 只回填 source_url 為 40-char hex (commit hash) 或 non-empty 的節點
-    # 且 created_at 是今天（代表是初始化時設定的）
+    processed: set[str] = set()
+
+    for row in db.conn.execute(
+        "SELECT DISTINCT source_url FROM nodes WHERE source_url != ''"
+    ).fetchall():
+        url = (row[0] or "").strip()
+        if url:
+            processed.add(url)
+            processed.add(url[:8])
+
+    for row in db.conn.execute(
+        "SELECT DISTINCT source FROM episodes WHERE source LIKE 'git-%'"
+    ).fetchall():
+        src = (row[0] or "").strip()
+        if src.startswith("git-"):
+            processed.add(src[4:])   # short hash stored by cmd_sync
+
+    new_commits = [
+        (h, msg, date) for h, msg, date in all_commits
+        if h not in processed and h[:8] not in processed
+    ]
+
+    print(
+        f"[backfill-git] git 歷史 {len(all_commits)} 筆｜"
+        f"已處理 {len(all_commits) - len(new_commits)}｜"
+        f"待回填 {len(new_commits)}"
+    )
+
+    if dry_run:
+        for h, msg, date in new_commits:
+            print(f"  [dry-run] {h[:8]} ({date[:10]}): {msg[:70]}")
+        return 0
+
+    if not new_commits:
+        print("[backfill-git] 所有 commit 均已學習，無需回填")
+        # still run phase-2 timestamp fix on existing nodes
+    else:
+        # ── 3. 對每個未處理的 commit 呼叫 learn_from_commit ──────────
+        from .engine import ProjectBrain
+        brain = ProjectBrain(str(workdir))
+        total_learned = 0
+        for i, (commit_hash, msg, _date) in enumerate(new_commits):
+            label = f"[{i+1}/{len(new_commits)}] {commit_hash[:8]}: {msg[:55]}"
+            try:
+                learned = brain.learn_from_commit(commit_hash)
+                print(f"  ✓ {label} → {learned} 筆知識")
+                total_learned += learned
+            except Exception as exc:
+                print(f"  ✗ {label} → 跳過（{exc}）")
+        print(f"\n  共新增 {total_learned} 個知識節點\n")
+
+    # ── 4. 補正已存在節點的時間戳（原有邏輯，現為輔助步驟）─────────
+    _HASH_RE = _re.compile(r'^[0-9a-f]{7,40}$', _re.I)
     nodes = db.conn.execute(
         "SELECT id, source_url, created_at FROM nodes WHERE source_url != ''"
     ).fetchall()
 
-    dry_run = getattr(args, "dry_run", False)
-    updated = 0
-    skipped = 0
-    _HASH_RE = _re.compile(r'^[0-9a-f]{7,40}$', _re.I)
-
+    ts_updated = 0
     for row in nodes:
-        node_id   = row[0]
-        source_url = row[1] or ""
-        git_date  = None
+        node_id, source_url, old_date = row
+        source_url = source_url or ""
+        git_date   = None
 
         if _HASH_RE.match(source_url):
-            # source_url is a commit hash
             try:
-                result = subprocess.run(
+                r2 = subprocess.run(
                     ["git", "-C", str(workdir), "show", "-s",
-                     "--format=%ai", source_url],
-                    capture_output=True, text=True, timeout=5
+                     "--format=%aI", source_url],
+                    capture_output=True, text=True, timeout=5,
                 )
-                if result.returncode == 0:
-                    git_date = result.stdout.strip().splitlines()[0].strip()
+                if r2.returncode == 0:
+                    git_date = r2.stdout.strip().splitlines()[0].strip()
             except Exception:
                 pass
         else:
-            # source_url might be a file path — get earliest commit date
             try:
-                result = subprocess.run(
+                r2 = subprocess.run(
                     ["git", "-C", str(workdir), "log", "--follow",
-                     "--format=%ai", "--", source_url],
-                    capture_output=True, text=True, timeout=10
+                     "--format=%aI", "--", source_url],
+                    capture_output=True, text=True, timeout=10,
                 )
-                if result.returncode == 0:
-                    lines = result.stdout.strip().splitlines()
+                if r2.returncode == 0:
+                    lines = r2.stdout.strip().splitlines()
                     if lines:
-                        git_date = lines[-1].strip()  # oldest commit
+                        git_date = lines[-1].strip()   # oldest commit
             except Exception:
                 pass
 
-        if git_date:
-            if dry_run:
-                print(f"  [dry-run] {node_id}: {row[2]} → {git_date}")
-            else:
-                db.conn.execute(
-                    "UPDATE nodes SET created_at=?, updated_at=? WHERE id=?",
-                    (git_date, git_date, node_id)
-                )
-            updated += 1
-        else:
-            skipped += 1
+        if git_date and git_date != old_date:
+            db.conn.execute(
+                "UPDATE nodes SET created_at=?, updated_at=? WHERE id=?",
+                (git_date, git_date, node_id),
+            )
+            ts_updated += 1
 
-    if not dry_run:
-        db.conn.commit()
-
-    mode = "[dry-run] " if dry_run else ""
-    print(f"{mode}回填完成：{updated} 個節點時間戳已更新，{skipped} 個跳過（無法解析 git 日期）")
+    db.conn.commit()
+    print(f"[backfill-git] 時間戳補正：{ts_updated} 個節點")
     return 0
 
 

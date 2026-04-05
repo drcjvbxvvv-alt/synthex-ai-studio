@@ -4,6 +4,20 @@
 
 ---
 
+## v0.17.0（2026-04-05）— backfill-git 完整重寫
+
+### FEAT-07（修訂）— `brain backfill-git` 全歷史回填
+
+舊版只能更新已存在節點的時間戳，無法從未學習的舊 commit 建立知識節點。本次重寫解決根本問題。
+
+- **`cli_admin.py`** `_cmd_backfill_git()` 全面重寫，兩階段處理：
+  - **Phase 1（建立）**：呼叫 `git log --max-count=N --pretty=%H|%s|%aI` 取得全部 commit；查詢 `nodes.source_url` 與 `episodes.source` 確認已處理清單；對每個未處理 commit 呼叫 `engine.learn_from_commit(commit_hash)`，自動以正確的 commit 日期作為 `created_at`
+  - **Phase 2（補正）**：對 DB 中已存在但時間戳有誤的節點批次修正 `created_at`
+- **`cli_utils.py`** `backfill-git` 新增 `--limit N`（預設 200）控制掃描深度
+- 測試：執行 `brain backfill-git`，117 筆 git 歷史中回填 102 筆 commit，新增 93 個知識節點（時間戳均為各 commit 實際日期）
+
+---
+
 ## v0.16.0（2026-04-05）— P3 長期改善版
 
 ### FEAT-05 — Analytics 時序圖表 + HTML 報告

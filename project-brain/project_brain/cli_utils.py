@@ -629,9 +629,11 @@ def _build_parser():
     p.add_argument('--remove-source', dest='remove_source', default=None,
                    help='sync：移除來源（依名稱）')
 
-    p = mkp('backfill-git', 'FEAT-07: 回填 git 歷史時間戳至 .brain 節點')
+    p = mkp('backfill-git', 'FEAT-07: 從 git 歷史回填知識節點至 .brain')
     p.add_argument('--dry-run', action='store_true', dest='dry_run',
-                   help='只顯示要更新的內容，不實際修改')
+                   help='只顯示要處理的 commit，不實際寫入')
+    p.add_argument('--limit', type=int, default=200, metavar='N',
+                   help='最多掃描最近 N 筆 commit（預設 200）')
 
     p = mkp('counterfactual', 'DEEP-03：反事實推理')
     p.add_argument('hypothesis', nargs='+', help='假設條件（如：如果我們用 NoSQL）')
