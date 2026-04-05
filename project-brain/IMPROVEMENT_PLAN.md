@@ -1,6 +1,6 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.15.0（2026-04-05）
+> **當前版本**：v0.16.0（2026-04-05）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
 > **分析基準**：873 tests collected；v0.13.0 所有 P1+P2 已完成，867 passed / 5 skipped / 1 intermittent。
 
@@ -34,12 +34,12 @@
 | **P2** | OBS-02 | `decay_engine` 缺乏 F1–F7 各因子的量測輸出（無法調參） | 在 `_apply_decay()` 結束時 `db.emit("decay_factors", {f1, f2, ..., f7, final})`  | OBS-01 ✅ | 📋 計劃執行 | ✅ v0.14.0 |
 | **P2** | OBS-03 | `rollback_node()` 無審計記錄（誰在何時還原了什麼）| `node_history` 新增 `changed_by TEXT`；`rollback_node()` 寫入還原事件 | FEAT-01 ✅ | 📋 計劃執行 | ✅ v0.15.0 |
 | **P2** | SEC-04 | Federation PII 過濾缺失 IP（`192.168.x.x`）、Slack URL、Cloud service URL | 擴充 `_strip_pii()` regex 模式集 | 無 | 📋 計劃執行 | ✅ v0.15.0 |
-| **P2** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天數據後執行對比測試；`analytics_engine` 新增 `decay_impact_score()` | 90天數據 | ⏳ 等待 | 待辦 |
-| **P3** | FEAT-05 | `analytics_engine` 無時序圖表：知識庫成長曲線、信心分布遷移無法可視化 | `generate_timeseries()` 方法；`brain report --format html` 輸出 Chart.js 圖表 | OBS-01 ✅ | 🏗 長期 |
-| **P3** | FEAT-06 | `brain doctor` 只做基礎健康檢查，無法偵測矛盾節點比例、deprecated 比例 | 新增矛盾節點數量報告；deprecated 比例警告（> 20% 觸發 ⚠） | ARCH-06 ✅ | 📋 計劃執行 |
-| **P3** | ARCH-08 | `conflict_resolver.py` 快取無 TTL 淘汰，長執行記憶體持續增長 | 加入 TTL 驅逐（已有 `CACHE_SECONDS=86400` 常數，但無清理機制） | ARCH-06 ✅ | 🔵 填空 |
-| **P3** | TEST-02 | 缺乏針對 Decay Engine 的 100K 節點負載測試 | `tests/chaos/test_decay_load.py`：建立 100K 節點知識庫，量測衰減時間 | 無 | 🏗 長期 |
-| **P3** | TEST-03 | Chaos 測試有硬編碼 `/home/claude/synthex_v10/brain.py` 路徑（永遠失敗） | 用 `Path(__file__).parent` 或 fixture 取代硬編碼路徑 | 無 | ⚡ 快速獲益 |
+| **P2** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天數據後執行對比測試；`analytics_engine` 新增 `decay_impact_score()` | 90天數據 | ⏳ 等待 | → `tests/TEST_PLAN.md §7` |
+| **P3** | FEAT-05 | `analytics_engine` 無時序圖表：知識庫成長曲線、信心分布遷移無法可視化 | `generate_timeseries()` 方法；`brain report --format html` 輸出 Chart.js 圖表 | OBS-01 ✅ | 🏗 長期 | ✅ v0.16.0 |
+| **P3** | FEAT-06 | `brain doctor` 只做基礎健康檢查，無法偵測矛盾節點比例、deprecated 比例 | 新增矛盾節點數量報告；deprecated 比例警告（> 20% 觸發 ⚠） | ARCH-06 ✅ | 📋 計劃執行 | ✅ v0.16.0 |
+| **P3** | ARCH-08 | `conflict_resolver.py` 快取無 TTL 淘汰，長執行記憶體持續增長 | 加入 TTL 驅逐（已有 `CACHE_SECONDS=86400` 常數，但無清理機制） | ARCH-06 ✅ | 🔵 填空 | ✅ v0.16.0 |
+| **P3** | TEST-02 | 缺乏針對 Decay Engine 的 100K 節點負載測試 | `tests/chaos/test_decay_load.py`：建立 100K 節點知識庫，量測衰減時間 | 無 | 🏗 長期 | ✅ v0.16.0 |
+| **P3** | TEST-03 | Chaos 測試有硬編碼 `/home/claude/synthex_v10/brain.py` 路徑（永遠失敗） | 用 `Path(__file__).parent` 或 fixture 取代硬編碼路徑 | 無 | ⚡ 快速獲益 | ✅ v0.16.0 |
 
 ---
 

@@ -4,6 +4,39 @@
 
 ---
 
+## v0.16.0（2026-04-05）— P3 長期改善版
+
+### FEAT-05 — Analytics 時序圖表 + HTML 報告
+
+- **`analytics_engine.py`** 新增 `generate_timeseries(period_days, bucket)` 方法：
+  - 回傳 `growth`（每週/每日新增節點數）與 `confidence_dist`（信心值十段分布直方圖）
+- **`cli_admin.py`** `cmd_report()` 新增 `--format html`：呼叫 `generate_timeseries()` 生成內嵌 Chart.js 的自含式 HTML 報告（成長曲線折線圖 + 信心分布柱狀圖）
+
+### FEAT-06 — `brain doctor` 矛盾 / deprecated 比例警告
+
+- **`cli_admin.py`** `cmd_doctor()` 在資料庫健康檢查區塊新增：
+  - **deprecated 比例**：`confidence < 0.2` 節點比例 > 20% 時觸發 ⚠
+  - **矛盾節點數**：查詢 `edges WHERE relation='CONFLICTS_WITH'`，> 0 時觸發 ⚠ 並提示啟用 `BRAIN_CONFLICT_RESOLVE=1`
+
+### ARCH-08 — `ConflictResolver` 快取 TTL 驅逐
+
+- **`conflict_resolver.py`** 新增 `_evict_stale_cache()` 方法：移除 `time.monotonic()` 差值 ≥ `CACHE_SECONDS`（86400s）的所有快取項目
+- 每次呼叫 `arbitrate()` 前自動驅逐，防止長執行進程記憶體持續增長
+
+### TEST-02 — Decay Engine 100K 節點負載測試
+
+- **新增 `tests/chaos/test_decay_load.py`**：
+  - `@pytest.mark.chaos` 標記，預設 CI 不執行
+  - 建立 100K Decision 節點（1000 批次插入），執行 `engine.run(batch_size=500)`
+  - 斷言完成時間 < 300 秒
+
+### TEST-03 — 移除 Chaos / Unit 測試中的硬編碼路徑
+
+- **`tests/chaos/test_chaos_and_load.py`** 移除 `sys.path.insert(0, '/home/claude/synthex_v10')`
+- **`tests/unit/test_core.py`** 移除 `sys.path.insert(0, '/home/claude/project-brain')`
+
+---
+
 ## v0.15.0（2026-04-05）— 審計與 PII 安全版
 
 ### OBS-03 — rollback_node() 審計記錄

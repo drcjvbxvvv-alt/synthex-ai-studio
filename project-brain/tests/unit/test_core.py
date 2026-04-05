@@ -1931,7 +1931,6 @@ class TestPhase3DynamicConfidence:
 
     def test_access_tracking_in_context(self, tmp_path):
         """context.py increments access_count when nodes are returned."""
-        import sys; sys.path.insert(0, '/home/claude/project-brain')
         from project_brain.brain_db import BrainDB
         from project_brain.graph    import KnowledgeGraph
         from project_brain.context  import ContextEngineer

@@ -431,6 +431,94 @@ def cmd_report(args):
             print(text)
         return
 
+    if fmt == 'html':
+        # FEAT-05: generate Chart.js HTML report with timeseries
+        import json as _j
+        ts = engine.generate_timeseries(period_days=period)
+        roi_data = report["roi"]
+        html_out = out or str(Path(wd) / "brain_report.html")
+        if Path(html_out).is_dir():
+            html_out = str(Path(html_out) / "brain_report.html")
+
+        growth_labels = _j.dumps([r["bucket"] for r in ts["growth"]])
+        growth_data   = _j.dumps([r["added"]  for r in ts["growth"]])
+        conf_labels   = _j.dumps([r["range"]  for r in ts["confidence_dist"]])
+        conf_data     = _j.dumps([r["count"]  for r in ts["confidence_dist"]])
+        roi_score     = roi_data.get("knowledge_roi_score") or 0
+        total_nodes   = report["usage"]["total_nodes"]
+        recent_adds   = report["usage"]["recent_adds"]
+        summary       = report["summary"]
+
+        html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>Project Brain Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+  body{{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:32px}}
+  h1{{font-size:22px;margin-bottom:4px}}
+  .meta{{color:#8b949e;font-size:13px;margin-bottom:32px}}
+  .grid{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}
+  .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px}}
+  .card h2{{font-size:14px;color:#8b949e;margin:0 0 16px;text-transform:uppercase;letter-spacing:.08em}}
+  .roi-score{{font-size:48px;font-weight:700;color:#4368e4}}
+  .stat{{font-size:13px;color:#8b949e;margin-top:8px}}
+  .stat span{{color:#e6edf3;font-weight:600}}
+  canvas{{max-height:220px}}
+  @media(max-width:720px){{.grid{{grid-template-columns:1fr}}}}
+</style>
+</head>
+<body>
+<h1>🧠 Project Brain Report</h1>
+<div class="meta">Generated {report['generated_at']} · Last {period}d window</div>
+<div class="grid">
+  <div class="card">
+    <h2>ROI Score</h2>
+    <div class="roi-score">{roi_score:.0%}</div>
+    <div class="stat">Total nodes: <span>{total_nodes}</span></div>
+    <div class="stat">Added last {period}d: <span>{recent_adds}</span></div>
+    <div class="stat" style="margin-top:16px;color:#c9d1d9">{summary}</div>
+  </div>
+  <div class="card">
+    <h2>Confidence Distribution</h2>
+    <canvas id="confChart"></canvas>
+  </div>
+  <div class="card" style="grid-column:1/-1">
+    <h2>Knowledge Growth (last {period}d · by {ts['bucket']})</h2>
+    <canvas id="growthChart"></canvas>
+  </div>
+</div>
+<script>
+new Chart(document.getElementById('confChart'),{{
+  type:'bar',
+  data:{{labels:{conf_labels},datasets:[{{
+    label:'Nodes',data:{conf_data},
+    backgroundColor:'rgba(67,104,228,0.7)',borderRadius:4
+  }}]}},
+  options:{{plugins:{{legend:{{display:false}}}},scales:{{
+    x:{{ticks:{{color:'#8b949e'}},grid:{{color:'#21262d'}}}},
+    y:{{ticks:{{color:'#8b949e'}},grid:{{color:'#21262d'}}}}
+  }}}}
+}});
+new Chart(document.getElementById('growthChart'),{{
+  type:'line',
+  data:{{labels:{growth_labels},datasets:[{{
+    label:'Nodes Added',data:{growth_data},
+    borderColor:'#4368e4',backgroundColor:'rgba(67,104,228,0.12)',
+    fill:true,tension:0.4,pointRadius:3
+  }}]}},
+  options:{{plugins:{{legend:{{display:false}}}},scales:{{
+    x:{{ticks:{{color:'#8b949e'}},grid:{{color:'#21262d'}}}},
+    y:{{ticks:{{color:'#8b949e'}},grid:{{color:'#21262d'}}}}
+  }}}}
+}});
+</script>
+</body></html>"""
+        Path(html_out).write_text(html, encoding='utf-8')
+        _ok(f"HTML 報告已儲存：{html_out}")
+        return
+
     roi   = report["roi"]
     usage = report["usage"]
     score = roi["knowledge_roi_score"]
@@ -873,6 +961,30 @@ def cmd_doctor(args):
                                "執行：brain status 查看詳情")
                     else:
                         _ok2("無過時知識（confidence ≥ 0.2）")
+
+                    # FEAT-06: deprecated ratio warning (> 20% threshold)
+                    if nodes > 0:
+                        dep_ratio = deprecated / nodes
+                        if dep_ratio > 0.20:
+                            _warn2(
+                                f"deprecated 比例過高：{deprecated}/{nodes} = {dep_ratio:.0%}（超過 20% 警戒線）",
+                                "大量知識過時，建議更新或執行 brain doctor --fix 清理"
+                            )
+
+                    # FEAT-06: contradiction node ratio
+                    try:
+                        conflict_count = conn.execute(
+                            "SELECT COUNT(*) FROM edges WHERE relation='CONFLICTS_WITH'"
+                        ).fetchone()[0]
+                        if conflict_count > 0:
+                            _warn2(
+                                f"偵測到 {conflict_count} 對矛盾知識（CONFLICTS_WITH 邊）",
+                                "執行：brain report 查看詳情；可啟用 BRAIN_CONFLICT_RESOLVE=1 自動仲裁"
+                            )
+                        else:
+                            _ok2("無矛盾知識節點")
+                    except Exception as _cf_err:
+                        logger.debug("conflict check failed: %s", _cf_err)
 
                     try:
                         fts_count = conn.execute(

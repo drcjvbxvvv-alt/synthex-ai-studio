@@ -227,3 +227,54 @@ class AnalyticsEngine:
             "top_pitfalls":   top_pitfalls,
             "summary":        summary,
         }
+
+    # ── timeseries (FEAT-05) ──────────────────────────────────────────────────
+
+    def generate_timeseries(self, period_days: int = 90,
+                            bucket: str = "week") -> dict:
+        """Return time-series data for Chart.js rendering (FEAT-05).
+
+        Args:
+            period_days: Look-back window in days (default: 90).
+            bucket: Grouping granularity — ``'day'`` or ``'week'`` (default).
+
+        Returns:
+            Dict with keys:
+            - ``period_days``: int
+            - ``bucket``: str
+            - ``growth``: list of {bucket, added} — nodes added per bucket
+            - ``confidence_dist``: list of {range, count} — current snapshot
+        """
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).isoformat()
+
+        date_expr = (
+            "strftime('%Y-W%W', created_at)"
+            if bucket == "week"
+            else "strftime('%Y-%m-%d', created_at)"
+        )
+
+        growth = self._rows(
+            f"SELECT {date_expr} AS bucket, COUNT(*) AS added"
+            " FROM nodes WHERE created_at >= ? GROUP BY bucket ORDER BY bucket",
+            (since,),
+        )
+
+        # Confidence distribution: 10 equal-width buckets [0.0, 1.0)
+        conf_dist = []
+        for i in range(10):
+            lo = round(i * 0.1, 1)
+            hi = round(lo + 0.1, 1)
+            # Final bucket must include 1.0
+            upper_op = "<=" if i == 9 else "<"
+            count = self._scalar(
+                f"SELECT COUNT(*) FROM nodes WHERE confidence >= ? AND confidence {upper_op} ?",
+                (lo, hi),
+            ) or 0
+            conf_dist.append({"range": f"{lo:.1f}–{hi:.1f}", "count": count})
+
+        return {
+            "period_days":     period_days,
+            "bucket":          bucket,
+            "growth":          growth,
+            "confidence_dist": conf_dist,
+        }

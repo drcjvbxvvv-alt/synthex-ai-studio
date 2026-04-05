@@ -387,7 +387,6 @@ class TestV52L2HealthCheck:
         assert found, "_check_l2_health must exist in project_brain/cli*.py"
 
     def test_l2_health_returns_dict(self, tmp_path, monkeypatch):
-        import sys; sys.path.insert(0, '/home/claude/synthex_v10')
         import importlib
         # Import brain module's _check_l2_health
         import socket

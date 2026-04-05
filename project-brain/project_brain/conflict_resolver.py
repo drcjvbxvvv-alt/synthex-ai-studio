@@ -157,11 +157,28 @@ class ConflictResolver:
 
     # ── 公開 API ─────────────────────────────────────────────────
 
+    def _evict_stale_cache(self) -> int:
+        """ARCH-08: 清除超過 CACHE_SECONDS 的快取項目，防止長執行記憶體持續增長。
+
+        Returns:
+            驅逐的項目數量。
+        """
+        now = time.monotonic()
+        stale = [k for k, (ts, _) in self._cache.items() if now - ts >= CACHE_SECONDS]
+        for k in stale:
+            del self._cache[k]
+        if stale:
+            logger.debug("conflict_resolver: evicted %d stale cache entries", len(stale))
+        return len(stale)
+
     def arbitrate(self, node_id_a: str, node_id_b: str) -> ArbitrationResult:
         """
         仲裁兩個矛盾節點，回傳 ArbitrationResult。
         若 LLM 不可用或呼叫失敗，回傳 winner="error"（呼叫方應回退到均等懲罰）。
         """
+        # ARCH-08: 每次仲裁前清除過期快取，防止長執行記憶體洩漏
+        self._evict_stale_cache()
+
         # 快取檢查（pair 無序）
         cache_key = ":".join(sorted([node_id_a, node_id_b]))
         now = time.monotonic()
