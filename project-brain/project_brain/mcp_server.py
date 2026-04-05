@@ -798,7 +798,6 @@ def create_server(workdir: str) -> Any:
             {"ok": True, "created": N, "node_ids": [...]}
         """
         _rate_check()
-        import json as _json
 
         wd_str = _safe_str(workdir or os.environ.get("BRAIN_WORKDIR", ""), 500, "workdir") or workdir
         b = _resolve_brain(wd_str)
@@ -810,32 +809,46 @@ def create_server(workdir: str) -> Any:
 
         created_ids: list[str] = []
 
-        kind_items: list[tuple[str, str]] = []
-        for d in _decisions:
-            kind_items.append(("Decision", d))
-        for l in _lessons:
-            kind_items.append(("Rule", l))
-        for p in _pitfalls:
-            kind_items.append(("Pitfall", p))
+        # AUTO-02: delegate to KnowledgeExtractor.from_session_log() for
+        # consistent title extraction (first sentence, not truncation) and
+        # single-source-of-truth knowledge production logic.
+        from project_brain.extractor import KnowledgeExtractor as _KE
+        _extractor = _KE(workdir=str(b.workdir))
+        _source    = f"session:{datetime.now(timezone.utc).date()}"
+        extracted  = _extractor.from_session_log(
+            task_description=task_desc,
+            decisions=_decisions,
+            lessons=_lessons,
+            pitfalls=_pitfalls,
+            source=_source,
+        )
+        chunks = extracted.get("knowledge_chunks", [])
 
-        # Always record the task itself as a Decision summary if there are no
-        # sub-items, so the task is never silently swallowed.
-        if not kind_items:
-            kind_items.append(("Decision", task_desc))
+        # Always record at least the task itself if no sub-items were provided,
+        # so the task is never silently swallowed.
+        if not chunks:
+            chunks = [{
+                "type":       "Decision",
+                "title":      task_desc[:60].strip(),
+                "content":    task_desc,
+                "tags":       ["session"],
+                "confidence": 0.75,
+                "source":     _source,
+            }]
 
-        for kind, content in kind_items:
-            title = content[:80].strip()
+        for chunk in chunks:
+            _title = chunk.get("title", task_desc[:60]).strip()
             try:
                 node_id = b.add_knowledge(
-                    title=title,
-                    content=f"[Task: {task_desc[:120]}]\n{content}",
-                    kind=kind,
-                    tags=["auto:complete_task"],
-                    confidence=0.8,
+                    title=_title,
+                    content=chunk.get("content", task_desc),
+                    kind=chunk.get("type", "Decision"),
+                    tags=chunk.get("tags", []) + ["auto:complete_task"],
+                    confidence=chunk.get("confidence", 0.8),
                 )
                 created_ids.append(node_id)
             except Exception as e:
-                logger.warning("complete_task: failed to write node %r: %s", title, e)
+                logger.warning("complete_task: failed to write node %r: %s", _title, e)
 
         # VISION-01: auto-feedback on session nodes based on task outcome
         _wk = str(b.workdir)

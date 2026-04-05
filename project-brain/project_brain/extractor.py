@@ -33,25 +33,54 @@ EXTRACTION_PROMPT = """
 4. 識別業務規則（必須遵守的約束）
 5. 找出架構決策（選擇 A 而不是 B 的理由）
 
-輸出 JSON（只輸出 JSON，不要其他說明）：
-{
-  "knowledge_chunks": [
-    {
-      "type": "Decision|Pitfall|Rule|Architecture",
-      "title": "簡短標題（< 50 字）",
-      "content": "詳細說明（包含背景、原因、影響）",
-      "tags": ["相關標籤"],
-      "confidence": 0.0-1.0
-    }
-  ],
-  "components_mentioned": ["組件名稱列表"],
-  "dependencies_detected": [
-    {"from": "組件A", "to": "組件B", "reason": "為什麼依賴"}
-  ]
-}
-
-如果沒有有價值的知識，返回：{"knowledge_chunks": [], "components_mentioned": [], "dependencies_detected": []}
+如果沒有有價值的知識，knowledge_chunks 回傳空陣列即可。
 """
+
+# AUTO-03: Structured output tool for Anthropic provider.
+# Using tool_use eliminates json.loads() fragility from LLM preamble text.
+_EXTRACT_TOOL: dict = {
+    "name": "store_knowledge",
+    "description": "Store extracted knowledge chunks from code analysis",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "knowledge_chunks": {
+                "type": "array",
+                "description": "Extracted knowledge items. Empty array if nothing valuable found.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type":       {"type": "string", "enum": ["Decision", "Pitfall", "Rule", "Architecture"]},
+                        "title":      {"type": "string", "description": "Short title < 60 chars"},
+                        "content":    {"type": "string", "description": "Detailed explanation with background, reason, impact"},
+                        "tags":       {"type": "array", "items": {"type": "string"}},
+                        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    },
+                    "required": ["type", "title", "content", "confidence"],
+                },
+                "maxItems": 8,
+            },
+            "components_mentioned": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Component or service names mentioned",
+            },
+            "dependencies_detected": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "from":   {"type": "string"},
+                        "to":     {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["from", "to", "reason"],
+                },
+            },
+        },
+        "required": ["knowledge_chunks", "components_mentioned", "dependencies_detected"],
+    },
+}
 
 
 class KnowledgeExtractor:
@@ -84,32 +113,45 @@ class KnowledgeExtractor:
             )
 
     def _call(self, content: str, max_tokens: int = 1000) -> dict:
-        """呼叫 LLM API 提取知識（支援 Anthropic / OpenAI 相容格式）"""
+        """呼叫 LLM API 提取知識（支援 Anthropic / OpenAI 相容格式）
+
+        AUTO-03: Anthropic provider uses tool_use for structured output,
+        eliminating json.loads() fragility from LLM preamble text.
+        OpenAI-compatible provider (Ollama/LM Studio) keeps json.loads()
+        as tool_use support is inconsistent across local models.
+        """
         prompt = EXTRACTION_PROMPT + "\n\n---\n\n" + content[:4000]
+        _empty = {"knowledge_chunks": [], "components_mentioned": [],
+                  "dependencies_detected": []}
         try:
             if self.provider == "openai":
-                # OpenAI 相容格式（Ollama、LM Studio）
+                # OpenAI 相容格式（Ollama、LM Studio）— keep json.loads() path
                 resp = self.client.chat.completions.create(
                     model=self.model,
                     max_tokens=max_tokens,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 text = resp.choices[0].message.content or ""
+                text = re.sub(r"```json\n?", "", text)
+                text = re.sub(r"```\n?",     "", text)
+                return json.loads(text.strip())
             else:
-                # Anthropic 格式
+                # AUTO-03: Anthropic — tool_use guarantees structured output
                 resp = self.client.messages.create(
                     model=self.model,
                     max_tokens=max_tokens,
+                    tools=[_EXTRACT_TOOL],
+                    tool_choice={"type": "tool", "name": "store_knowledge"},
                     messages=[{"role": "user", "content": prompt}]
                 )
-                text = resp.content[0].text
-
-            text = re.sub(r"```json\n?", "", text)
-            text = re.sub(r"```\n?",     "", text)
-            return json.loads(text.strip())
+                tool_block = next(
+                    (b for b in resp.content if b.type == "tool_use"), None
+                )
+                if tool_block is None:
+                    return _empty
+                return tool_block.input  # already a dict, no json.loads needed
         except Exception as e:
-            return {"knowledge_chunks": [], "components_mentioned": [],
-                    "dependencies_detected": [], "_error": str(e)}
+            return {**_empty, "_error": str(e)}
 
     def from_git_commit(self, commit_hash: str, commit_msg: str, diff: str) -> dict:
         """從 git commit 提取知識"""
@@ -326,13 +368,17 @@ Comments found:
         chunks = []
         ts = source  # e.g. "session" or "session:2026-04-03"
 
+        def _title(text: str, max_len: int = 60) -> str:
+            """Extract first sentence instead of truncating mid-word."""
+            sentence = re.split(r'[。.！!？?\n]', text.strip())[0]
+            return sentence[:max_len].strip()
+
         for decision in decisions:
             if not decision or not decision.strip():
                 continue
-            title = decision.strip()[:60]
             chunks.append({
                 "type":       "Decision",
-                "title":      title,
+                "title":      _title(decision),
                 "content":    f"Task: {task_description}\nDecision: {decision.strip()}",
                 "tags":       ["session", "decision"],
                 "confidence": 0.85,
@@ -342,10 +388,9 @@ Comments found:
         for lesson in lessons:
             if not lesson or not lesson.strip():
                 continue
-            title = lesson.strip()[:60]
             chunks.append({
                 "type":       "Rule",
-                "title":      title,
+                "title":      _title(lesson),
                 "content":    f"Task: {task_description}\nLesson: {lesson.strip()}",
                 "tags":       ["session", "lesson"],
                 "confidence": 0.80,
@@ -355,10 +400,9 @@ Comments found:
         for pitfall in pitfalls:
             if not pitfall or not pitfall.strip():
                 continue
-            title = pitfall.strip()[:60]
             chunks.append({
                 "type":       "Pitfall",
-                "title":      title,
+                "title":      _title(pitfall),
                 "content":    f"Task: {task_description}\nPitfall: {pitfall.strip()}",
                 "tags":       ["session", "pitfall"],
                 "confidence": 0.90,  # pitfalls are high-confidence: they actually happened

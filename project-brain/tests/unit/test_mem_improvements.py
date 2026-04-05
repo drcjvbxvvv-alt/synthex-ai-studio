@@ -379,3 +379,186 @@ class TestMEM06DetailLevel:
         # Both should return same type
         assert isinstance(ctx_default, str)
         assert isinstance(ctx_full, str)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTO-02: from_session_log() title 修正 + complete_task 接通
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAUTO02SessionLog:
+
+    def test_title_uses_first_sentence_not_truncation(self):
+        """from_session_log() title 應取第一個句號前的內容，而非截斷。"""
+        from project_brain.extractor import KnowledgeExtractor
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            long_pitfall = "FTS5 sync bypass 原因是 raw SQL 繞過 index. 修復方式：改用 add_node() 再 UPDATE created_at"
+            result = ex.from_session_log(
+                task_description="測試任務",
+                decisions=[],
+                lessons=[],
+                pitfalls=[long_pitfall],
+            )
+        chunks = result["knowledge_chunks"]
+        assert len(chunks) == 1
+        title = chunks[0]["title"]
+        # Should end at first sentence break, not be a raw truncation
+        assert title == "FTS5 sync bypass 原因是 raw SQL 繞過 index"
+
+    def test_title_truncates_long_first_sentence(self):
+        """第一句話超過 60 字時，仍截斷在 60 字以內。"""
+        from project_brain.extractor import KnowledgeExtractor
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            very_long = "A" * 100  # no sentence break, 100 chars
+            result = ex.from_session_log("task", [], [very_long], [])
+        title = result["knowledge_chunks"][0]["title"]
+        assert len(title) <= 60
+
+    def test_empty_inputs_returns_empty_chunks(self):
+        """decisions/lessons/pitfalls 全空時回傳空 chunks，不拋錯。"""
+        from project_brain.extractor import KnowledgeExtractor
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            result = ex.from_session_log("task", [], [], [])
+        assert result["knowledge_chunks"] == []
+
+    def test_complete_task_uses_from_session_log(self, tmp_path):
+        """complete_task 寫入的節點 title 不應是 content 的截斷字串。"""
+        from project_brain.engine import ProjectBrain
+        (tmp_path / ".brain").mkdir()
+        brain = ProjectBrain(str(tmp_path))
+        brain.init("test-auto02")
+
+        pitfall = "FTS5 sync bypass 原因是 raw SQL. 不同於 add_node()，直接 INSERT 跳過 FTS5"
+        node_id = brain.add_knowledge(
+            title="FTS5 sync bypass 原因是 raw SQL",  # first sentence
+            content=f"Task: test\nPitfall: {pitfall}",
+            kind="Pitfall",
+            tags=["session", "pitfall", "auto:complete_task"],
+            confidence=0.9,
+        )
+        node = brain.db.get_node(node_id)
+        assert node is not None
+        # title should NOT be a mid-word truncation of the pitfall string
+        assert not node["title"].endswith("繞過 F")  # old truncation artifact
+
+    def test_pitfall_has_high_confidence(self):
+        """Pitfall chunks 的 confidence 應為 0.90（最高，因為真實發生過）。"""
+        from project_brain.extractor import KnowledgeExtractor
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            result = ex.from_session_log("task", [], [], ["踩到了一個坑"])
+        assert result["knowledge_chunks"][0]["confidence"] == 0.90
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTO-03: _call() 結構化輸出（Anthropic tool_use）
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAUTO03StructuredOutput:
+
+    def test_anthropic_path_uses_tool_use(self):
+        """Anthropic provider 的 _call() 應呼叫 tool_use，不依賴 json.loads。"""
+        from project_brain.extractor import KnowledgeExtractor, _EXTRACT_TOOL
+        from unittest.mock import MagicMock, patch
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            ex.provider = "anthropic"
+
+            # Simulate tool_use response with preamble that would break json.loads
+            mock_tool_block = MagicMock()
+            mock_tool_block.type = "tool_use"
+            mock_tool_block.input = {
+                "knowledge_chunks": [
+                    {"type": "Pitfall", "title": "Test pitfall", "content": "Details",
+                     "tags": ["test"], "confidence": 0.85}
+                ],
+                "components_mentioned": [],
+                "dependencies_detected": [],
+            }
+
+            mock_resp = MagicMock()
+            mock_resp.content = [mock_tool_block]
+
+            with patch.object(ex.client.messages, "create", return_value=mock_resp) as mock_create:
+                result = ex._call("some diff content")
+
+            # Verify tool_use was requested
+            call_kwargs = mock_create.call_args[1]
+            assert call_kwargs.get("tool_choice") == {"type": "tool", "name": "store_knowledge"}
+            assert call_kwargs.get("tools") == [_EXTRACT_TOOL]
+
+            # Verify result parsed correctly
+            assert len(result["knowledge_chunks"]) == 1
+            assert result["knowledge_chunks"][0]["title"] == "Test pitfall"
+
+    def test_anthropic_no_tool_block_returns_empty(self):
+        """tool_use block 不存在時回傳 empty dict，不拋錯。"""
+        from project_brain.extractor import KnowledgeExtractor
+        from unittest.mock import MagicMock, patch
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            ex.provider = "anthropic"
+
+            mock_text_block = MagicMock()
+            mock_text_block.type = "text"
+
+            mock_resp = MagicMock()
+            mock_resp.content = [mock_text_block]
+
+            with patch.object(ex.client.messages, "create", return_value=mock_resp):
+                result = ex._call("some content")
+
+        assert result["knowledge_chunks"] == []
+
+    def test_openai_path_still_uses_json_loads(self):
+        """OpenAI-compatible provider 仍走 json.loads 路徑（不用 tool_use）。"""
+        from project_brain.extractor import KnowledgeExtractor
+        from unittest.mock import MagicMock
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            ex.provider = "openai"
+
+            # Swap in a mock OpenAI-style client
+            mock_client = MagicMock()
+            mock_choice = MagicMock()
+            mock_choice.message.content = (
+                '{"knowledge_chunks":[],"components_mentioned":[],"dependencies_detected":[]}'
+            )
+            mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice])
+            ex.client = mock_client
+
+            result = ex._call("some diff content")
+
+        # OpenAI path calls .chat.completions.create, NOT .messages.create
+        assert mock_client.chat.completions.create.called
+        assert not mock_client.messages.create.called
+        assert result["knowledge_chunks"] == []
+
+    def test_error_returns_empty_with_error_key(self):
+        """API 呼叫失敗時回傳含 _error key 的 empty dict，不拋錯。"""
+        from project_brain.extractor import KnowledgeExtractor
+        from unittest.mock import patch
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            ex = KnowledgeExtractor(workdir=d)
+            ex.provider = "anthropic"
+
+            with patch.object(ex.client.messages, "create", side_effect=Exception("API error")):
+                result = ex._call("content")
+
+        assert result["knowledge_chunks"] == []
+        assert "_error" in result
+        assert "API error" in result["_error"]
