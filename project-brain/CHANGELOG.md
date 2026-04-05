@@ -4,6 +4,111 @@
 
 ---
 
+## v0.24.0（2026-04-06）— memdir 啟發：新鮮度修復與 AI 選取器強化
+
+測試基準：903 passed / 5 skipped（WebUI pre-existing failures 不計）
+
+### MEM-07 — 新鮮度基準改為 `updated_at`
+
+- `context.py` `_freshness_note()` 簽名從 `(created_at: str)` 改為 `(node: dict)`
+- 使用 `updated_at` 作為新鮮度基準，fallback 到 `created_at`（向後相容）
+- 效果：更新過的節點（即使建立於 180 天前）不再誤警
+
+### MEM-08 — `_SonnetSelector` 改用 `tool_use` + 索引輸出
+
+- `engine.py` 新增 `_SELECT_TOOL` schema 與 `_SELECT_PROMPT_IDX`
+- Manifest 格式改為 `[i] (type) title — description`（0-based 索引）
+- `tool_choice={"type": "tool", "name": "select_nodes"}` 強制結構化輸出
+- 效果：json.loads 解析失敗率 ~0%；索引取代字串 ID，杜絕 LLM 幻想不存在的 ID
+- `_OllamaSelector` 保持 json.loads（Ollama tool_use 支援不一致）
+
+### MEM-09 — 新鮮度警告文字強化
+
+- 直接採用 memdir `memoryFreshnessText()` 設計哲學
+- 新警告文字：「此知識最後更新於 **N 天前**。知識節點是時間點快照，非即時狀態——`file:line` 引用可能已過時。引用前請以 `grep` 或 `Read` 工具驗證現況。」
+- 三個設計點：說明什麼最容易過期（file:line）、給出驗證方式（grep）、框架定位（快照非即時）
+
+### MEM-10 — `alreadySurfaced` 前移至 AI 選取前
+
+- `engine.py` get_context()：`exclude_ids` 在 `selector.select()` 呼叫前過濾
+- 修改前：AI 選 5 → 過濾 already_surfaced → 可能剩 < 5 個
+- 修改後：先過濾 → AI 從 unseen 中選 5 → 5-slot 全部用於新知識
+- 新增：`unseen = [c for c in candidates if c.get('id') not in _ai_exclude]`
+
+---
+
+## v0.23.0（2026-04-06）— 知識生產斷路修復（AUTO-01~03）
+
+測試基準：892 passed / 5 skipped
+
+> **背景**：程式碼審計發現 `KnowledgeExtractor` 已完整實作，但兩條知識生產路徑（Session / Git）都有關鍵斷路，導致 KB 無法自動累積。
+
+### AUTO-01 — PostStop Hook 接通 Git 路徑
+
+- `.claude/settings.json` 新增 `Stop` hook：每次 Claude 停止後執行 `brain backfill-git --limit 1`
+- `backfill-git` 已有 `source_url` 去重機制，不重複處理同一 commit
+- Hook 使用 `; exit 0` 確保失敗時不影響 Claude 正常停止
+
+### AUTO-02 — `complete_task` 接通 `from_session_log()`
+
+- `mcp_server.py` 移除 inline 知識生產邏輯（`title = content[:80]` 截斷）
+- 改用 `KnowledgeExtractor.from_session_log()` 作為唯一實作（消除死碼）
+- `extractor.py` `from_session_log()` title 提取改為：`re.split(r'[。.！!？?\n]', text)[0][:60]`（取第一句話）
+- 效果：節點 title 可召回；`from_session_log()` 從死碼變為主要路徑
+
+### AUTO-03 — `KnowledgeExtractor._call()` 改用 `tool_use`
+
+- `extractor.py` Anthropic provider 改用 `tool_use` + `_EXTRACT_TOOL` schema
+- 強制輸出 `knowledge_chunks / components_mentioned / dependencies_detected` 結構
+- OpenAI/Ollama provider 保持 json.loads（一致性與 AUTO-03 的 MEM-08 決策）
+
+---
+
+## v0.22.0（2026-04-05）— 記憶系統六項改善（MEM-01~06）
+
+測試基準：884 passed / 5 skipped（+26 新增單元測試）
+Schema 版本：v22（新增 `description` 欄位）
+
+### MEM-01 — AI 輔助相關性選取（三層降級架構）
+
+- `engine.py` 新增 `_KeywordSelector` / `_OllamaSelector` / `_SonnetSelector` 三個選取器類別
+- `_resolve_selector()` auto 模式：Ollama 在跑 → OllamaSelector；有 API key → SonnetSelector；否則 → KeywordSelector
+- `get_context()` 新增 `ai_select: bool = False` 參數；MCP 工具同步新增
+- 選取器拋錯時自動降級到 KeywordSelector，永不失敗
+
+### MEM-02 — `description` 欄位 + 摘要/全文分層載入
+
+- `brain_db.py` SCHEMA_VERSION 21 → 22，migration 新增 `description TEXT NOT NULL DEFAULT ''`
+- `add_node()` 支援 `description` 參數；空白時自動截取 `content[:100]`
+- MCP `add_knowledge` 工具新增 `description` 參數
+- `get_context(detail_level="summary")` 只回傳 title + description（< 200 tokens）
+
+### MEM-03 — Session 內 `alreadySurfaced` 去重
+
+- `mcp_server.py` 新增 `_session_served: dict[str, set[str]]`，以 workdir 為 key
+- TTL 30 分鐘自動清除（`_cleanup_expired_sessions()`）
+- `get_context` MCP 工具新增 `force: bool = False` 參數跳過去重
+
+### MEM-04 — 過時節點明確警告文字
+
+- `context.py` 新增 `_freshness_note()`：超過 `BRAIN_FRESHNESS_WARN_DAYS`（預設 30）天的節點附加警告
+- `_fmt_node()` 呼叫 `_freshness_note()` 並將結果注入 context 輸出
+
+### MEM-05 — `recentTools` 相關節點降權
+
+- `context.py` `build()` 新增 `current_context_tags` 參數
+- Rule/Decision 節點 tags 與 `current_context_tags` 重疊 ≥ 50% 時降權（分數乘 0.5）
+- **Pitfall 永遠不降權**（正在執行時最需要踩坑警告）
+
+### MEM-06 — 摘要層 / 詳細層 Context 分離
+
+- `get_context()` 新增 `detail_level: str = "full"` 參數
+- `summary` 模式：回傳 `[id[:8]] (type, conf%) title — description`，< 200 tokens
+- `full` 模式（預設）：回傳完整 content，維持現有行為
+- 依賴 MEM-02 `description` 欄位
+
+---
+
 ## v0.21.0（2026-04-05）— WebUI UX 強化、CLI 可觀測性與效能優化
 
 ### UX-01 — WebUI 篩選狀態 URL 持久化
