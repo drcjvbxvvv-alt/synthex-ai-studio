@@ -817,19 +817,49 @@ def _trunc_display(s: str, max_cols: int) -> str:
     return ''.join(out)
 
 
+def _build_confidence_prompt(kind: str, title: str, content: str) -> str:
+    """Simplified English prompt for --ai-review confidence scoring.
+
+    Asks only for a single confidence float — no recommendation/reason —
+    to maximise JSON compliance on small local models (llama3.2, qwen2.5, etc.).
+    English instructions improve instruction-following vs Chinese on these models.
+    format="json" is already enforced by OllamaClient.messages.create().
+    """
+    return f"""You are a knowledge quality evaluator for a software engineering knowledge base.
+
+Rate the confidence score for this single knowledge entry:
+
+kind: {kind}
+title: {title}
+content: {content}
+
+Respond with a JSON object only, no other text:
+{{"confidence": 0.0}}
+
+Scoring guide:
+- 0.80-1.00: Clear, actionable, specific Rule/Pitfall/Decision with concrete context
+- 0.50-0.79: Useful but vague, or context-dependent without enough detail
+- 0.10-0.49: Too vague, off-topic, duplicated, or noise"""
+
+
 def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str) -> int:
-    """用 Ollama 審核指定節點，更新 confidence。回傳已更新筆數。"""
+    """用 Ollama 審核指定節點，更新 confidence。回傳已更新筆數。
+
+    改善項目（vs 舊版）：
+    ① 獨立英文 prompt，只問 confidence（不要 recommendation/reason）
+    ② index 對應取代 LLM echo id — BATCH=1 保證一對一，不依賴 LLM 回傳正確 id
+    ③ clamp confidence 至 [0.05, 1.0]，超出範圍仍計數而不丟棄
+    ④ format:"json" 已由 OllamaClient 內建，根治 JSON 格式錯誤
+    """
     import json    as _json
-    import re      as _re2
     import sqlite3 as _sqlite3
-    from .krb_ai_assist import OllamaClient, _build_prompt, _clean, MAX_CONTENT_PROMPT
+    from .krb_ai_assist import OllamaClient, _clean, MAX_CONTENT_PROMPT
 
     if not node_ids:
         return 0
 
     client = OllamaClient(base_url=ollama_url)
 
-    # 確認 Ollama 可連線
     try:
         client.list_models()
     except Exception as exc:
@@ -839,64 +869,56 @@ def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str
     # 用獨立連線讀取節點，確保看到 Phase 1 提交的新節點
     _read = _sqlite3.connect(str(db.db_path))
     rows = _read.execute(
-        f"SELECT id, type, title, content FROM nodes WHERE id IN ({','.join('?'*len(node_ids))})",
+        f"SELECT id, type, title, content FROM nodes"
+        f" WHERE id IN ({','.join('?'*len(node_ids))})",
         node_ids,
     ).fetchall()
     _read.close()
 
-    # llama3.2 tends to return a single object for multi-item batches,
-    # so keep BATCH=1 to guarantee one node → one response with matching id
-    BATCH   = 1
     updated = 0
     n_total = len(rows)
     import shutil as _shutil
     term_w  = _shutil.get_terminal_size((80, 24)).columns
 
-    for i in range(0, n_total, BATCH):
-        batch = rows[i : i + BATCH]
-        # ── progress line ──────────────────────────────────────────
-        idx   = i + 1
-        w_idx = len(str(n_total))
-        title_budget = term_w - w_idx * 2 - 10  # "[xx/xx] " + margin
-        title_preview = _trunc_display(_clean(batch[0][2]), max(10, title_budget))
+    for i, (nid, kind, title, content) in enumerate(rows):
+        # ── progress line ───────────────────────────────────────────
+        idx          = i + 1
+        w_idx        = len(str(n_total))
+        title_budget = term_w - w_idx * 2 - 10
+        title_preview = _trunc_display(_clean(title), max(10, title_budget))
         pad = term_w - _display_width(title_preview) - w_idx * 2 - 10
         print(
             f"\r  [{idx:{w_idx}}/{n_total}] {title_preview}{' ' * max(0, pad)}",
             end="", flush=True,
         )
-        items = [
-            {
-                "id":      r[0],
-                "kind":    r[1],
-                "title":   _clean(r[2]),
-                "content": _clean(r[3] or "")[:MAX_CONTENT_PROMPT],
-            }
-            for r in batch
-        ]
-        prompt = _build_prompt(items)
+        # ② index 對應：不依賴 LLM echo id
+        prompt = _build_confidence_prompt(
+            kind    = kind,
+            title   = _clean(title),
+            content = _clean(content or "")[:MAX_CONTENT_PROMPT],
+        )
         try:
             resp = client.messages.create(
                 model      = ollama_model,
-                max_tokens = 512,
+                max_tokens = 64,   # only {"confidence": 0.xx} needed
                 messages   = [{"role": "user", "content": prompt}],
             )
             raw  = resp.content[0].text.strip()
-            raw  = _re2.sub(r"```(?:json)?|```", "", raw).strip()
             data = _json.loads(raw)
-            # llama3.2 sometimes returns a single object instead of array
-            if isinstance(data, dict):
-                data = [data]
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                nid  = str(item.get("id", ""))
-                conf = float(item.get("confidence", -1))
-                if nid and 0 <= conf <= 1:
-                    db.conn.execute(
-                        "UPDATE nodes SET confidence=? WHERE id=?",
-                        (conf, nid),
-                    )
-                    updated += 1
+            if isinstance(data, list) and data:
+                data = data[0]
+            if not isinstance(data, dict):
+                continue
+            raw_conf = data.get("confidence", None)
+            if raw_conf is None:
+                continue
+            # ③ clamp instead of reject
+            conf = max(0.05, min(1.0, float(raw_conf)))
+            db.conn.execute(
+                "UPDATE nodes SET confidence=? WHERE id=?",
+                (conf, nid),
+            )
+            updated += 1
         except Exception as exc:
             print(f"\r  ⚠ [{idx}/{n_total}] 失敗：{exc}{' ' * 20}")
 
