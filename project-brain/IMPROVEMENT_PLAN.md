@@ -49,7 +49,7 @@
 |------|----|------|---------|---------|------|------|
 | **P1** | SEC-05 | `_brain_cache` 無鎖，並發 workdir 切換有競態 | 新增 `_cache_lock = threading.Lock()`；所有 `_brain_cache` 讀寫加鎖 | 無 | ⚡ 快速獲益 | ✅ v0.20.0 |
 | **P1** | REL-01 | `update_node()` FTS 同步失敗後未 rollback，節點資料與 FTS 索引不一致 | FTS 區塊加 `try/except` 後補 `self.conn.rollback()` 並重新 raise | 無 | ⚡ 快速獲益 | ✅ v0.20.0 |
-| **P2** | TEST-04 | `test_web_ui.py` 189 行覆蓋 1604 行 server.py（覆蓋率 < 12%）；信心分布、is_pinned、filterConf 完全無測試 | 補充 Flask test_client 整合測試：stats API、pin/unpin 持久化、conf_dist 結構、圖篩選 | 無 | 🎯 高價值 | 🔲 待辦 |
+| **P2** | TEST-04 | `test_web_ui.py` 189 行覆蓋 1604 行 server.py（覆蓋率 < 12%）；信心分布、is_pinned、filterConf 完全無測試 | 補充 Flask test_client 整合測試：stats API、pin/unpin 持久化、conf_dist 結構、圖篩選 | 無 | 🎯 高價值 | ⏸ 擱置（功能穩定後再補） |
 | **P2** | UX-01 | WebUI 篩選狀態（kind/信心/釘選/搜尋）刷新即失，大圖（200+ 節點）無法書籤 | 將篩選狀態序列化至 URL hash（`#kind=Rule&conf=hi&q=auth`）；`loadGraph` / `filterConf` 讀寫 `location.hash` | 無 | 📋 計劃執行 | 🔲 待辦 |
 | **P2** | FEAT-08 | WebUI 純唯讀，節點內容只能 CLI 或直接改 DB；日常微調知識需跳出瀏覽器 | 節點面板新增「編輯」模式：可修改 title/content/confidence；`POST /api/node/<id>` 後端端點 | 無 | 📋 計劃執行 | ⏸ 擱置（維持唯讀設計） |
 | **P3** | PERF-07 | `session_store.py` 多處 `SELECT *` 拉取完整 value blob，僅需 metadata 的場景浪費 I/O | 依需求指定欄位：list 操作用 `SELECT key, created_at, expires_at`，content 操作才 `SELECT *` | 無 | 🔵 填空 | 🔲 待辦 |
@@ -169,7 +169,7 @@ except Exception as _e:
 
 ## P2 — 核心功能品質
 
-### TEST-04 — WebUI 測試覆蓋率嚴重不足
+### TEST-04 — WebUI 測試覆蓋率嚴重不足 ⏸ 擱置
 
 **問題**：`tests/test_web_ui.py` 目前 **189 行**，覆蓋的是基本的 `/api/graph`、`/api/node/<id>/pin` 路徑。
 但 `web_ui/server.py` 已成長至 **1604 行**，包含：
