@@ -4,6 +4,52 @@
 
 ---
 
+## v0.25.0（2026-04-06）— P1 Bug Blitz：資料正確性六項修復
+
+測試基準：468 passed（+14 新測試），原 454 passed 基準
+
+### BUG-01 — FTS5 雙寫原子化
+
+- `brain_db.py` `add_node()`：nodes INSERT + nodes_fts DELETE/INSERT 包進同一 try/except
+- FTS 失敗 → `conn.rollback()` → re-raise（不再靜默提交半殘節點）
+- 額外修復：`valid_from` SELECT 移入 `_write_guard` 鎖內，防止並發 API misuse
+- 測試：`test_fts_failure_rolls_back_main_insert`、`test_valid_from_select_is_inside_write_guard`
+
+### BUG-02 — Decay 單一來源 + 防止雙重衰減
+
+- `decay_engine.py` 移除自行定義的 `BASE_DECAY_RATE = 0.003`，改 import `constants.py`
+- `brain_db._effective_confidence()`：若 `meta.decayed_at` 存在（decay_engine 已跑過），直接回傳 `confidence + F7`，不再套用 F1 時間衰減（防止雙重衰減）
+- 未經 decay_engine 的節點仍套用完整 inline F1+F7
+- 測試：`test_decay_engine_uses_constants_base_decay_rate`、`test_effective_confidence_no_double_decay_after_decay_engine`
+
+### BUG-03 — Rate Limit 精確驗收
+
+- 現有 `>= RATE_LIMIT_RPM` + `_rate_lock` 組合已正確限制，確認不存在 off-by-one
+- 新增測試驗證：連打 N 次通過，第 N+1 次拒絕
+
+### BUG-04 — Session Cleanup Daemon
+
+- `mcp_server.py`：新增 `_cleanup_daemon_started` 標記與 `_cleanup_daemon_lock`
+- `create_server()` 結尾啟動 daemon thread（每 5 分鐘清理過期 session）
+- 以 `daemon=True` 確保 MCP server 退出時自動終止
+- 測試：`test_cleanup_removes_expired_sessions`
+
+### BUG-05 — 無聲異常消滅
+
+- `mcp_server.py:178`：`except Exception: return brain` → 加 `logger.warning`
+- `mcp_server.py:261`：`except Exception: pass` → 加 `logger.warning` + `exc_info=True`（session dedup 核心路徑）
+- `nudge_engine.py`：三處 `except Exception: pass/return []/""`  → 加 `logger.debug`
+
+### BUG-06 — KnowledgeGraph 樂觀鎖
+
+- `graph.py` schema：`nodes` 表新增 `version INTEGER NOT NULL DEFAULT 0`
+- `_migrate_schema()`：既有 DB 自動 `ALTER TABLE` 補欄位
+- 新增 `ConcurrentModificationError(Exception)` 異常類別
+- `update_node()`：UPDATE 增加 `AND version = ?`；rowcount=0 時拋 `ConcurrentModificationError`
+- 測試：`test_update_node_increments_version`、`test_concurrent_modification_raises`
+
+---
+
 ## v0.24.0（2026-04-06）— memdir 啟發：新鮮度修復與 AI 選取器強化
 
 測試基準：903 passed / 5 skipped（WebUI pre-existing failures 不計）

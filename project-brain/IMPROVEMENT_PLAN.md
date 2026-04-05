@@ -23,12 +23,12 @@
 
 | 優先 | ID | 影響摘要 | 狀態 |
 |------|----|---------|------|
-| **P1** | BUG-01 | FTS5 雙寫非原子：節點存入但搜尋找不到 | ☐ 待實作 |
-| **P1** | BUG-02 | Decay Engine 衰減計算不一致（三處重複計算） | ☐ 待實作 |
-| **P1** | BUG-03 | Rate Limit 閾值 off-by-one，實際可超過限制 | ☐ 待實作 |
-| **P1** | BUG-04 | Session Dedup 記憶體洩漏（無主動 cleanup daemon） | ☐ 待實作 |
-| **P1** | BUG-05 | `except Exception: pass` 吞掉真實 Bug，無聲故障 | ☐ 待實作 |
-| **P1** | BUG-06 | KnowledgeGraph 節點無樂觀鎖，並發修改遺失 | ☐ 待實作 |
+| **P1** | BUG-01 | FTS5 雙寫非原子：節點存入但搜尋找不到 | ✅ v0.25.0 |
+| **P1** | BUG-02 | Decay Engine 衰減計算不一致（三處重複計算） | ✅ v0.25.0 |
+| **P1** | BUG-03 | Rate Limit 閾值 off-by-one，實際可超過限制 | ✅ v0.25.0 |
+| **P1** | BUG-04 | Session Dedup 記憶體洩漏（無主動 cleanup daemon） | ✅ v0.25.0 |
+| **P1** | BUG-05 | `except Exception: pass` 吞掉真實 Bug，無聲故障 | ✅ v0.25.0 |
+| **P1** | BUG-06 | KnowledgeGraph 節點無樂觀鎖，並發修改遺失 | ✅ v0.25.0 |
 | **P2** | SEC-01 | workdir symlink 路徑遍歷檢查時序錯誤 | ☐ 待實作 |
 | **P2** | SEC-02 | scope 白名單正則缺 anchor，可繞過 | ☐ 待實作 |
 | **P2** | SEC-03 | subprocess commit_hash 無清理，命令注入風險 | ☐ 待實作 |

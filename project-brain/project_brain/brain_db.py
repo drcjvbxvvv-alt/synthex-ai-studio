@@ -327,13 +327,27 @@ class BrainDB:
     def _effective_confidence(node: dict) -> float:
         """DEF-05/OPT-04 fix: decay-adjusted confidence for search result ranking.
 
-        Applies F1 (time decay) and F7 (access-count bonus) inline so that
-        search_nodes() re-ranks by effective_confidence rather than stale
-        static confidence values.  Pinned nodes are immune to decay.
+        BUG-02 fix: if decay_engine has already updated this node (meta.decayed_at
+        is set), trust the confidence column directly to avoid double-decay.
+        Only applies inline F1+F7 for nodes the decay_engine has not yet processed.
         """
         base = float(node.get("confidence", 0.8))
         if node.get("is_pinned"):
             return base
+        # BUG-02: decay_engine already applied multi-factor decay to confidence column;
+        # re-applying F1 here would double-decay.  Return confidence as-is.
+        try:
+            meta = node.get("meta") or {}
+            if isinstance(meta, str):
+                meta = json.loads(meta) or {}
+            if meta.get("decayed_at"):
+                # Apply only F7 (access bonus) — never re-apply F1 time decay
+                access = int(node.get("access_count") or 0)
+                f7     = min(0.15, access / 10 * 0.05)
+                return max(0.05, min(1.0, base + f7))
+        except Exception:
+            pass
+        # Fallback: node has never been through decay_engine — apply inline F1+F7
         created = node.get("created_at", "") or ""
         if not created:
             return base
@@ -453,14 +467,7 @@ class BrainDB:
         meta       = kw.get("meta", {})
         confidence = float(kw.get("confidence",
                            meta.get("confidence", 0.8) if isinstance(meta, dict) else 0.8))
-        # FEAT-03: git commit date; preserve existing value if not re-provided
         valid_from = kw.get("valid_from")
-        if not valid_from:
-            existing = self.conn.execute(
-                "SELECT valid_from FROM nodes WHERE id=?", (node_id,)
-            ).fetchone()
-            if existing:
-                valid_from = existing[0]  # carry over from previous write
         created_at = kw.get("created_at", "") or ""
         # MEM-02: description field — auto-generate from content if not provided
         description = kw.get("description", "") or ""
@@ -468,46 +475,56 @@ class BrainDB:
             description = content[:100].replace('\n', ' ')
 
         with self._write_guard():  # DEF-01 fix: cross-process write lock
+            # BUG-01: move valid_from SELECT inside lock so all conn access is serialized
+            if not valid_from:
+                # FEAT-03: git commit date; preserve existing value if not re-provided
+                existing = self.conn.execute(
+                    "SELECT valid_from FROM nodes WHERE id=?", (node_id,)
+                ).fetchone()
+                if existing:
+                    valid_from = existing[0]  # carry over from previous write
             _created_at_val = created_at or None  # None means use DEFAULT
-            self.conn.execute("""
-                INSERT INTO nodes
-                    (id,type,title,content,description,tags,confidence,importance,
-                     emotional_weight,source_url,author,meta,scope,valid_from,
-                     created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-                        COALESCE(NULLIF(?, ''), datetime('now')))
-                ON CONFLICT(id) DO UPDATE SET
-                    type=excluded.type,
-                    title=excluded.title,
-                    content=excluded.content,
-                    description=excluded.description,
-                    tags=excluded.tags,
-                    confidence=excluded.confidence,
-                    importance=excluded.importance,
-                    emotional_weight=excluded.emotional_weight,
-                    source_url=excluded.source_url,
-                    author=excluded.author,
-                    meta=excluded.meta,
-                    scope=excluded.scope,
-                    valid_from=excluded.valid_from
-                    -- created_at intentionally omitted: preserve original date
-            """, (node_id, node_type, title, content, description, tags_json,
-                  confidence,
-                  float(kw.get("importance", 0.5)),
-                  float(kw.get("emotional_weight", 0.5)),
-                  kw.get("source_url",""), kw.get("author",""),
-                  json.dumps(meta if isinstance(meta, dict) else {}, ensure_ascii=False),
-                  scope, valid_from,
-                  _created_at_val))
-            try:
+            try:  # BUG-01: nodes INSERT + FTS sync must be atomic
+                self.conn.execute("""
+                    INSERT INTO nodes
+                        (id,type,title,content,description,tags,confidence,importance,
+                         emotional_weight,source_url,author,meta,scope,valid_from,
+                         created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                            COALESCE(NULLIF(?, ''), datetime('now')))
+                    ON CONFLICT(id) DO UPDATE SET
+                        type=excluded.type,
+                        title=excluded.title,
+                        content=excluded.content,
+                        description=excluded.description,
+                        tags=excluded.tags,
+                        confidence=excluded.confidence,
+                        importance=excluded.importance,
+                        emotional_weight=excluded.emotional_weight,
+                        source_url=excluded.source_url,
+                        author=excluded.author,
+                        meta=excluded.meta,
+                        scope=excluded.scope,
+                        valid_from=excluded.valid_from
+                        -- created_at intentionally omitted: preserve original date
+                """, (node_id, node_type, title, content, description, tags_json,
+                      confidence,
+                      float(kw.get("importance", 0.5)),
+                      float(kw.get("emotional_weight", 0.5)),
+                      kw.get("source_url",""), kw.get("author",""),
+                      json.dumps(meta if isinstance(meta, dict) else {}, ensure_ascii=False),
+                      scope, valid_from,
+                      _created_at_val))
                 self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
                 self.conn.execute(
                     "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
                     (node_id, self._ngram(title), self._ngram(content), tags_json)
                 )
+                self.conn.commit()
             except Exception as _e:
-                logger.error("FTS index update failed in add_node: %s", _e)
-            self.conn.commit()
+                self.conn.rollback()
+                logger.error("add_node rolled back (nodes + FTS atomic failure): %s", _e)
+                raise
         return node_id
 
     def update_node(self, node_id: str, title=None, content=None,

@@ -49,13 +49,14 @@ from pathlib import Path
 from typing import Any
 
 from .graph import KnowledgeGraph
+from .constants import BASE_DECAY_RATE  # BUG-02: single source of truth for decay rate
 
 logger = logging.getLogger(__name__)
 
 # ── 衰減參數常數 ─────────────────────────────────────────────────
 DECAY_FLOOR          = 0.05    # 信心最低不低於此值（防止完全遺忘）
 DECAY_CEIL           = 1.0
-BASE_DECAY_RATE      = 0.003   # 日衰減率（約 1 年後降到 0.33）
+# BASE_DECAY_RATE imported from constants.py (BUG-02 fix)
 CONTRADICTION_PENALTY= 0.70    # 矛盾時雙方信心 × 0.70
 ADOPTION_BONUS       = 0.05    # 每次被標記「有用」+5% 信心（上限 1.0）
 CODE_REF_BONUS       = 0.10    # 程式碼仍有引用時 +10% 信心

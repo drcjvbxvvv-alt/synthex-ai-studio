@@ -253,7 +253,8 @@ class NudgeEngine:
             progress = self.session_store.list_all(category="progress")
             recent   = sorted(progress, key=lambda e: e.created_at, reverse=True)[:3]
             return " ".join(e.value[:100] for e in recent)
-        except Exception:
+        except Exception as _e:
+            logger.debug("session_store recent progress read failed: %s", _e)
             return ""
 
     # ── DEEP-04: AI Auto-Confirmation Loop ──────────────────────────────
@@ -269,7 +270,8 @@ class NudgeEngine:
         """
         try:
             results = self.graph.search_nodes(task, limit=10)
-        except Exception:
+        except Exception as _e:
+            logger.debug("generate_questions: graph search failed: %s", _e)
             return []
 
         questions = []
@@ -327,7 +329,8 @@ class NudgeEngine:
 
         try:
             results = self.graph.search_nodes(task, limit=limit)
-        except Exception:
+        except Exception as _e:
+            logger.debug("auto_resolve_batch: graph search failed: %s", _e)
             results = []
 
         low_conf = [

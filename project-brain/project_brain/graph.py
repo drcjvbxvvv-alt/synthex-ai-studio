@@ -17,6 +17,10 @@ from .constants import DEFAULT_SEARCH_LIMIT  # REF-04
 logger = logging.getLogger(__name__)
 
 
+class ConcurrentModificationError(Exception):
+    """BUG-06: Raised when an optimistic lock conflict is detected in KnowledgeGraph."""
+
+
 class KnowledgeGraph:
     """
     本地知識圖譜（SQLite 為底層）
@@ -104,7 +108,8 @@ class KnowledgeGraph:
             perspective            TEXT DEFAULT '',
             access_count           INTEGER NOT NULL DEFAULT 0,
             last_accessed          TEXT DEFAULT '',
-            emotional_weight       REAL NOT NULL DEFAULT 0.5
+            emotional_weight       REAL NOT NULL DEFAULT 0.5,
+            version                INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS edges (
@@ -187,6 +192,9 @@ class KnowledgeGraph:
             conn.execute("ALTER TABLE nodes ADD COLUMN is_deprecated INTEGER NOT NULL DEFAULT 0")
         if 'deprecated_at' not in existing_nodes:
             conn.execute("ALTER TABLE nodes ADD COLUMN deprecated_at TEXT DEFAULT NULL")
+        # BUG-06: optimistic lock version column
+        if 'version' not in existing_nodes:
+            conn.execute("ALTER TABLE nodes ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
         conn.commit()
 
 
@@ -317,11 +325,20 @@ class KnowledgeGraph:
         if not updates:
             return True
 
+        # BUG-06: optimistic lock — increment version, detect concurrent overwrites
+        current_version = existing.get("version", 0) or 0
+        updates.append("version = version + 1")
         params.append(node_id)
-        self._conn.execute(
-            f"UPDATE nodes SET {', '.join(updates)} WHERE id = ?",
+        params.append(current_version)
+        r = self._conn.execute(
+            f"UPDATE nodes SET {', '.join(updates)} WHERE id = ? AND version = ?",
             params
         )
+        if r.rowcount == 0:
+            raise ConcurrentModificationError(
+                f"Concurrent modification detected for node {node_id!r} "
+                f"(expected version {current_version})"
+            )
 
         # 同步 FTS5 N-gram 索引（使用 FTS5 content 觸發器方式）
         if title is not None or content is not None:

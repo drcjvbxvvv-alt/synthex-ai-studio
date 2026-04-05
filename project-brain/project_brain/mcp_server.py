@@ -59,6 +59,9 @@ _session_served: dict[str, set[str]] = {}
 _session_served_ts: dict[str, float] = {}   # last-access timestamps for TTL cleanup
 _sserved_lock = threading.Lock()
 _SESSION_TTL_SECS = 1800  # 30 分鐘無呼叫自動清除
+_CLEANUP_DAEMON_INTERVAL = 300  # 每 5 分鐘執行一次清理
+_cleanup_daemon_started = False  # BUG-04: guard against multiple starts
+_cleanup_daemon_lock = threading.Lock()
 
 
 def _cleanup_expired_sessions() -> None:
@@ -175,7 +178,8 @@ def create_server(workdir: str) -> Any:
             if key not in _brain_cache:
                 try:
                     _brain_cache[key] = ProjectBrain(key)
-                except Exception:
+                except Exception as _e:
+                    logger.warning("ProjectBrain init failed for %s, falling back: %s", key, _e)
                     return brain
             return _brain_cache[key]
 
@@ -257,8 +261,8 @@ def create_server(workdir: str) -> Any:
                     with _sserved_lock:
                         _session_served.setdefault(_wk, set()).update(_new_ids)
                         _session_served_ts[_wk] = time.monotonic()
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("session dedup update failed: %s", _e, exc_info=True)
             # A-19: apply Memory Synthesizer if BRAIN_SYNTHESIZE=1
             try:
                 from project_brain.memory_synthesizer import MemorySynthesizer, is_enabled
@@ -1207,6 +1211,27 @@ def create_server(workdir: str) -> Any:
         except Exception as e:
             logger.error("federation_sync 內部錯誤：%s", e)
             return {"error": str(e), "synced": 0, "skipped": 0, "errors": 1, "details": []}
+
+    # BUG-04: start session cleanup daemon (once per process)
+    global _cleanup_daemon_started
+    with _cleanup_daemon_lock:
+        if not _cleanup_daemon_started:
+            def _session_cleanup_daemon():
+                while True:
+                    time.sleep(_CLEANUP_DAEMON_INTERVAL)
+                    try:
+                        _cleanup_expired_sessions()
+                    except Exception as _e:
+                        logger.debug("session cleanup daemon error: %s", _e)
+
+            _t = threading.Thread(
+                target=_session_cleanup_daemon,
+                daemon=True,
+                name="brain-session-cleanup",
+            )
+            _t.start()
+            _cleanup_daemon_started = True
+            logger.debug("BUG-04: session cleanup daemon started (interval=%ds)", _CLEANUP_DAEMON_INTERVAL)
 
     return mcp
 
