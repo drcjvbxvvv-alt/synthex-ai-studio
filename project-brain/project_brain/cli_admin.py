@@ -765,7 +765,7 @@ def _cmd_backfill_git(args):
     import subprocess
     from .brain_db import BrainDB
 
-    workdir = Path(args.workdir).resolve()
+    workdir = Path(_workdir(args)).resolve()
     brain_dir = workdir / ".brain"
     if not brain_dir.exists():
         print(f"[backfill-git] 找不到 .brain 目錄：{brain_dir}", file=sys.stderr)
