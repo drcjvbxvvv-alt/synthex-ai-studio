@@ -4,6 +4,28 @@
 
 ---
 
+## v0.18.0（2026-04-05）— backfill-git AI 審核整合
+
+### FEAT-07（修訂 2）— `brain backfill-git --ai-review` Ollama 信心審核
+
+- **`cli_admin.py`** 新增 `_ai_review_nodes()` 輔助函式：
+  - 接收新增節點 ID 列表，批次呼叫 `OllamaClient`（複用 `_build_prompt` / `_clean`）
+  - 每批 10 個節點，解析 JSON 回傳後直接 `UPDATE nodes SET confidence=?`
+  - Ollama 連線失敗時靜默跳過，不中斷回填流程
+- **`_cmd_backfill_git()`** Phase 1 前快照現有節點 ID，Phase 1 結束後計算差集得出新增節點
+- **`cli_utils.py`** `backfill-git` 新增三個參數：
+  - `--ai-review`：啟用 Ollama AI 審核（預設關閉）
+  - `--ollama-url`：覆蓋 `BRAIN_OLLAMA_URL`（預設 `http://localhost:11434`）
+  - `--ollama-model`：覆蓋 `BRAIN_OLLAMA_MODEL`（預設 `llama3.2`）
+
+**使用方式：**
+```bash
+brain backfill-git --ai-review                          # 用預設 Ollama 審核
+brain backfill-git --ai-review --ollama-model mistral  # 指定模型
+```
+
+---
+
 ## v0.17.0（2026-04-05）— backfill-git 完整重寫
 
 ### FEAT-07（修訂）— `brain backfill-git` 全歷史回填

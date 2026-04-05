@@ -634,6 +634,12 @@ def _build_parser():
                    help='只顯示要處理的 commit，不實際寫入')
     p.add_argument('--limit', type=int, default=200, metavar='N',
                    help='最多掃描最近 N 筆 commit（預設 200）')
+    p.add_argument('--ai-review', action='store_true', dest='ai_review',
+                   help='回填後用 Ollama 自動審核新增節點的信心分數')
+    p.add_argument('--ollama-url', dest='ollama_url', default=None,
+                   help='Ollama API 位址（預設：BRAIN_OLLAMA_URL 或 http://localhost:11434）')
+    p.add_argument('--ollama-model', dest='ollama_model', default=None,
+                   help='Ollama 模型名稱（預設：BRAIN_OLLAMA_MODEL 或 llama3.2）')
 
     p = mkp('counterfactual', 'DEEP-03：反事實推理')
     p.add_argument('hypothesis', nargs='+', help='假設條件（如：如果我們用 NoSQL）')

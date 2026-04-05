@@ -1,6 +1,6 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.17.0（2026-04-05）
+> **當前版本**：v0.18.0（2026-04-05）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
 > **分析基準**：873 tests collected；v0.13.0 所有 P1+P2 已完成，867 passed / 5 skipped / 1 intermittent。
 

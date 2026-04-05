@@ -759,12 +759,75 @@ def cmd_index(args):
         _info("brain ask 現在使用混合搜尋（FTS5 × 0.4 + 向量 × 0.6）")
 
 
+def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str) -> int:
+    """用 Ollama 審核指定節點，更新 confidence。回傳已更新筆數。"""
+    import json as _json
+    import re  as _re2
+    from .krb_ai_assist import OllamaClient, _build_prompt, _clean, MAX_CONTENT_PROMPT
+
+    if not node_ids:
+        return 0
+
+    client = OllamaClient(base_url=ollama_url)
+
+    # 確認 Ollama 可連線
+    try:
+        client.list_models()
+    except Exception as exc:
+        print(f"  [ai-review] ⚠ 無法連線 Ollama（{ollama_url}）：{exc}，跳過 AI 審核")
+        return 0
+
+    rows = db.conn.execute(
+        f"SELECT id, type, title, content FROM nodes WHERE id IN ({','.join('?'*len(node_ids))})",
+        node_ids,
+    ).fetchall()
+
+    BATCH = 10
+    updated = 0
+    for i in range(0, len(rows), BATCH):
+        batch = rows[i : i + BATCH]
+        items = [
+            {
+                "id":      r[0],
+                "kind":    r[1],
+                "title":   _clean(r[2]),
+                "content": _clean(r[3] or "")[:MAX_CONTENT_PROMPT],
+            }
+            for r in batch
+        ]
+        prompt = _build_prompt(items)
+        try:
+            resp = client.messages.create(
+                model      = ollama_model,
+                max_tokens = 512,
+                messages   = [{"role": "user", "content": prompt}],
+            )
+            raw  = resp.content[0].text.strip()
+            raw  = _re2.sub(r"```(?:json)?|```", "", raw).strip()
+            data = _json.loads(raw)
+            for item in data:
+                nid  = str(item.get("id", ""))
+                conf = float(item.get("confidence", -1))
+                if nid and 0 <= conf <= 1:
+                    db.conn.execute(
+                        "UPDATE nodes SET confidence=? WHERE id=?",
+                        (conf, nid),
+                    )
+                    updated += 1
+        except Exception as exc:
+            print(f"  [ai-review] ⚠ 批次 {i//BATCH+1} 失敗：{exc}")
+
+    db.conn.commit()
+    return updated
+
+
 def _cmd_backfill_git(args):
     """FEAT-07: 從 git 歷史回填知識節點（含正確 created_at 時間戳）。
 
-    兩階段處理：
+    三階段處理：
     1. 掃描 git log，對尚未學習的 commit 呼叫 learn_from_commit()
-    2. 補正已存在節點中 source_url 可對應到 commit 的時間戳
+    2. 補正 created_at 時間戳（用 valid_from）
+    3. 可選：用 Ollama AI 審核新增節點的信心分數（--ai-review）
     """
     import re as _re
     import subprocess
@@ -776,8 +839,14 @@ def _cmd_backfill_git(args):
         print(f"[backfill-git] 找不到 .brain 目錄：{brain_dir}", file=sys.stderr)
         return 1
 
-    dry_run = getattr(args, "dry_run", False)
-    limit   = getattr(args, "limit", 200)
+    dry_run    = getattr(args, "dry_run", False)
+    limit      = getattr(args, "limit", 200)
+    ai_review  = getattr(args, "ai_review", False)
+    import os as _os
+    ollama_url = getattr(args, "ollama_url", None) or \
+                 _os.environ.get("BRAIN_OLLAMA_URL", "http://localhost:11434")
+    ollama_model = getattr(args, "ollama_model", None) or \
+                   _os.environ.get("BRAIN_OLLAMA_MODEL", "llama3.2")
 
     # ── 1. 取得 git 歷史 ─────────────────────────────────────────────
     try:
@@ -843,6 +912,12 @@ def _cmd_backfill_git(args):
     else:
         # ── 3. 對每個未處理的 commit 呼叫 learn_from_commit ──────────
         from .engine import ProjectBrain
+
+        # 快照現有節點 ID，用於 Phase 3 識別新增節點
+        before_ids: set[str] = set(
+            r[0] for r in db.conn.execute("SELECT id FROM nodes").fetchall()
+        )
+
         brain = ProjectBrain(str(workdir))
         total_learned = 0
         for i, (commit_hash, msg, _date) in enumerate(new_commits):
@@ -854,6 +929,17 @@ def _cmd_backfill_git(args):
             except Exception as exc:
                 print(f"  ✗ {label} → 跳過（{exc}）")
         print(f"\n  共新增 {total_learned} 個知識節點\n")
+
+        # ── Phase 3（可選）：Ollama AI 審核新增節點信心分數 ──────────
+        if ai_review and total_learned > 0:
+            new_ids = [
+                r[0] for r in db.conn.execute("SELECT id FROM nodes").fetchall()
+                if r[0] not in before_ids
+            ]
+            print(f"[backfill-git] AI 審核 {len(new_ids)} 個新節點"
+                  f"（model={ollama_model} url={ollama_url}）")
+            reviewed = _ai_review_nodes(db, new_ids, ollama_url, ollama_model)
+            print(f"[backfill-git] AI 審核完成：{reviewed} 個節點信心分數已更新")
 
     # ── 4. 補正 created_at：用 valid_from 覆蓋錯誤的 datetime('now') ────
     # valid_from 由 _store_chunk 從 commit date 寫入，是可靠的真實時間來源。
