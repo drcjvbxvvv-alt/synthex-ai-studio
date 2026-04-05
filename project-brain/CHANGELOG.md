@@ -4,6 +4,39 @@
 
 ---
 
+## v0.19.0（2026-04-05）— WebUI 信心分布與篩選功能
+
+### WebUI — 信心分布面板
+
+- **`web_ui/server.py`** `_route_stats()`：新增 `conf_dist: {hi, med, low, vlow}` 至統計 API 回傳值
+  - `hi`：`confidence >= 0.80`（✓✓ 權威）
+  - `med`：`0.60 ≤ confidence < 0.80`（✓ 已驗證）
+  - `low`：`0.30 ≤ confidence < 0.60`（~ 推斷）
+  - `vlow`：`confidence < 0.30`（⚠ 推測）
+- 側邊欄新增「信心分布」區塊（`id="conf-dist-list"`），各列可點擊篩選
+- CSS：`.conf-row`、`.conf-row:hover`、`.conf-row.filter-active`、`.stat-card.filter-active`
+
+### WebUI — 已釘選 / 低信心統計修正
+
+- **`_route_stats()`**：`low_conf`、`pinned`、`conf_dist` 三個查詢各自獨立 try-except；消除 `type` 欄位 OperationalError 連帶歸零的問題
+- **`_route_graph()` / `_route_node()`** fallback schema：所有 `cols2` 查詢補齊 `confidence, is_pinned, scope` 欄位，修正釘選後刷新頁面 `is_pinned` 仍顯示 False 的問題
+
+### WebUI — 信心 / 釘選篩選（客戶端）
+
+- **JS** 新增 `confFilter`（`'hi'|'med'|'low'|'vlow'|null`）與 `pinnedFilter`（`boolean`）狀態變數
+- **`filterConf(key)`**：點選信心分布列 → 切換篩選（再點取消）；同步高亮 `filter-active` 樣式
+- **`filterPinned()`**：點選「已釘選」stat card → 切換釘選篩選
+- **`applyOpacity()`**：套用三層篩選（搜尋命中 → 信心範圍 → 釘選狀態），連線也同步暗淡
+
+### fix(backfill-git) — AI 審核 0 個節點的根本問題修正
+
+- **根因 A**：`add_node()` 使用 UPSERT，既有節點永不新增，before/after 差集恆為空 → 改為直接查詢 `confidence = 0.5` 節點清單
+- **根因 B**：Ollama（llama3.2）對單筆提示回傳單一 JSON object `{...}` 而非陣列 `[...]`；`for item in data` 遍歷 dict keys（字串）→ 加 `if isinstance(data, dict): data = [data]`
+- **根因 C**：BATCH > 1 時 Ollama ID 對應錯誤（只回傳一個物件）→ `BATCH = 1`
+- 修正後：47 個 `confidence = 0.5` 節點全數通過 AI 審核並更新信心分數
+
+---
+
 ## v0.18.0（2026-04-05）— backfill-git AI 審核整合
 
 ### FEAT-07（修訂 2）— `brain backfill-git --ai-review` Ollama 信心審核
