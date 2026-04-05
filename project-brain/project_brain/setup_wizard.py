@@ -27,34 +27,32 @@ def generate_claude_md(workdir: str) -> str:
 
     All prompt text is in English to maximise model compliance.
     """
-    return f"""\
-# Project Brain
+    return (
+        f"# Project Brain\n\n"
+        f"Project Brain is installed at `{workdir}`.\n\n"
+        "## Memory System Instructions\n\n"
+        "At the start of every task, call the `get_context` MCP tool\n"
+        "with the task description, current file path, and **current working directory**\n"
+        "(the directory Claude Code is currently operating in).\n\n"
+        "Always pass `workdir` = the primary working directory of the current session.\n"
+        "Brain will automatically walk up from that path to find the nearest `.brain/`.\n\n"
+        "If Brain returns nudges or warnings, treat them as **hard constraints**.\n\n"
+        "When you discover any of the following, call `add_knowledge` immediately\n"
+        "— do not wait until the end of the task:\n\n"
+        "- A bug and the reason it happened (kind: Pitfall)\n"
+        "- An architectural decision and why (kind: Decision)\n"
+        "- A rule that must always be followed (kind: Rule)\n"
+        "- Something that does not work as expected (kind: Pitfall)\n\n"
+        "Always pass `workdir` to `add_knowledge` and `brain_status` as well.\n\n"
+        "Use confidence=0.9 for verified facts, 0.7 for reasonable inferences.\n\n"
+        + _task_start_protocol() + "\n\n"
+        + _task_complete_protocol() + "\n\n"
+        + _knowledge_feedback_protocol() + "\n"
+    )
 
-Project Brain is installed at `{workdir}`.
 
-## Memory System Instructions
-
-At the start of every task, call the `get_context` MCP tool
-with the task description, current file path, and **current working directory**
-(the directory Claude Code is currently operating in).
-
-Always pass `workdir` = the primary working directory of the current session.
-Brain will automatically walk up from that path to find the nearest `.brain/`.
-
-If Brain returns nudges or warnings, treat them as **hard constraints**.
-
-When you discover any of the following, call `add_knowledge` immediately
-— do not wait until the end of the task:
-
-- A bug and the reason it happened (kind: Pitfall)
-- An architectural decision and why (kind: Decision)
-- A rule that must always be followed (kind: Rule)
-- Something that does not work as expected (kind: Pitfall)
-
-Always pass `workdir` to `add_knowledge` and `brain_status` as well.
-
-Use confidence=0.9 for verified facts, 0.7 for reasonable inferences.
-
+def _task_start_protocol() -> str:
+    return """\
 ## Task Start Protocol
 
 Before beginning **any** task:
@@ -65,8 +63,11 @@ Before beginning **any** task:
 3. If the result contains **Rule** entries, those rules are mandatory for
    this task — do not deviate from them.
 4. If the result contains **Decision** entries, treat them as established
-   architecture — do not reverse them without discussion.
+   architecture — do not reverse them without discussion."""
 
+
+def _task_complete_protocol() -> str:
+    return """\
 ## Task Complete Protocol
 
 After completing **any** non-trivial task:
@@ -80,8 +81,11 @@ After completing **any** non-trivial task:
    `add_knowledge(kind="Pitfall", ...)` immediately — do not rely solely on
    `complete_task` for Pitfall recording.
 3. If an **important architectural decision** was made, call
-   `add_knowledge(kind="Decision", ...)` as well.
+   `add_knowledge(kind="Decision", ...)` as well."""
 
+
+def _knowledge_feedback_protocol() -> str:
+    return """\
 ## Knowledge Feedback Protocol
 
 After a task that used knowledge retrieved from Brain:
@@ -92,8 +96,7 @@ After a task that used knowledge retrieved from Brain:
   call `report_knowledge_outcome(node_id=..., was_useful=False, notes="reason")`.
 
 This feedback loop keeps confidence scores accurate and prevents stale knowledge
-from surfacing in future queries.
-"""
+from surfacing in future queries."""
 
 
 def run_setup(workdir: str = ".") -> bool:
@@ -172,7 +175,25 @@ def run_setup(workdir: str = ".") -> bool:
         except Exception as _e:
             logger.debug("CLAUDE.md creation failed", exc_info=True)  # non-critical
     else:
-        print(f"  {Y}??{R}  No git repo found -- skipping hook")
+        # CLAUDE.md already exists — merge any missing protocol sections
+        try:
+            existing = claude_md.read_text()
+            # Sections from generate_claude_md() that must be present
+            _PROTOCOL_SECTIONS = [
+                ("## Task Start Protocol",     _task_start_protocol()),
+                ("## Task Complete Protocol",  _task_complete_protocol()),
+                ("## Knowledge Feedback Protocol", _knowledge_feedback_protocol()),
+            ]
+            missing = [(hdr, body) for hdr, body in _PROTOCOL_SECTIONS if hdr not in existing]
+            if missing:
+                appendix = "\n" + "\n\n".join(body for _, body in missing) + "\n"
+                claude_md.write_text(existing.rstrip() + appendix)
+                added = ", ".join(hdr for hdr, _ in missing)
+                print(f"  {G}OK{R}  .claude/CLAUDE.md updated  {D}(added: {added}){R}")
+            else:
+                print(f"  {D}--{R}  .claude/CLAUDE.md already up-to-date")
+        except Exception as _e:
+            logger.debug("CLAUDE.md merge failed", exc_info=True)  # non-critical
 
     # -- Step 3: auto-detect MCP --
     mcp_entry = {
