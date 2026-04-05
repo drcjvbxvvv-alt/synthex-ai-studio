@@ -36,6 +36,7 @@
 | P2 | OBS-02 | Decay F1–F7 因子量測輸出 | ✅ v0.14.0 |
 | P2 | OBS-03 | rollback_node() 審計記錄 | ✅ v0.15.0 |
 | P2 | SEC-04 | Federation PII 過濾擴充 | ✅ v0.15.0 |
+| P2 | REV-01 | 量化對照實驗（商業指標） | → `tests/TEST_PLAN.md §7`；Layer 1 ✅ v0.22.0；Layer 2/3 △ 需線上數據 |
 | P2 | REV-02 | 衰減效用對比測試 | → `tests/TEST_PLAN.md §7` |
 | P3 | FEAT-05 | Analytics 時序圖表 + HTML 報告 | ✅ v0.16.0 |
 | P3 | FEAT-06 | `brain doctor` 矛盾/deprecated 比例 | ✅ v0.16.0 |

@@ -17,6 +17,7 @@
    - [PERF-03 — Token 計數快取](#perf-03--token-計數快取)
    - [BUG-A03 — 雙重加鎖修復](#bug-a03--雙重加鎖修復)
 7. [真實數據量測計劃](#7-真實數據量測計劃)
+   - [REV-01 — 量化對照實驗（商業指標）](#rev-01--量化對照實驗商業指標)
    - [FLY-04 — NudgeEngine 命中率](#fly-04--nudgeengine-命中率)
    - [FLY-05 — 知識庫自然成長率](#fly-05--知識庫自然成長率)
    - [REV-02 — 衰減效用量測](#rev-02--衰減效用量測)
@@ -51,7 +52,8 @@ tests/
 ├── chaos/
 │   └── test_chaos_and_load.py       ← Chaos & 負載測試（6 個類，@pytest.mark.chaos）
 └── benchmarks/
-    └── benchmark_recall.py          ← 召回率基準測試（目標 ≥ 60%，實測 95%）
+    ├── benchmark_recall.py          ← 召回率基準測試（目標 ≥ 60%，實測 95%）
+    └── benchmark_rev01.py           ← REV-01 量化對照實驗（13 個測試案例）
 ```
 
 **圖例**：
@@ -390,6 +392,168 @@ python -m pytest tests/unit/test_bug_a03_locking.py -v -k "StressTest"  # 只跑
 
 ---
 
+### REV-01 — 量化對照實驗（商業指標）
+
+**狀態**：✅ Layer 1 自動化測試通過（13/13）；Layer 2/3 需累積線上數據
+**核心假設**：Project Brain 能讓 Agent 在執行任務時召回已知 Pitfall，且知識品質透過反饋迴圈自我強化，最終減少重複踩坑。
+
+#### 三層實驗架構
+
+```
+Layer 1  合成受控實驗（Synthetic Controlled Experiment）   ← 自動化，現在就可跑
+Layer 2  生產反饋率量測（Production Utility Rate）          ← 需 30 天線上數據
+Layer 3  Pitfall 非重現率量測（Pitfall Non-Recurrence）     ← 需 90 天線上數據
+```
+
+---
+
+#### Layer 1 — 合成受控實驗（Automated，pytest）
+
+**執行指令**：
+```bash
+python -m pytest tests/benchmarks/benchmark_rev01.py -v
+```
+
+**測試案例總覽**：
+
+| 類別 | 測試案例 | 商業假設 | 門檻 | 狀態 |
+|------|---------|---------|------|------|
+| `TestREV01PitfallRecall` | `test_pitfall_recall_rate_meets_threshold` | A. 5 個 Pitfall 中 ≥ 4 個能被相關查詢召回 | 召回率 ≥ 70% | ✅ |
+| `TestREV01PitfallRecall` | `test_each_pitfall_individually_retrievable` | A. 每個 Pitfall 單獨也能被召回 | 0 缺漏 | ✅ |
+| `TestREV01ControlVsTreatment` | `test_treatment_vs_control_pitfall_avoidance` | B. 有 Brain vs 無 Brain 的 Pitfall 出現率差距 | ≥ 50pp | ✅ |
+| `TestREV01ControlVsTreatment` | `test_rule_also_retrieved_in_treatment` | B. Rule 類型知識同樣可被召回 | context 非空 | ✅ |
+| `TestREV01FeedbackLoop` | `test_positive_feedback_increases_confidence` | C. 正向反饋使 confidence +3% | 精確 +0.03 | ✅ |
+| `TestREV01FeedbackLoop` | `test_negative_feedback_decreases_confidence` | D. 負向反饋使 confidence -5% | 精確 -0.05 | ✅ |
+| `TestREV01FeedbackLoop` | `test_confidence_floor_enforced` | D. confidence 下限 0.05（DECAY_FLOOR） | ≥ 0.05 | ✅ |
+| `TestREV01FeedbackLoop` | `test_confidence_ceiling_enforced` | C. confidence 上限 1.0（DECAY_CEIL） | ≤ 1.0 | ✅ |
+| `TestREV01KnowledgePromotion` | `test_repeatedly_useful_node_reaches_high_confidence` | E. 15 次正向反饋後晉升為核心知識 | ≥ 0.90 | ✅ |
+| `TestREV01KnowledgePromotion` | `test_alternating_feedback_stabilizes_confidence` | E. 正負交替不會讓 confidence 失控漂移 | ±0.15 內 | ✅ |
+| `TestREV01AdoptionCount` | `test_adoption_count_increments_on_positive_feedback` | F. adoption_count 正確累加（F6 因子） | ≥ 3 | ✅ |
+| `TestREV01AdoptionCount` | `test_negative_feedback_does_not_increment_adoption_count` | F. 負向反饋不影響 adoption_count | == 0 | ✅ |
+| `TestREV01AdoptionCount` | `test_mixed_feedback_adoption_count_only_counts_positive` | F. 混合反饋只計正向次數 | == 3 | ✅ |
+
+**合成資料集**：5 個真實場景 Pitfall（JWT / SQLite WAL / API Key / DB 遷移 / FTS5 一致性），每個搭配語意相關但用語不同的查詢，測試 FTS + 向量召回的真實能力。
+
+---
+
+#### Layer 2 — 生產反饋率量測（Real Data，30 天）
+
+**商業意義**：Agent 確認有用的知識比例，代表 Brain 提供的 context 是否真的幫助了決策。
+
+**量測方式**：
+```sql
+-- 執行位置：.brain/brain.db
+-- 知識有用率（30 天內 report_knowledge_outcome 反饋統計）
+SELECT
+  ROUND(100.0 * SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0), 1)                            AS useful_rate_pct,
+  SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END)              AS useful_count,
+  SUM(CASE WHEN helpful = 0 THEN 1 ELSE 0 END)              AS not_useful_count,
+  COUNT(*)                                                   AS total_feedback
+FROM (
+  -- helpful 欄位記錄在 adoption_count 增加前後的節點變化
+  SELECT n.id,
+    CASE WHEN n.adoption_count > 0 THEN 1 ELSE 0 END AS helpful
+  FROM nodes n
+  WHERE n.updated_at >= datetime('now', '-30 days')
+    AND n.access_count > 0
+);
+
+-- 前 10 最常被確認有用的知識（高 adoption_count 節點）
+SELECT
+  id, title, type,
+  adoption_count,
+  ROUND(confidence, 2) AS confidence,
+  access_count
+FROM nodes
+WHERE adoption_count > 0
+ORDER BY adoption_count DESC
+LIMIT 10;
+
+-- 信心分布：反饋對 confidence 的實際影響
+SELECT
+  CASE
+    WHEN confidence >= 0.90 THEN '核心知識（≥ 0.90）'
+    WHEN confidence >= 0.70 THEN '穩定知識（0.70–0.89）'
+    WHEN confidence >= 0.50 THEN '一般知識（0.50–0.69）'
+    ELSE                         '低信心（< 0.50）'
+  END AS tier,
+  COUNT(*) AS node_count,
+  ROUND(AVG(adoption_count), 1) AS avg_adoption
+FROM nodes
+WHERE is_deprecated = 0
+GROUP BY tier
+ORDER BY MIN(confidence) DESC;
+```
+
+**量測前提條件**：
+- [ ] `report_knowledge_outcome` 已被 Agent 呼叫至少 20 次
+- [ ] 知識庫節點數 > 30
+- [ ] 已使用 Brain 完成至少 10 個非瑣碎任務
+
+**驗收門檻（30 天）**：
+
+| 指標 | 目標 | 未達標時的行動 |
+|------|------|--------------|
+| 知識有用率（useful_rate_pct）| ≥ 60% | 審查低信心節點，清除過時知識 |
+| 有 adoption_count > 0 的節點比例 | ≥ 30% | 確認 Agent 是否實際呼叫 `report_knowledge_outcome` |
+| 核心知識層（confidence ≥ 0.90）節點數 | ≥ 5 | 增加正向反饋呼叫頻率 |
+
+---
+
+#### Layer 3 — Pitfall 非重現率量測（Real Data，90 天）
+
+**商業意義**：如果 Brain 中已有的 Pitfall 在之後的任務中被重新「發現」並以近似方式加入，代表 Agent 沒有在任務開始時成功召回該 Pitfall，Brain 對踩坑預防的效果失效。
+
+**量測方式**：
+```sql
+-- 偵測「重複 Pitfall」：新加入的 Pitfall 與現有 Pitfall 高度相似
+-- （near_duplicate 事件由 SemanticDedup 在 add_knowledge 時觸發）
+SELECT
+  json_extract(payload, '$.existing_id') AS existing_id,
+  json_extract(payload, '$.new_id')      AS new_id,
+  ROUND(json_extract(payload, '$.similarity'), 3) AS similarity,
+  created_at
+FROM events
+WHERE event_type = 'near_duplicate'
+  AND created_at >= datetime('now', '-90 days')
+ORDER BY similarity DESC;
+
+-- 計算 Pitfall 重現率
+SELECT
+  ROUND(100.0 * COUNT(DISTINCT json_extract(payload, '$.existing_id'))
+        / NULLIF((SELECT COUNT(*) FROM nodes WHERE type='Pitfall'), 0), 1)
+  AS pitfall_recurrence_rate_pct
+FROM events
+WHERE event_type = 'near_duplicate'
+  AND created_at >= datetime('now', '-90 days');
+```
+
+**量測前提條件**：
+- [ ] 知識庫 Pitfall 節點 ≥ 10
+- [ ] 已運行 ≥ 90 天，完成 ≥ 30 個任務
+- [ ] SemanticDedup 已啟用（`near_duplicate` 事件存在）
+
+**驗收門檻（90 天）**：
+
+| 指標 | 目標 | 說明 |
+|------|------|------|
+| Pitfall 重現率（pitfall_recurrence_rate_pct）| < 20% | > 20% 代表 Pitfall 召回失效，需調整 context token budget 或查詢策略 |
+| near_duplicate similarity ≥ 0.90 的事件數 | < 5 | 高相似度重複代表嚴重召回失敗（同一個坑踩兩次） |
+
+---
+
+#### 驗收里程碑
+
+| 時間點 | 里程碑 | 動作 |
+|--------|--------|------|
+| 現在 | Layer 1 全通過（13/13 ✅）| `pytest tests/benchmarks/benchmark_rev01.py` |
+| +30 天 | Layer 2 知識有用率 ≥ 60% | 執行 Layer 2 SQL，記錄結果至 CHANGELOG |
+| +90 天 | Layer 3 Pitfall 重現率 < 20% | 執行 Layer 3 SQL，評估是否需要調整召回策略 |
+| +90 天 | 三層全通過 → REV-01 ✅ 完整驗收 | 更新 IMPROVEMENT_PLAN.md 狀態 |
+
+---
+
 ### FLY-04 — NudgeEngine 命中率
 
 **狀態**：△ emit 邏輯已實作，需累積事件數據
@@ -573,6 +737,10 @@ awk '/^## v/{ver=$2} /✅/{count[ver]++} END{for(v in count) print v, count[v]}'
 | `get_context` 召回率 | **≥ 60%（Gate）** | `benchmark_recall.py` | ✅ **95%** |
 | 靜默失效路徑 | **0（Gate）** | `grep 'except.*pass'` | ✅ 0 |
 | Migration 失敗可觀察率 | **100%** | 故意破壞 schema 後確認 warning | ✅ |
+| REV-01 Layer 1 Pitfall 召回率 | ≥ 70% | `benchmark_rev01.py` | ✅ 100% |
+| REV-01 Layer 1 對照實驗差距 | ≥ 50pp | `benchmark_rev01.py` | ✅ 100% |
+| REV-01 Layer 2 知識有用率 | ≥ 60%（30 天）| SQL 查詢 nodes 表 | △ 需累積 |
+| REV-01 Layer 3 Pitfall 重現率 | < 20%（90 天）| SQL 查詢 events 表 | △ 需累積 |
 | NudgeEngine 命中率 | ≥ 30%（> 20 節點後）| SQL 查詢 events 表 | △ 需累積 |
 | 知識庫自然成長率 | ≥ 5 節點/7 天 | SQL 查詢 nodes 表 | △ 需累積 |
 | 功能狀態標記覆蓋率 | 100% | COMMANDS.md 命令表 | ✅ 22/22 |
@@ -599,6 +767,11 @@ python -m pytest tests/chaos/ -m chaos -v
 
 # ── 召回率基準測試 ─────────────────────────────────────────
 python -m pytest tests/benchmarks/benchmark_recall.py -v
+
+# ── REV-01 量化對照實驗（13 個測試案例）────────────────────
+python -m pytest tests/benchmarks/benchmark_rev01.py -v
+python -m pytest tests/benchmarks/benchmark_rev01.py -v -k "ControlVsTreatment"  # 只跑對照實驗
+python -m pytest tests/benchmarks/benchmark_rev01.py -v -k "FeedbackLoop"         # 只跑反饋迴圈
 
 # ── 待實作項目（目前應失敗）──────────────────────────────
 python -m pytest tests/unit/test_ref04_constants.py -v
