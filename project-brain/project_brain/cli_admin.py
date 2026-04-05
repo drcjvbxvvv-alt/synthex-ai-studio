@@ -793,6 +793,30 @@ def cmd_index(args):
         _info("brain ask 現在使用混合搜尋（FTS5 × 0.4 + 向量 × 0.6）")
 
 
+def _display_width(s: str) -> int:
+    """Return terminal column width of s (CJK wide chars count as 2)."""
+    import unicodedata
+    w = 0
+    for ch in s:
+        eaw = unicodedata.east_asian_width(ch)
+        w += 2 if eaw in ('W', 'F') else 1
+    return w
+
+
+def _trunc_display(s: str, max_cols: int) -> str:
+    """Truncate s so its display width fits within max_cols columns."""
+    import unicodedata
+    w, out = 0, []
+    for ch in s:
+        eaw = unicodedata.east_asian_width(ch)
+        cw = 2 if eaw in ('W', 'F') else 1
+        if w + cw > max_cols:
+            break
+        out.append(ch)
+        w += cw
+    return ''.join(out)
+
+
 def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str) -> int:
     """用 Ollama 審核指定節點，更新 confidence。回傳已更新筆數。"""
     import json    as _json
@@ -822,10 +846,24 @@ def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str
 
     # llama3.2 tends to return a single object for multi-item batches,
     # so keep BATCH=1 to guarantee one node → one response with matching id
-    BATCH = 1
+    BATCH   = 1
     updated = 0
-    for i in range(0, len(rows), BATCH):
+    n_total = len(rows)
+    import shutil as _shutil
+    term_w  = _shutil.get_terminal_size((80, 24)).columns
+
+    for i in range(0, n_total, BATCH):
         batch = rows[i : i + BATCH]
+        # ── progress line ──────────────────────────────────────────
+        idx   = i + 1
+        w_idx = len(str(n_total))
+        title_budget = term_w - w_idx * 2 - 10  # "[xx/xx] " + margin
+        title_preview = _trunc_display(_clean(batch[0][2]), max(10, title_budget))
+        pad = term_w - _display_width(title_preview) - w_idx * 2 - 10
+        print(
+            f"\r  [{idx:{w_idx}}/{n_total}] {title_preview}{' ' * max(0, pad)}",
+            end="", flush=True,
+        )
         items = [
             {
                 "id":      r[0],
@@ -860,8 +898,9 @@ def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str
                     )
                     updated += 1
         except Exception as exc:
-            print(f"  [ai-review] ⚠ 批次 {i//BATCH+1} 失敗：{exc}")
+            print(f"\r  ⚠ [{idx}/{n_total}] 失敗：{exc}{' ' * 20}")
 
+    print(f"\r  {' ' * (term_w - 2)}\r", end="", flush=True)  # clear progress line
     db.conn.commit()
     return updated
 
@@ -942,39 +981,69 @@ def _cmd_backfill_git(args):
         if h not in processed and h[:8] not in processed
     ]
 
-    print(
-        f"[backfill-git] git 歷史 {len(all_commits)} 筆｜"
-        f"已處理 {len(all_commits) - len(new_commits)}｜"
-        f"待回填 {len(new_commits)}"
-    )
+    import shutil as _shutil
+    term_w = _shutil.get_terminal_size((80, 24)).columns
+    _BAR   = "─" * min(term_w, 60)
+    _G, _R, _B, _D, _Y = "\033[92m", "\033[0m", "\033[1m", "\033[2m", "\033[93m"
+
+    n_all  = len(all_commits)
+    n_new  = len(new_commits)
+    n_done = n_all - n_new
+
+    print(f"{_B}[backfill-git]{_R} git 歷史 {n_all} 筆"
+          f"  已處理 {n_done}  待回填 {_B}{n_new}{_R}")
 
     if dry_run:
+        print(f"{_D}{_BAR}{_R}")
         for h, msg, date in new_commits:
-            print(f"  [dry-run] {h[:8]} ({date[:10]}): {msg[:70]}")
+            msg_trunc = _trunc_display(msg, term_w - 24)
+            print(f"  {_D}[dry-run]{_R} {h[:8]}  {_D}({date[:10]}){_R}  {msg_trunc}")
         return 0
 
-    if not new_commits:
-        print("[backfill-git] 所有 commit 均已學習，無需回填")
-        # still run phase-2 timestamp fix on existing nodes
-    else:
-        # ── 3. 對每個未處理的 commit 呼叫 learn_from_commit ──────────
-        from .engine import ProjectBrain
+    phases_total = 2 + (1 if ai_review else 0)
 
-        brain = ProjectBrain(str(workdir))
+    # ─── Phase 1: 學習 git 歷史 ──────────────────────────────────────
+    print(f"\n{_D}{_BAR}{_R}")
+    print(f" {_B}Phase 1/{phases_total}{_R}  學習 git 歷史")
+    print(f"{_D}{_BAR}{_R}")
+
+    if not new_commits:
+        print(f"  {_G}✓{_R}  所有 commit 均已學習，無需回填\n")
         total_learned = 0
-        n_total = len(new_commits)
+    else:
+        from .engine import ProjectBrain
+        brain         = ProjectBrain(str(workdir))
+        total_learned = 0
+        n_total       = len(new_commits)
+        w_idx         = len(str(n_total))
+        # Columns: "  [xxx/xxx] xxxxxxxx  <msg>  +N"
+        # fixed parts: 2 + 1 + w_idx + 1 + w_idx + 2 + 8 + 2 + 3 = ~20
+        msg_budget = max(10, term_w - w_idx * 2 - 18)
+
         for i, (commit_hash, msg, _date) in enumerate(new_commits):
-            # FEAT-09: live progress indicator
-            print(f"\r  [{i+1}/{n_total}] {commit_hash[:8]}: {msg[:50]:<50}", end="", flush=True)
+            msg_trunc = _trunc_display(msg, msg_budget)
+            # right-pad with spaces so shorter msgs erase longer ones
+            line_len  = _display_width(msg_trunc) + w_idx * 2 + 18
+            pad       = max(0, term_w - line_len - 1)
+            print(
+                f"\r  [{i+1:{w_idx}}/{n_total}] {commit_hash[:8]}  {msg_trunc}{' ' * pad}",
+                end="", flush=True,
+            )
             try:
                 learned = brain.learn_from_commit(commit_hash)
                 total_learned += learned
-            except Exception as exc:
-                pass  # silent; final summary covers total
-        print(f"\r  {'':70}")  # clear progress line
-        print(f"  共新增 {total_learned} 個知識節點（掃描 {n_total} 個 commit）\n")
+            except Exception:
+                pass
 
-    # ── 4. 補正 created_at：用 valid_from 覆蓋錯誤的 datetime('now') ────
+        print(f"\r  {' ' * (term_w - 2)}\r", end="", flush=True)  # clear line
+        print(f"  {_G}✓{_R}  新增 {_B}{total_learned}{_R} 個知識節點"
+              f"  {_D}（掃描 {n_total} 個 commit）{_R}\n")
+
+    # ─── Phase 2: 時間戳補正 ─────────────────────────────────────────
+    print(f"{_D}{_BAR}{_R}")
+    print(f" {_B}Phase 2/{phases_total}{_R}  時間戳補正")
+    print(f"{_D}{_BAR}{_R}")
+
     # valid_from 由 _store_chunk 從 commit date 寫入，是可靠的真實時間來源。
     # 格式：ISO 8601 "2026-04-01T16:13:00+08:00" → 正規化為 "2026-04-01 16:13:00"
     ts_updated = db.conn.execute("""
@@ -983,12 +1052,12 @@ def _cmd_backfill_git(args):
         WHERE length(valid_from) > 0
           AND substr(valid_from, 1, 10) < substr(created_at, 1, 10)
     """).rowcount
-
     db.conn.commit()
-    print(f"[backfill-git] 時間戳補正：{ts_updated} 個節點")
+    print(f"  {_G}✓{_R}  補正 {_B}{ts_updated}{_R} 個節點的 created_at\n")
 
-    # ── 5. （可選）Ollama AI 審核信心分數 ──────────────────────────────
-    # 目標：所有 confidence = 0.5 的節點（啟發式預設值，尚未 AI 審核）
+    # ─── Phase 3: AI 審核（可選）─────────────────────────────────────
+    reviewed   = 0
+    review_ids: list = []
     if ai_review:
         import sqlite3 as _sqlite3
         _rconn = _sqlite3.connect(str(brain_dir / "brain.db"))
@@ -998,10 +1067,27 @@ def _cmd_backfill_git(args):
             ).fetchall()
         ]
         _rconn.close()
-        print(f"[backfill-git] AI 審核 {len(review_ids)} 個待審節點"
-              f"（confidence=0.5，model={ollama_model}）")
-        reviewed = _ai_review_nodes(db, review_ids, ollama_url, ollama_model)
-        print(f"[backfill-git] AI 審核完成：{reviewed} 個節點信心分數已更新")
+
+        print(f"{_D}{_BAR}{_R}")
+        print(f" {_B}Phase 3/{phases_total}{_R}  AI 信心審核"
+              f"  {_D}（model={ollama_model}，{len(review_ids)} 個節點）{_R}")
+        print(f"{_D}{_BAR}{_R}")
+
+        if not review_ids:
+            print(f"  {_D}--{_R}  無待審節點（所有節點 confidence ≠ 0.5）\n")
+        else:
+            reviewed = _ai_review_nodes(db, review_ids, ollama_url, ollama_model)
+            print(f"  {_G}✓{_R}  已更新 {_B}{reviewed}/{len(review_ids)}{_R} 個節點的 confidence\n")
+
+    # ─── 總結 ──────────────────────────────────────────────────────
+    print(f"{_D}{_BAR}{_R}")
+    parts = [f"新增知識節點 {total_learned}"]
+    if ts_updated:
+        parts.append(f"時間戳補正 {ts_updated}")
+    if ai_review:
+        parts.append(f"AI 審核 {reviewed}/{len(review_ids) if review_ids else 0}")
+    print(f"  {_G}✅ 回填完成{_R}  {'  ·  '.join(parts)}")
+    print(f"{_D}{_BAR}{_R}\n")
 
     return 0
 
