@@ -4,6 +4,38 @@
 
 ---
 
+## v0.21.0（2026-04-05）— WebUI UX 強化、CLI 可觀測性與效能優化
+
+### UX-01 — WebUI 篩選狀態 URL 持久化
+
+- **`web_ui/server.py`** 新增 `_syncHash()` / `_restoreHash()` 函式：
+  - `_syncHash()`：將 `currentFilter`（kind）、`confFilter`（信心）、`pinnedFilter`（釘選）序列化至 `location.hash`（`#kind=Rule&conf=hi&pin=1`）
+  - `_restoreHash()`：頁面載入時讀取 hash，恢復篩選狀態（設定 currentFilter、confFilter、pinnedFilter 及對應 UI 高亮）
+  - `filterKind()`、`filterConf()`、`filterPinned()` 結尾均呼叫 `_syncHash()`
+  - Boot 時先呼叫 `_restoreHash()` 再 `loadGraph()`，確保首次載入使用正確 kind filter
+- 效果：篩選後刷新頁面或分享 URL，對方看到相同的篩選視圖
+
+### FEAT-09 — `brain backfill-git` 進度顯示
+
+- **`cli_admin.py`** Phase 1 迴圈改為行內進度輸出（`\r  [i/total] hash: msg`），每個 commit 即時更新，不再靜默等待
+- `--limit 0`：不限制掃描深度（原本 0 等同 git log 預設行為，現明確定義為「掃描全部 commit」）
+- 完成後清除進度行，輸出彙總：`共新增 N 個知識節點（掃描 M 個 commit）`
+
+### OBS-04 — `brain health` MCP 連接狀態檢查
+
+- **`cli_admin.py`** 新增 `cmd_health(args)`：
+  - TCP connect `127.0.0.1:{port}` 並回報延遲（ms）；失敗時提示 `brain serve --mcp`
+  - 檢查 `.brain` 目錄存在性，列出 `brain.db` / `knowledge_graph.db` 大小
+  - `--mcp-port N` 覆蓋 `BRAIN_MCP_PORT` 環境變數（預設 3000）
+- **`cli_utils.py`** 新增 `brain health [--mcp-port N]` 子指令
+- **`cli.py`** 匯入 `cmd_health` 並加入 dispatch 表
+
+### PERF-07 — `session_store.py` list() 指定欄位
+
+- `list()` 查詢由 `SELECT *` 改為 `SELECT key, value, category, session_id, created_at, expires_at, meta`，明確排除自動遞增 `id`（`_row_to_entry()` 不使用），減少不必要的欄位傳輸
+
+---
+
 ## v0.20.0（2026-04-05）— 並發安全與資料一致性修復
 
 ### SEC-05 — `_brain_cache` 並發競態修復（mcp_server.py）

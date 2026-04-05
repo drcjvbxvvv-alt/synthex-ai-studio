@@ -41,6 +41,7 @@ from project_brain.cli_admin import (
     cmd_init, cmd_status, cmd_setup, cmd_doctor, cmd_config,
     cmd_optimize, cmd_clear, cmd_scan, cmd_health_report, cmd_report,
     cmd_analytics, cmd_export, cmd_import, cmd_index,
+    cmd_health,
     _cmd_backfill_git,
 )
 
@@ -201,6 +202,7 @@ def main():
         'context':       cmd_context,
         'meta':          cmd_meta_knowledge,
         'doctor':        cmd_doctor,
+        'health':        cmd_health,
         'config':        cmd_config,
         'optimize':      cmd_optimize,
         'clear':         cmd_clear,

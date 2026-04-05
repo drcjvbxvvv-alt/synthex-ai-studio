@@ -1037,6 +1037,7 @@ function filterConf(key) {{
     if (el) el.classList.toggle('filter-active', k === confFilter);
   }});
   applyOpacity();
+  _syncHash();
 }}
 
 function filterPinned() {{
@@ -1049,6 +1050,41 @@ function filterPinned() {{
   const pin = document.getElementById('card-pin');
   if (pin) pin.classList.toggle('filter-active', pinnedFilter);
   applyOpacity();
+  _syncHash();
+}}
+
+// ── URL hash 篩選持久化（UX-01）────────────────
+function _syncHash() {{
+  const parts = [];
+  if (currentFilter && currentFilter !== 'all') parts.push('kind=' + currentFilter);
+  if (confFilter)   parts.push('conf=' + confFilter);
+  if (pinnedFilter) parts.push('pin=1');
+  history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname + location.search);
+}}
+
+function _restoreHash() {{
+  const h = location.hash.slice(1);
+  if (!h) return;
+  const params = Object.fromEntries(
+    h.split('&').map(s => {{ const i = s.indexOf('='); return [s.slice(0,i), s.slice(i+1)]; }})
+  );
+  if (params.kind) {{
+    currentFilter = params.kind;
+    document.querySelectorAll('.pill').forEach(p =>
+      p.classList.toggle('active', p.dataset.kind === currentFilter));
+  }}
+  if (params.conf && CONF_RANGE[params.conf]) {{
+    confFilter = params.conf;
+    ['hi','med','low','vlow'].forEach(k => {{
+      const el = document.getElementById('conf-row-' + k);
+      if (el) el.classList.toggle('filter-active', k === confFilter);
+    }});
+  }}
+  if (params.pin) {{
+    pinnedFilter = true;
+    const pin = document.getElementById('card-pin');
+    if (pin) pin.classList.add('filter-active');
+  }}
 }}
 
 // ── Opacity (filter + search) ───────────────────
@@ -1158,6 +1194,7 @@ function filterKind(kind) {{
   currentFilter = kind;
   document.querySelectorAll('.pill').forEach(p =>
     p.classList.toggle('active', p.dataset.kind === kind));
+  _syncHash();
   loadGraph();
 }}
 document.querySelectorAll('.pill').forEach(p =>
@@ -1313,6 +1350,7 @@ async function refreshAll() {{
 }}
 
 // ── Boot ─────────────────────────────────────────
+_restoreHash();   // UX-01: apply filter state from URL hash before first load
 loadStats();
 loadGraph();
 </script>

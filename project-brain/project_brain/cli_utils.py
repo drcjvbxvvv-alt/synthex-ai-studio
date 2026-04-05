@@ -500,6 +500,10 @@ def _build_parser():
     p = mkp('doctor', '系統健康檢查與自動修復')
     p.add_argument('--fix', action='store_true', help='嘗試自動修復發現的問題')
 
+    p = mkp('health', 'OBS-04: 檢查 MCP server 連接狀態與 .brain 健康度')
+    p.add_argument('--mcp-port', dest='mcp_port', type=int, default=None,
+                   help='MCP server port（預設：BRAIN_MCP_PORT 或 3000）')
+
     mkp('config', '顯示並驗證所有設定來源（5 處）')
 
     p = mkp('optimize', 'C-1: 資料庫維護 — VACUUM + FTS5 rebuild（節省磁碟）')

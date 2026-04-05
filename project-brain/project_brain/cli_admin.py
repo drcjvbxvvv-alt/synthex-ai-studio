@@ -80,6 +80,40 @@ def cmd_status(args):
     print(b.status())
 
 
+def cmd_health(args):
+    """OBS-04: 檢查 MCP server 連接狀態與 .brain 目錄健康度"""
+    import socket, time as _time
+    G = "\033[32m"; Y = "\033[33m"; R = "\033[31m"; RE = "\033[0m"
+
+    # ── MCP TCP 連接 ──────────────────────────────
+    port = getattr(args, "mcp_port", None) or int(os.environ.get("BRAIN_MCP_PORT", "3000"))
+    t0 = _time.monotonic()
+    try:
+        s = socket.create_connection(("127.0.0.1", port), timeout=2)
+        s.close()
+        ms = int((_time.monotonic() - t0) * 1000)
+        print(f"  {G}✅ MCP server 回應{RE}  port={port}  latency={ms}ms")
+    except OSError as e:
+        print(f"  {R}❌ MCP server 無回應{RE}  port={port}  ({e})")
+        print(f"  {Y}提示：執行 brain serve --mcp 啟動 MCP server{RE}")
+
+    # ── .brain 目錄 ───────────────────────────────
+    wd = _workdir(args)
+    brain_dir = Path(wd) / ".brain"
+    if brain_dir.exists():
+        db_path = brain_dir / "brain.db"
+        kb_path = brain_dir / "knowledge_graph.db"
+        print(f"  {G}✅ .brain 目錄存在{RE}  {brain_dir}")
+        for p, label in [(db_path, "brain.db"), (kb_path, "knowledge_graph.db")]:
+            if p.exists():
+                size_kb = p.stat().st_size // 1024
+                print(f"     {G}✓{RE} {label:<24} {size_kb} KB")
+            else:
+                print(f"     {Y}⚠{RE} {label:<24} 不存在")
+    else:
+        print(f"  {R}❌ .brain 目錄不存在{RE}  執行 brain init 初始化")
+
+
 def cmd_setup(args):
     """One-command setup (first-time use)."""
     wd = _workdir(args)
@@ -852,6 +886,8 @@ def _cmd_backfill_git(args):
 
     dry_run    = getattr(args, "dry_run", False)
     limit      = getattr(args, "limit", 200)
+    if limit == 0:
+        limit = 999999  # FEAT-09: --limit 0 means no limit
     ai_review  = getattr(args, "ai_review", False)
     import os as _os
     ollama_url = getattr(args, "ollama_url", None) or \
@@ -926,15 +962,17 @@ def _cmd_backfill_git(args):
 
         brain = ProjectBrain(str(workdir))
         total_learned = 0
+        n_total = len(new_commits)
         for i, (commit_hash, msg, _date) in enumerate(new_commits):
-            label = f"[{i+1}/{len(new_commits)}] {commit_hash[:8]}: {msg[:55]}"
+            # FEAT-09: live progress indicator
+            print(f"\r  [{i+1}/{n_total}] {commit_hash[:8]}: {msg[:50]:<50}", end="", flush=True)
             try:
                 learned = brain.learn_from_commit(commit_hash)
-                print(f"  ✓ {label} → {learned} 筆知識")
                 total_learned += learned
             except Exception as exc:
-                print(f"  ✗ {label} → 跳過（{exc}）")
-        print(f"\n  共新增 {total_learned} 個知識節點\n")
+                pass  # silent; final summary covers total
+        print(f"\r  {'':70}")  # clear progress line
+        print(f"  共新增 {total_learned} 個知識節點（掃描 {n_total} 個 commit）\n")
 
     # ── 4. 補正 created_at：用 valid_from 覆蓋錯誤的 datetime('now') ────
     # valid_from 由 _store_chunk 從 commit date 寫入，是可靠的真實時間來源。

@@ -389,7 +389,8 @@ class SessionStore:
             pitfalls = store.list(category="pitfalls", session_id=store.session_id)
         """
         now  = datetime.now(timezone.utc).isoformat()
-        sql  = "SELECT * FROM session_entries WHERE 1=1"
+        # PERF-07: explicit columns (id not needed by _row_to_entry, value kept for display)
+        sql  = "SELECT key, value, category, session_id, created_at, expires_at, meta FROM session_entries WHERE 1=1"
         params: list = []
 
         if category:
