@@ -1,9 +1,8 @@
 # Project Brain — 改善規劃書
 
-> **當前版本**：v0.23.0（2026-04-06 — AUTO-01~03 知識生產斷路修復完成）
+> **當前版本**：v0.24.0（2026-04-06 — MEM-07~10 memdir 啟發改善完成）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
-> **分析基準**：v0.23.0 892 passed / 5 skipped（35 unit tests in test_mem_improvements.py）
-> **MEM-07~10**：memdir 深度分析後新增，目標版本 v0.23.x。
+> **分析基準**：v0.24.0 903 passed / 5 skipped（45 unit tests in test_mem_improvements.py）
 
 ---
 
@@ -19,10 +18,14 @@
 
 ## 矩陣優先總覽
 
-### 已完成（v0.23.0）
+### 已完成（v0.24.0）
 
 | 優先 | ID | 影響摘要 | 象限 | 狀態 |
 |------|----|---------|------|------|
+| **P2** | MEM-07 | 新鮮度基準改為 `updated_at`（修正 MEM-04） | ⚡ 快速獲益 | ✅ v0.24.0 |
+| **P2** | MEM-08 | `_SonnetSelector` 改用 `tool_use` + 索引（防幻想 ID） | 🎯 高價值 | ✅ v0.24.0 |
+| **P2** | MEM-09 | 新鮮度警告文字強化（`file:line` + `grep` 驗證提示） | ⚡ 快速獲益 | ✅ v0.24.0 |
+| **P3** | MEM-10 | `alreadySurfaced` 前移至 AI 選取前（5-slot 全用於新知識） | 🔵 填空 | ✅ v0.24.0 |
 | **P1** | AUTO-01 | PostStop hook 接通 `from_git_commit()` 自動觸發 | 🎯 高價值 | ✅ v0.23.0 |
 | **P1** | AUTO-02 | `complete_task` 接通 `from_session_log()` + title 修復 | ⚡ 快速獲益 | ✅ v0.23.0 |
 | **P2** | AUTO-03 | `EXTRACTION_PROMPT` 改用 `tool_use` 結構化輸出 | ⚡ 快速獲益 | ✅ v0.23.0 |
@@ -33,14 +36,10 @@
 | **P3** | MEM-05 | `recentTools` 降權（減少 context 雜訊） | 🔵 填空 | ✅ v0.22.0 |
 | **P3** | MEM-06 | 摘要層 / 詳細層 context 分離 | 🏗 長期 | ✅ v0.22.0 |
 
-### 待辦（v0.23.0）
+### 待辦
 
 | 優先 | ID | 影響摘要 | 象限 | 狀態 |
 |------|----|---------|------|------|
-| **P2** | MEM-07 | 新鮮度基準改為 `updated_at`（修正 MEM-04） | ⚡ 快速獲益 | ☐ 待實作 |
-| **P2** | MEM-08 | AI 選取器改用結構化 JSON Schema 輸出 | 🎯 高價值 | ☐ 待實作 |
-| **P2** | MEM-09 | 新鮮度警告文字強化（file:line 引用提示） | ⚡ 快速獲益 | ☐ 待實作 |
-| **P3** | MEM-10 | `alreadySurfaced` 前移至 AI 選取前 | 🔵 填空 | ☐ 待實作 |
 | **P2** | TEST-04 | WebUI 測試覆蓋率 < 12% | 🎯 高價值 | ⏸ 擱置 |
 | **P2** | FEAT-08 | WebUI 節點行內編輯 | 📋 計劃執行 | ⏸ 擱置 |
 | **P2** | REV-01 | 量化對照實驗 Layer 2/3（需線上數據） | △ 需累積 | △ 進行中 |

@@ -39,6 +39,32 @@ _SELECT_PROMPT = (
     'Return only JSON: {{"selected": ["id1", "id2", ...]}}'
 )
 
+# MEM-08: index-based prompt for tool_use path (avoids hallucinated IDs)
+_SELECT_PROMPT_IDX = (
+    'Given this task: "{task}"\n'
+    'Select up to 5 entries that are CLEARLY relevant.\n'
+    'Be selective — omit anything uncertain.\n'
+    '{manifest}'
+)
+
+# MEM-08: structured output tool — forces valid JSON schema, eliminates json.loads fragility
+_SELECT_TOOL: dict = {
+    "name": "select_nodes",
+    "description": "Return the 0-based indices of the most relevant knowledge entries",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "selected_indices": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 0},
+                "maxItems": 5,
+                "description": "0-based indices from the provided list",
+            }
+        },
+        "required": ["selected_indices"],
+    },
+}
+
 
 class _KeywordSelector:
     """純規則 fallback：依 confidence 排序，零依賴，永不失敗。"""
@@ -79,23 +105,33 @@ class _OllamaSelector:
 
 
 class _SonnetSelector:
-    """Anthropic API 選取（高精度備援）。"""
+    """Anthropic API 選取（高精度備援）。
+
+    MEM-08: 改用 tool_use 強制結構化輸出，使用 0-based 索引而非字串 ID，
+    消滅 json.loads() 對 LLM 前言文字的脆弱性，同時防止幻想出不存在的 ID。
+    """
     def select(self, task: str, candidates: list) -> list:
         import anthropic
+        # MEM-08: index-based manifest (prevents hallucinated IDs)
         manifest = "\n".join(
-            f"- {n['id']}: {n.get('description') or n.get('title','')}"
-            for n in candidates
+            f"[{i}] ({n.get('type','?')}) {n.get('title','')} — {n.get('description') or n.get('title','')}"
+            for i, n in enumerate(candidates)
         )
         client = anthropic.Anthropic()
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=64,
-            messages=[{"role": "user", "content": _SELECT_PROMPT.format(
+            tools=[_SELECT_TOOL],
+            tool_choice={"type": "tool", "name": "select_nodes"},
+            messages=[{"role": "user", "content": _SELECT_PROMPT_IDX.format(
                 task=task, manifest=manifest
             )}],
         )
-        text = msg.content[0].text if msg.content else ""
-        return json.loads(text).get("selected", [])[:5]
+        tool_block = next((b for b in msg.content if b.type == "tool_use"), None)
+        if tool_block is None:
+            return [n['id'] for n in candidates[:5] if n.get('id')]
+        indices = tool_block.input.get("selected_indices", [])
+        return [candidates[i]['id'] for i in indices if i < len(candidates) and candidates[i].get('id')]
 
 
 def _resolve_selector(config: dict | None = None) -> "_KeywordSelector | _OllamaSelector | _SonnetSelector":
@@ -680,13 +716,16 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             try:
                 candidates = self.db.search_nodes(task, limit=20)
                 if candidates:
+                    # MEM-10: filter already-surfaced BEFORE AI selection so the
+                    # selector's 5-slot budget is spent entirely on unseen nodes.
+                    unseen = [c for c in candidates if c.get('id') not in _ai_exclude]
                     selector = _resolve_selector()
                     try:
-                        selected_ids = set(selector.select(task, candidates))
+                        selected_ids = set(selector.select(task, unseen))
                     except Exception as _se:
                         logger.debug("MEM-01: selector failed (%s), fallback to keyword", _se)
-                        selected_ids = set(n['id'] for n in candidates[:5] if n.get('id'))
-                    # Pass non-selected nodes as additional excludes
+                        selected_ids = set(n['id'] for n in unseen[:5] if n.get('id'))
+                    # Exclude all candidates not selected (seen or unselected unseen)
                     all_candidate_ids = {n['id'] for n in candidates if n.get('id')}
                     _ai_exclude = _ai_exclude | (all_candidate_ids - selected_ids)
             except Exception as _ae:

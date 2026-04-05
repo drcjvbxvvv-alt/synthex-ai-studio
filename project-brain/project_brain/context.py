@@ -695,14 +695,22 @@ class ContextEngineer:
         return " ".join(keywords[:8]) if keywords else ""
 
     @staticmethod
-    def _freshness_note(created_at: str) -> str:
-        """MEM-04: 超過 FRESHNESS_WARN_DAYS 天的節點加警告文字。"""
-        if not created_at:
+    def _freshness_note(node: dict) -> str:
+        """MEM-07+MEM-09: 超過 FRESHNESS_WARN_DAYS 天未更新的節點加警告文字。
+
+        MEM-07: 使用 updated_at（而非 created_at）作為新鮮度基準。
+                更新過的節點不會誤警，符合 memdir 以 mtime 為基準的設計。
+        MEM-09: 警告文字明確提示 file:line 引用最容易過期，
+                並告知 Agent 驗證方式（grep / Read 工具）。
+        """
+        # MEM-07: prefer updated_at, fallback to created_at for legacy nodes
+        ts = node.get('updated_at') or node.get('created_at') or ''
+        if not ts:
             return ''
         try:
             import datetime as _dt
             dt = _dt.datetime.fromisoformat(
-                created_at.replace(' ', 'T').replace('Z', '+00:00')
+                ts.replace(' ', 'T').replace('Z', '+00:00')
             )
             days = (
                 _dt.datetime.now(_dt.timezone.utc)
@@ -712,7 +720,13 @@ class ContextEngineer:
             return ''
         if days <= FRESHNESS_WARN_DAYS:
             return ''
-        return f'\n> ⚠ 此知識建立於 {days} 天前，引用前請確認仍適用於當前架構。'
+        # MEM-09: memdir-inspired text — explicit about what expires and how to verify
+        return (
+            f'\n> ⚠ 此知識最後更新於 **{days} 天前**。'
+            f'知識節點是時間點快照，非即時狀態——'
+            f'`file:line` 引用可能已過時。'
+            f'引用前請以 `grep` 或 `Read` 工具驗證現況。'
+        )
 
     def _fmt_node(self, label: str, node: dict, max_chars: int = NODE_CONTENT_CAP) -> str:
         from project_brain.utils import confidence_label
@@ -748,8 +762,8 @@ class ContextEngineer:
         meta = ""
         if ac: meta += f"\n  ⚠ 適用條件：{ac[:120]}"
         if ic: meta += f"\n  🚫 失效條件：{ic[:120]}"
-        # MEM-04: freshness note based on created_at
-        freshness = self._freshness_note(node.get('created_at') or '')
+        # MEM-07: freshness note — uses updated_at (falls back to created_at)
+        freshness = self._freshness_note(node)
         return f"### {label}：{title} [{clabel}{stale_warning}]\n{content}{freshness}\n{tag_str}{meta}"
 
     def _format_pitfalls(self, pitfalls: list) -> str:

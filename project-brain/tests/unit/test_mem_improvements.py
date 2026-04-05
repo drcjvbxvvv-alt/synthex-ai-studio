@@ -54,32 +54,63 @@ def _add_node_with_date(db, node_id: str, title: str, content: str,
 class TestMEM04FreshnessWarning:
 
     def test_freshness_note_old_node_has_warning(self):
-        """60 天前建立的節點，_freshness_note() 應回傳警告文字。"""
+        """60 天前更新的節點，_freshness_note() 應回傳警告文字。"""
         from project_brain.context import ContextEngineer
         old_date = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
-        note = ContextEngineer._freshness_note(old_date)
+        note = ContextEngineer._freshness_note({"updated_at": old_date})
         assert "60" in note or "⚠" in note
         assert note != ""
 
     def test_freshness_note_new_node_no_warning(self):
-        """10 天前建立的節點，_freshness_note() 應回傳空字串。"""
+        """10 天前更新的節點，_freshness_note() 應回傳空字串。"""
         from project_brain.context import ContextEngineer
         new_date = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-        note = ContextEngineer._freshness_note(new_date)
+        note = ContextEngineer._freshness_note({"updated_at": new_date})
         assert note == ""
 
     def test_freshness_note_exactly_at_threshold(self):
         """剛好 30 天（預設閾值），不應觸發警告。"""
         from project_brain.context import ContextEngineer
         threshold_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        note = ContextEngineer._freshness_note(threshold_date)
+        note = ContextEngineer._freshness_note({"updated_at": threshold_date})
         assert note == ""
 
     def test_freshness_note_empty_date_returns_empty(self):
-        """created_at 為空時不應拋錯，回傳空字串。"""
+        """updated_at 和 created_at 皆空時不應拋錯，回傳空字串。"""
         from project_brain.context import ContextEngineer
-        assert ContextEngineer._freshness_note("") == ""
-        assert ContextEngineer._freshness_note(None) == ""
+        assert ContextEngineer._freshness_note({}) == ""
+        assert ContextEngineer._freshness_note({"updated_at": None, "created_at": None}) == ""
+
+    # MEM-07: updated_at 優先於 created_at
+    def test_freshness_note_updated_at_overrides_created_at(self):
+        """節點 created 60 天前但 updated 10 天前，不應有警告（updated_at 優先）。"""
+        from project_brain.context import ContextEngineer
+        old_created = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+        new_updated  = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        note = ContextEngineer._freshness_note({"created_at": old_created, "updated_at": new_updated})
+        assert note == ""
+
+    def test_freshness_note_falls_back_to_created_at(self):
+        """updated_at 為空時，應 fallback 到 created_at。"""
+        from project_brain.context import ContextEngineer
+        old_created = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+        note = ContextEngineer._freshness_note({"created_at": old_created, "updated_at": ""})
+        assert "⚠" in note
+
+    # MEM-09: 警告文字品質
+    def test_freshness_note_text_mentions_file_line(self):
+        """警告文字應提及 file:line 引用可能過時（memdir 啟發的措辭）。"""
+        from project_brain.context import ContextEngineer
+        old_date = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+        note = ContextEngineer._freshness_note({"updated_at": old_date})
+        assert "file:line" in note or "file" in note
+
+    def test_freshness_note_text_mentions_verification(self):
+        """警告文字應提示驗證方法（grep 或 Read 工具）。"""
+        from project_brain.context import ContextEngineer
+        old_date = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+        note = ContextEngineer._freshness_note({"updated_at": old_date})
+        assert "grep" in note or "Read" in note or "驗證" in note
 
     def test_freshness_env_override(self):
         """BRAIN_FRESHNESS_WARN_DAYS=5 時，7 天前的節點應觸發警告。"""
@@ -562,3 +593,190 @@ class TestAUTO03StructuredOutput:
         assert result["knowledge_chunks"] == []
         assert "_error" in result
         assert "API error" in result["_error"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MEM-08: SonnetSelector 改用 tool_use + 索引
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMEM08SonnetToolUse:
+
+    def test_sonnet_selector_uses_tool_use(self):
+        """_SonnetSelector.select() 應使用 tool_use 而非 json.loads。"""
+        from project_brain.engine import _SonnetSelector, _SELECT_TOOL
+        from unittest.mock import MagicMock, patch
+        import anthropic
+
+        sel = _SonnetSelector()
+        candidates = [
+            {"id": "node-aaa", "type": "Pitfall", "title": "FTS5 bypass",
+             "description": "raw SQL bypasses FTS5"},
+            {"id": "node-bbb", "type": "Rule",    "title": "Use RS256",
+             "description": "JWT must use RS256"},
+        ]
+
+        mock_tool = MagicMock()
+        mock_tool.type = "tool_use"
+        mock_tool.input = {"selected_indices": [0]}
+
+        mock_msg = MagicMock()
+        mock_msg.content = [mock_tool]
+
+        with patch("anthropic.Anthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.create.return_value = mock_msg
+
+            result = sel.select("FTS5 sync issue", candidates)
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs.get("tool_choice") == {"type": "tool", "name": "select_nodes"}
+        assert call_kwargs.get("tools") == [_SELECT_TOOL]
+        assert result == ["node-aaa"]
+
+    def test_sonnet_selector_index_out_of_bounds_ignored(self):
+        """索引超出候選範圍時應靜默忽略，不拋錯。"""
+        from project_brain.engine import _SonnetSelector
+        from unittest.mock import MagicMock, patch
+
+        sel = _SonnetSelector()
+        candidates = [{"id": "only-one", "type": "Rule", "title": "T", "description": "D"}]
+
+        mock_tool = MagicMock()
+        mock_tool.type = "tool_use"
+        mock_tool.input = {"selected_indices": [0, 5, 99]}  # 5 and 99 out of bounds
+
+        mock_msg = MagicMock()
+        mock_msg.content = [mock_tool]
+
+        with patch("anthropic.Anthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.create.return_value = mock_msg
+            result = sel.select("task", candidates)
+
+        assert result == ["only-one"]  # only index 0 is valid
+
+    def test_sonnet_selector_no_tool_block_returns_fallback(self):
+        """tool_use block 缺失時應 fallback 到前 5 個候選，不拋錯。"""
+        from project_brain.engine import _SonnetSelector
+        from unittest.mock import MagicMock, patch
+
+        sel = _SonnetSelector()
+        candidates = [{"id": f"n{i}", "type": "Rule", "title": f"T{i}", "description": f"D{i}"}
+                      for i in range(3)]
+
+        mock_text = MagicMock()
+        mock_text.type = "text"  # no tool_use block
+
+        mock_msg = MagicMock()
+        mock_msg.content = [mock_text]
+
+        with patch("anthropic.Anthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.create.return_value = mock_msg
+            result = sel.select("task", candidates)
+
+        assert set(result) == {"n0", "n1", "n2"}
+
+    def test_manifest_uses_index_prefix(self):
+        """_SonnetSelector 的 manifest 應包含 [0], [1] 等索引前綴。"""
+        from project_brain.engine import _SonnetSelector
+        from unittest.mock import MagicMock, patch
+
+        sel = _SonnetSelector()
+        candidates = [
+            {"id": "node-x", "type": "Pitfall", "title": "MyTitle", "description": "MyDesc"},
+        ]
+
+        mock_tool = MagicMock()
+        mock_tool.type = "tool_use"
+        mock_tool.input = {"selected_indices": []}
+
+        mock_msg = MagicMock()
+        mock_msg.content = [mock_tool]
+
+        with patch("anthropic.Anthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.create.return_value = mock_msg
+            sel.select("task", candidates)
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        user_content = call_kwargs["messages"][0]["content"]
+        assert "[0]" in user_content
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MEM-10: alreadySurfaced 前移至 AI 選取前
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMEM10AlreadySurfacedPreFilter:
+
+    def test_exclude_ids_filtered_before_selector(self, tmp_path):
+        """ai_select=True 時，exclude_ids 的節點不應進入 selector 的候選清單。"""
+        from project_brain.engine import ProjectBrain
+        from unittest.mock import patch, MagicMock
+
+        (tmp_path / ".brain").mkdir()
+        brain = ProjectBrain(str(tmp_path))
+        brain.init("test-mem10")
+
+        brain.add_knowledge("Already seen node", "content A", "Pitfall", ["tag-a"])
+        brain.add_knowledge("Unseen node",       "content B", "Rule",    ["tag-b"])
+
+        # Capture what candidates the selector receives
+        captured_candidates = []
+
+        def mock_selector_select(task, candidates):
+            captured_candidates.extend(candidates)
+            return [c['id'] for c in candidates[:1]]
+
+        mock_sel = MagicMock()
+        mock_sel.select.side_effect = mock_selector_select
+
+        with patch("project_brain.engine._resolve_selector", return_value=mock_sel):
+            # Simulate: "already seen node" was already served
+            seen_node = brain.db.search_nodes("Already seen", limit=1)
+            seen_id = seen_node[0]['id'] if seen_node else "nonexistent"
+
+            brain.get_context("content", ai_select=True, exclude_ids={seen_id})
+
+        # The already-seen node should NOT appear in selector's candidates
+        candidate_ids = [c.get('id') for c in captured_candidates]
+        assert seen_id not in candidate_ids
+
+    def test_all_slots_used_for_unseen_nodes(self, tmp_path):
+        """session 內多次查詢時，後續查詢的 5-slot 全部用於未見節點。"""
+        from project_brain.engine import ProjectBrain
+        from unittest.mock import patch, MagicMock
+
+        (tmp_path / ".brain").mkdir()
+        brain = ProjectBrain(str(tmp_path))
+        brain.init("test-mem10-slots")
+
+        # Add 6 nodes
+        ids = []
+        for i in range(6):
+            nid = brain.add_knowledge(f"Node {i}", f"content {i}", "Rule", [f"tag{i}"])
+            ids.append(nid)
+
+        captured_second_call = []
+
+        def mock_select(task, candidates):
+            captured_second_call.extend(candidates)
+            return [c['id'] for c in candidates[:5]]
+
+        mock_sel = MagicMock()
+        mock_sel.select.side_effect = mock_select
+
+        already_seen = {ids[0], ids[1]}  # simulate 2 nodes already served
+
+        with patch("project_brain.engine._resolve_selector", return_value=mock_sel):
+            brain.get_context("node", ai_select=True, exclude_ids=already_seen)
+
+        # None of the already-seen IDs should be in second call's candidates
+        second_ids = {c.get('id') for c in captured_second_call}
+        assert not (already_seen & second_ids), \
+            f"already_seen nodes {already_seen & second_ids} appeared in selector candidates"
