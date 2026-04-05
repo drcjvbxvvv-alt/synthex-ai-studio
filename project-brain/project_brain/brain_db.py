@@ -534,19 +534,21 @@ class BrainDB:
                 )
             except Exception as _e:
                 logger.error("node_history snapshot failed: %s", _e)
-            self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
-            if title is not None or content is not None:
-                nt = title   if title   is not None else ex["title"]
-                nc = content if content is not None else ex["content"]
-                try:
+            try:  # REL-01: UPDATE + FTS must succeed together or rollback
+                self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
+                if title is not None or content is not None:
+                    nt = title   if title   is not None else ex["title"]
+                    nc = content if content is not None else ex["content"]
                     self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
                     self.conn.execute(
                         "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
                         (node_id, self._ngram(nt), self._ngram(nc), ex.get("tags","[]"))
                     )
-                except Exception as _e:
-                    logger.error("FTS index update failed in update_node: %s", _e)
-            self.conn.commit()
+                self.conn.commit()
+            except Exception as _e:
+                self.conn.rollback()
+                logger.error("update_node rolled back (nodes + FTS atomic failure): %s", _e)
+                raise
         # OPT-10 fix: evict stale embedder cache entries when content changes
         if content is not None:
             try:

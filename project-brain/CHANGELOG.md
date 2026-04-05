@@ -4,6 +4,23 @@
 
 ---
 
+## v0.20.0（2026-04-05）— 並發安全與資料一致性修復
+
+### SEC-05 — `_brain_cache` 並發競態修復（mcp_server.py）
+
+- 新增 `_cache_lock = threading.Lock()` 保護模組級 `_brain_cache` dict
+- `_resolve_brain()` 與 `multi_brain_query()` 兩處 read-check-write 均改為 `with _cache_lock:` 原子操作
+- 防止並發 workdir 切換造成 `ProjectBrain` 重複初始化（雙重 SQLite WAL 連線 / 快取覆蓋）
+- 對比：`_session_nodes` 已有 `_snodes_lock`，`_brain_cache` 補齊同樣保護
+
+### REL-01 — `update_node()` FTS 失敗後未 rollback 修復（brain_db.py）
+
+- 原實作：`UPDATE nodes` 成功後，FTS sync 若失敗只 log，`conn.commit()` 仍執行 → 節點資料與 FTS 索引不一致，更新後搜尋無法命中
+- 修復：將 `UPDATE nodes` + `DELETE/INSERT nodes_fts` 包進單一 `try` 區塊；任一步驟失敗即 `conn.rollback()` + `raise`，保持原子性
+- `node_history` snapshot 保持獨立 try-except（審計記錄失敗不應阻止主要更新）
+
+---
+
 ## v0.19.0（2026-04-05）— WebUI 信心分布與篩選功能
 
 ### WebUI — 信心分布面板

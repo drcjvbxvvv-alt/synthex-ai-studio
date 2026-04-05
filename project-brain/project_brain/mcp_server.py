@@ -123,6 +123,7 @@ def _find_brain_root(start: str) -> Path | None:
 
 # 多工作目錄 Brain 實例快取（key = resolved path str）
 _brain_cache: dict[str, Any] = {}
+_cache_lock  = threading.Lock()   # SEC-05: protect _brain_cache concurrent writes
 
 
 # ── MCP Server 主體 ─────────────────────────────────────────────
@@ -153,12 +154,13 @@ def create_server(workdir: str) -> Any:
         if root is None or root == work_path:
             return brain
         key = str(root)
-        if key not in _brain_cache:
-            try:
-                _brain_cache[key] = ProjectBrain(key)
-            except Exception:
-                return brain
-        return _brain_cache[key]
+        with _cache_lock:   # SEC-05: atomic read-check-write
+            if key not in _brain_cache:
+                try:
+                    _brain_cache[key] = ProjectBrain(key)
+                except Exception:
+                    return brain
+            return _brain_cache[key]
 
     # Minimal FastMCP init — different versions have different kwargs
     try:
@@ -1050,10 +1052,11 @@ def create_server(workdir: str) -> Any:
                 continue
             try:
                 key = str(root)
-                if key not in _brain_cache:
-                    from project_brain.engine import ProjectBrain as _PB
-                    _brain_cache[key] = _PB(key)
-                b_inst = _brain_cache[key]
+                with _cache_lock:   # SEC-05: atomic read-check-write
+                    if key not in _brain_cache:
+                        from project_brain.engine import ProjectBrain as _PB
+                        _brain_cache[key] = _PB(key)
+                    b_inst = _brain_cache[key]
                 project_name = root.name
                 # Get context snippets
                 raw = b_inst.graph.search_nodes(task_clean, limit=top_k)
