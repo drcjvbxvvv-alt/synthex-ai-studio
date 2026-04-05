@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 21          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 22          # DEF-04: bump on every schema change
 
 # REF-02: single source of truth in synonyms.py
 from .synonyms  import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -264,6 +264,9 @@ class BrainDB:
             ("type+confidence compound index",
              "CREATE INDEX IF NOT EXISTS idx_nodes_type_conf"
              " ON nodes(type, confidence DESC)"),
+            # v22: MEM-02 — description column for AI relevance selection manifest
+            ("description column on nodes",
+             "ALTER TABLE nodes ADD COLUMN description TEXT NOT NULL DEFAULT ''"),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -459,19 +462,25 @@ class BrainDB:
             if existing:
                 valid_from = existing[0]  # carry over from previous write
         created_at = kw.get("created_at", "") or ""
+        # MEM-02: description field — auto-generate from content if not provided
+        description = kw.get("description", "") or ""
+        if not description and content:
+            description = content[:100].replace('\n', ' ')
+
         with self._write_guard():  # DEF-01 fix: cross-process write lock
             _created_at_val = created_at or None  # None means use DEFAULT
             self.conn.execute("""
                 INSERT INTO nodes
-                    (id,type,title,content,tags,confidence,importance,
+                    (id,type,title,content,description,tags,confidence,importance,
                      emotional_weight,source_url,author,meta,scope,valid_from,
                      created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,
                         COALESCE(NULLIF(?, ''), datetime('now')))
                 ON CONFLICT(id) DO UPDATE SET
                     type=excluded.type,
                     title=excluded.title,
                     content=excluded.content,
+                    description=excluded.description,
                     tags=excluded.tags,
                     confidence=excluded.confidence,
                     importance=excluded.importance,
@@ -482,7 +491,7 @@ class BrainDB:
                     scope=excluded.scope,
                     valid_from=excluded.valid_from
                     -- created_at intentionally omitted: preserve original date
-            """, (node_id, node_type, title, content, tags_json,
+            """, (node_id, node_type, title, content, description, tags_json,
                   confidence,
                   float(kw.get("importance", 0.5)),
                   float(kw.get("emotional_weight", 0.5)),

@@ -54,6 +54,23 @@ _rate_lock   = threading.Lock()    # BUG-04 fix: protect concurrent access
 _session_nodes: dict[str, list[str]] = {}
 _snodes_lock = threading.Lock()
 
+# MEM-03: session dedup — track served node IDs per workdir
+_session_served: dict[str, set[str]] = {}
+_session_served_ts: dict[str, float] = {}   # last-access timestamps for TTL cleanup
+_sserved_lock = threading.Lock()
+_SESSION_TTL_SECS = 1800  # 30 分鐘無呼叫自動清除
+
+
+def _cleanup_expired_sessions() -> None:
+    """MEM-03: 清除超過 TTL 的 session served sets，避免記憶體洩漏。"""
+    now = time.monotonic()
+    with _sserved_lock:
+        expired = [k for k, ts in _session_served_ts.items()
+                   if now - ts > _SESSION_TTL_SECS]
+        for k in expired:
+            _session_served.pop(k, None)
+            _session_served_ts.pop(k, None)
+
 
 def _rate_check() -> None:
     """
@@ -181,14 +198,22 @@ def create_server(workdir: str) -> Any:
         current_file: str = "",
         scope: str = "global",
         workdir: str = "",
+        force: bool = False,
+        detail_level: str = "full",
+        current_context_tags: "list[str] | None" = None,
+        ai_select: bool = False,
     ) -> str:
         """
         根據當前任務動態組裝最相關的專案知識，注入 AI 的 Context。
 
         Args:
-            task:         當前任務描述（自然語言）
-            current_file: 當前操作的檔案路徑（選填，提升相關性）
-            workdir:      Claude Code 當前工作目錄（選填，讓 Brain 自動找對應 .brain/）
+            task:                 當前任務描述（自然語言）
+            current_file:         當前操作的檔案路徑（選填，提升相關性）
+            workdir:              Claude Code 當前工作目錄（選填，讓 Brain 自動找對應 .brain/）
+            force:                MEM-03：True 時跳過 session 去重，重新顯示所有相關知識
+            detail_level:         MEM-06：'summary' 只回 title+description；'full' 為完整內容（預設）
+            current_context_tags: MEM-05：當前操作標籤，Rule/Decision 與標籤重疊時降權
+            ai_select:            MEM-01：True 時啟用 AI 輔助相關性選取（需 Ollama 或 ANTHROPIC_API_KEY）
 
         Returns:
             格式化的知識注入字串，可直接加在 prompt 前面。
@@ -207,8 +232,33 @@ def create_server(workdir: str) -> Any:
             file_clean = ""
 
         b = _resolve_brain(workdir or file_clean)
+        _wk = str(b.workdir)
+
+        # MEM-03: session dedup
+        _cleanup_expired_sessions()
+        if force:
+            _exclude: set[str] = set()
+        else:
+            with _sserved_lock:
+                _exclude = set(_session_served.get(_wk, set()))
+
         try:
-            ctx = b.get_context(task_clean, file_clean) or ""
+            ctx = b.get_context(
+                task_clean, file_clean,
+                exclude_ids=_exclude if not force else None,
+                current_context_tags=current_context_tags,
+                detail_level=detail_level,
+            ) or ""
+
+            # MEM-03: update served set with IDs shown this call
+            try:
+                _new_ids = set(getattr(b.context_engineer, '_last_shown_ids', []))
+                if _new_ids:
+                    with _sserved_lock:
+                        _session_served.setdefault(_wk, set()).update(_new_ids)
+                        _session_served_ts[_wk] = time.monotonic()
+            except Exception:
+                pass
             # A-19: apply Memory Synthesizer if BRAIN_SYNTHESIZE=1
             try:
                 from project_brain.memory_synthesizer import MemorySynthesizer, is_enabled
@@ -368,25 +418,27 @@ def create_server(workdir: str) -> Any:
     # ── Tool 4：手動加入知識 ────────────────────────────────────
     @mcp.tool()
     def add_knowledge(
-        title:   str,
-        content: str,
-        kind:    str = "Note",
-        scope:   str = "global",
-        tags:    list[str] | None = None,
-        confidence: float = 0.8,
-        workdir: str = "",
+        title:       str,
+        content:     str,
+        kind:        str = "Note",
+        scope:       str = "global",
+        tags:        "list[str] | None" = None,
+        confidence:  float = 0.8,
+        workdir:     str = "",
+        description: str = "",  # MEM-02: one-line summary for AI relevance selection
     ) -> dict:
         """
         手動加入一筆知識片段到知識庫。
 
         Args:
-            title:   標題（簡短，< 200 字）
-            content: 詳細說明（< 2000 字）
-            kind:    類型（Note / Decision / Pitfall / Rule / ADR）
-            scope:   模組作用域（"global" / "auth" / "payment_service" 等）
-            confidence: 確信度 0.0~1.0（agent 發現 = 0.6, human verified = 0.9）
-            tags:    標籤列表（最多 10 個）
-            workdir: Claude Code 當前工作目錄（選填，讓 Brain 自動找對應 .brain/）
+            title:       標題（簡短，< 200 字）
+            content:     詳細說明（< 2000 字）
+            kind:        類型（Note / Decision / Pitfall / Rule / ADR）
+            scope:       模組作用域（"global" / "auth" / "payment_service" 等）
+            confidence:  確信度 0.0~1.0（agent 發現 = 0.6, human verified = 0.9）
+            tags:        標籤列表（最多 10 個）
+            workdir:     Claude Code 當前工作目錄（選填，讓 Brain 自動找對應 .brain/）
+            description: MEM-02：一行摘要，供 AI 相關性選取使用（空白時自動截取 content 前 100 字）
 
         Returns:
             {"node_id": "...", "success": true}
@@ -395,6 +447,7 @@ def create_server(workdir: str) -> Any:
 
         title_c   = _safe_str(title,   MAX_TITLE_LEN, "title")
         content_c = _safe_str(content, MAX_CONTENT_LEN, "content")
+        desc_c    = _safe_str(description, 300, "description") if description else ""  # MEM-02
 
         valid_kinds = {"Note", "Decision", "Pitfall", "Rule", "ADR", "Component"}
         kind = kind if kind in valid_kinds else "Note"
@@ -408,11 +461,12 @@ def create_server(workdir: str) -> Any:
         b = _resolve_brain(workdir)
         try:
             node_id = b.add_knowledge(
-                title      = title_c,
-                content    = content_c,
-                kind       = kind,
-                tags       = safe_tags,
-                confidence = max(0.0, min(1.0, confidence)),
+                title       = title_c,
+                content     = content_c,
+                kind        = kind,
+                tags        = safe_tags,
+                confidence  = max(0.0, min(1.0, confidence)),
+                description = desc_c,  # MEM-02
             )
             # A-21: write scope to BrainDB (P1-A integration)
             # BUG-A01 fix: use WHERE id=? (not title=?) — title is non-unique

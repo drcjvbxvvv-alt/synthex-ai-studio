@@ -33,6 +33,7 @@ class NodeDict(TypedDict, total=False):
     type:                   str
     title:                  str
     content:                str
+    description:            str  # MEM-02
     confidence:             float
     effective_confidence:   float
     importance:             float
@@ -52,6 +53,9 @@ logger = logging.getLogger(__name__)
 
 # A-3/E-6: env-configurable — set BRAIN_MAX_TOKENS to override per deployment
 MAX_CONTEXT_TOKENS = int(os.environ.get("BRAIN_MAX_TOKENS", "6000"))
+
+# MEM-04: freshness warning threshold (days)
+FRESHNESS_WARN_DAYS = int(os.environ.get("BRAIN_FRESHNESS_WARN_DAYS", "30"))
 
 # P-1: synonym expansion cap — set BRAIN_EXPAND_LIMIT to reduce noise
 # Default 15 (was 30). Lower = less synonym noise, higher = better recall.
@@ -129,13 +133,19 @@ class ContextEngineer:
             except Exception:
                 pass  # 降級：沿用內建同義詞表
 
-    def build(self, task: str, current_file: str = "") -> str:
+    def build(self, task: str, current_file: str = "",
+              exclude_ids: "set[str] | None" = None,
+              current_context_tags: "list[str] | None" = None,
+              detail_level: str = "full") -> str:
         """
         為任務組裝最佳的 Context 注入片段。
 
         Args:
-            task:         當前任務描述（自然語言）
-            current_file: 當前操作的檔案路徑（選填）
+            task:                 當前任務描述（自然語言）
+            current_file:         當前操作的檔案路徑（選填）
+            exclude_ids:          MEM-03：已在本 session 服務過的節點 ID，跳過不重複推薦
+            current_context_tags: MEM-05：當前工具操作標籤，用於 Rule/Decision 降權
+            detail_level:         MEM-06：'summary'=只回 title+description；'full'=完整內容（預設）
 
         Returns:
             str: 格式化的 Context 字串，可直接注入 AI Prompt
@@ -144,6 +154,7 @@ class ContextEngineer:
         budget   = MAX_CONTEXT_TOKENS
         self._budget_skipped  = 0   # STB-05: reset per build()
         _shown_node_ids: list[str] = []  # STAB-07: nodes actually shown in context
+        _exclude = exclude_ids or set()  # MEM-03
         logger.debug("context.build start: task=%r file=%r budget=%d", task[:60], current_file, budget)
 
         # 1. 找出和任務/檔案相關的組件
@@ -286,6 +297,55 @@ class ContextEngineer:
 
             all_nodes.sort(key=lambda x: x[0], reverse=True)  # 高分排前
 
+            # MEM-03: 過濾本 session 已服務過的節點
+            if _exclude:
+                all_nodes = [(p, l, n) for p, l, n in all_nodes
+                             if n.get('id') not in _exclude]
+
+            # MEM-05: Rule/Decision 標籤與 current_context_tags 重疊時降權
+            # Pitfall 永遠不降權（正在做的時候最需要踩坑警告）
+            if current_context_tags:
+                _ctx_tags = set(t.lower() for t in current_context_tags)
+                def _apply_depriority(item):
+                    priority, label, node = item
+                    if label in ("📋 業務規則", "🎯 架構決策"):
+                        node_tags = node.get('tags') or []
+                        if isinstance(node_tags, str):
+                            try:
+                                import json as _json
+                                node_tags = _json.loads(node_tags)
+                            except Exception:
+                                node_tags = []
+                        overlap = len(set(t.lower() for t in node_tags) & _ctx_tags)
+                        if overlap > 0:
+                            priority = priority * 0.5  # 降權 50%
+                    return (priority, label, node)
+                all_nodes = [_apply_depriority(x) for x in all_nodes]
+                all_nodes.sort(key=lambda x: x[0], reverse=True)
+
+            # MEM-06: summary 模式只回 title + description，不走 budget 邏輯
+            if detail_level == "summary":
+                lines = []
+                for _, _, node in all_nodes[:5]:
+                    nid  = (node.get('id') or '')[:8]
+                    ntype = node.get('type', '?')
+                    conf  = float(node.get('effective_confidence') or node.get('confidence') or 0.8)
+                    desc  = (node.get('description') or '').strip()
+                    if not desc:
+                        desc = (node.get('content') or '')[:100].replace('\n', ' ')
+                    lines.append(
+                        f"- [{nid}] ({ntype}, {conf:.0%}) **{node.get('title','')}** — {desc}"
+                    )
+                    if node.get('id'):
+                        _shown_node_ids.append(node['id'])
+                self._last_shown_ids = _shown_node_ids  # MEM-03: expose for mcp_server
+                if lines:
+                    return (
+                        "---\n## 📖 Project Brain — 知識摘要\n\n"
+                        + "\n".join(lines) + "\n---\n"
+                    )
+                return ""
+
             # STAB-07: track IDs of nodes that actually fit in budget (no title-matching)
             for priority, label, node in all_nodes:
                 max_c = ADR_CONTENT_CAP if label == "📄 ADR" else NODE_CONTENT_CAP  # REF-04
@@ -392,6 +452,7 @@ class ContextEngineer:
         except Exception as _re:
             logger.debug("context: reasoning chain failed: %s", _re)
         result = result or ""
+        self._last_shown_ids = _shown_node_ids  # MEM-03: expose for mcp_server session dedup
         logger.debug("context.build done: sections=%d chars=%d", len(sections), len(result))
         # OBS-01: structured log for observability
         logger.info(
@@ -633,6 +694,26 @@ class ContextEngineer:
         keywords = [w for w in words if w not in stopwords]
         return " ".join(keywords[:8]) if keywords else ""
 
+    @staticmethod
+    def _freshness_note(created_at: str) -> str:
+        """MEM-04: 超過 FRESHNESS_WARN_DAYS 天的節點加警告文字。"""
+        if not created_at:
+            return ''
+        try:
+            import datetime as _dt
+            dt = _dt.datetime.fromisoformat(
+                created_at.replace(' ', 'T').replace('Z', '+00:00')
+            )
+            days = (
+                _dt.datetime.now(_dt.timezone.utc)
+                - dt.replace(tzinfo=dt.tzinfo or _dt.timezone.utc)
+            ).days
+        except Exception:
+            return ''
+        if days <= FRESHNESS_WARN_DAYS:
+            return ''
+        return f'\n> ⚠ 此知識建立於 {days} 天前，引用前請確認仍適用於當前架構。'
+
     def _fmt_node(self, label: str, node: dict, max_chars: int = NODE_CONTENT_CAP) -> str:
         from project_brain.utils import confidence_label
         import datetime as _dt
@@ -667,7 +748,9 @@ class ContextEngineer:
         meta = ""
         if ac: meta += f"\n  ⚠ 適用條件：{ac[:120]}"
         if ic: meta += f"\n  🚫 失效條件：{ic[:120]}"
-        return f"### {label}：{title} [{clabel}{stale_warning}]\n{content}\n{tag_str}{meta}"
+        # MEM-04: freshness note based on created_at
+        freshness = self._freshness_note(node.get('created_at') or '')
+        return f"### {label}：{title} [{clabel}{stale_warning}]\n{content}{freshness}\n{tag_str}{meta}"
 
     def _format_pitfalls(self, pitfalls: list) -> str:
         lines = ["## ⚠ 已知陷阱（務必先看）"]

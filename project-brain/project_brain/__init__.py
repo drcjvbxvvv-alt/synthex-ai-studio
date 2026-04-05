@@ -41,7 +41,28 @@ except ImportError:
     pass
 
 
-__version__  = "0.9.0"
+def _read_version() -> str:
+    # 1. pip-installed: read from package metadata (most reliable)
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("project-brain")
+    except Exception:
+        pass
+    # 2. dev/editable: read directly from pyproject.toml
+    try:
+        import re as _re
+        from pathlib import Path as _Path
+        _toml = _Path(__file__).parent.parent / "pyproject.toml"
+        _text = _toml.read_text(encoding="utf-8")
+        _m = _re.search(r'^version\s*=\s*"([^"]+)"', _text, _re.MULTILINE)
+        if _m:
+            return _m.group(1)
+    except Exception:
+        pass
+    return "0.22.0"  # last-resort hardcoded fallback
+
+__version__ = _read_version()
+
 __author__   = "Project Brain Team"
 __license__  = "MIT"
 

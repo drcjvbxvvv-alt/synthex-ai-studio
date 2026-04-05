@@ -28,6 +28,107 @@ from .extractor      import KnowledgeExtractor
 from .context        import ContextEngineer
 from .constants      import DEFAULT_SEARCH_LIMIT  # REF-04
 
+
+# ── MEM-01: AI 輔助相關性選取器 ──────────────────────────────────
+
+_SELECT_PROMPT = (
+    'Given this task: "{task}"\n'
+    'Select up to 5 node IDs from the list below that are CLEARLY relevant.\n'
+    'Be selective — omit anything uncertain.\n'
+    '{manifest}\n'
+    'Return only JSON: {{"selected": ["id1", "id2", ...]}}'
+)
+
+
+class _KeywordSelector:
+    """純規則 fallback：依 confidence 排序，零依賴，永不失敗。"""
+    def select(self, task: str, candidates: list) -> list:
+        return [n['id'] for n in candidates[:5] if n.get('id')]
+
+
+class _OllamaSelector:
+    """本地模型選取（使用 Ollama API，format='json'）。"""
+    def __init__(self, model: str, url: str):
+        self._model = model
+        self._url   = url
+
+    def select(self, task: str, candidates: list) -> list:
+        import urllib.request
+        manifest = "\n".join(
+            f"- {n['id']}: {n.get('description') or n.get('title','')}"
+            for n in candidates
+        )
+        body = json.dumps({
+            "model": self._model,
+            "format": "json",
+            "stream": False,
+            "messages": [{"role": "user", "content": _SELECT_PROMPT.format(
+                task=task, manifest=manifest
+            )}],
+        }).encode()
+        req = urllib.request.Request(
+            f"{self._url}/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = json.loads(resp.read())
+        text = raw.get("message", {}).get("content", "") or ""
+        return json.loads(text).get("selected", [])[:5]
+
+
+class _SonnetSelector:
+    """Anthropic API 選取（高精度備援）。"""
+    def select(self, task: str, candidates: list) -> list:
+        import anthropic
+        manifest = "\n".join(
+            f"- {n['id']}: {n.get('description') or n.get('title','')}"
+            for n in candidates
+        )
+        client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=64,
+            messages=[{"role": "user", "content": _SELECT_PROMPT.format(
+                task=task, manifest=manifest
+            )}],
+        )
+        text = msg.content[0].text if msg.content else ""
+        return json.loads(text).get("selected", [])[:5]
+
+
+def _resolve_selector(config: dict | None = None) -> "_KeywordSelector | _OllamaSelector | _SonnetSelector":
+    """MEM-01: auto 模式優先順序：OllamaSelector → SonnetSelector → KeywordSelector。"""
+    cfg = config or {}
+    mode = cfg.get("relevance_selector", os.environ.get("BRAIN_RELEVANCE_SELECTOR", "auto"))
+
+    if mode == "keyword":
+        return _KeywordSelector()
+    if mode == "sonnet":
+        return _SonnetSelector()
+    if mode == "ollama":
+        ollama_url   = cfg.get("ollama_url", os.environ.get("BRAIN_OLLAMA_URL", "http://localhost:11434"))
+        ollama_model = cfg.get("ollama_model", os.environ.get("BRAIN_OLLAMA_MODEL", "qwen2.5:7b"))
+        return _OllamaSelector(model=ollama_model, url=ollama_url)
+
+    # auto: try Ollama first, then Sonnet, then fallback
+    try:
+        import urllib.request
+        ollama_url   = os.environ.get("BRAIN_OLLAMA_URL", "http://localhost:11434")
+        ollama_model = os.environ.get("BRAIN_OLLAMA_MODEL", "qwen2.5:7b")
+        urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=1).close()
+        return _OllamaSelector(model=ollama_model, url=ollama_url)
+    except Exception:
+        pass
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            import anthropic  # noqa: F401
+            return _SonnetSelector()
+        except ImportError:
+            pass
+    return _KeywordSelector()
+
 try:
     from core.config import cfg
 except ImportError:
@@ -543,7 +644,11 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             logger.debug("post_scan_quality_gate_failed: %s", str(e)[:100])
             return ""
 
-    def get_context(self, task: str, current_file: str = "") -> str:
+    def get_context(self, task: str, current_file: str = "",
+                    exclude_ids: "set[str] | None" = None,
+                    current_context_tags: "list[str] | None" = None,
+                    detail_level: str = "full",
+                    ai_select: bool = False) -> str:
         """
         [A-20 Deprecated] Use Brain.query() for structured result.
         This method remains for backward compatibility and returns str.
@@ -553,21 +658,49 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
         v3.0 升級：
           若 router 已初始化，使用三層聚合查詢（L1+L2+L3）。
           否則降級到 v2.0 的 ContextEngineer.build()（向後相容）。
+
+        Args:
+            exclude_ids:          MEM-03：本 session 已服務節點，跳過不重複推薦
+            current_context_tags: MEM-05：當前操作標籤，Rule/Decision 降權
+            detail_level:         MEM-06：'summary' 只回摘要，'full' 為完整內容
         """
         if not self.brain_dir.exists():
             return ""
 
-        # v3.0 路徑：三層聚合
-        if self._router is not None:
+        # v3.0 路徑：三層聚合（暫不支援 exclude_ids / detail_level，直接降級到 v2.0）
+        if self._router is not None and not exclude_ids and detail_level == "full":
             result = self._router.query(task)
             context_3layer = result.to_context_string()
             if context_3layer:
                 return context_3layer
 
+        # MEM-01: AI-assisted relevance selection pre-filter
+        _ai_exclude = set(exclude_ids or set())
+        if ai_select:
+            try:
+                candidates = self.db.search_nodes(task, limit=20)
+                if candidates:
+                    selector = _resolve_selector()
+                    try:
+                        selected_ids = set(selector.select(task, candidates))
+                    except Exception as _se:
+                        logger.debug("MEM-01: selector failed (%s), fallback to keyword", _se)
+                        selected_ids = set(n['id'] for n in candidates[:5] if n.get('id'))
+                    # Pass non-selected nodes as additional excludes
+                    all_candidate_ids = {n['id'] for n in candidates if n.get('id')}
+                    _ai_exclude = _ai_exclude | (all_candidate_ids - selected_ids)
+            except Exception as _ae:
+                logger.debug("MEM-01: ai_select pre-filter failed: %s", _ae)
+
         # A-10 v2.0 fallback: use ContextEngineer with graph
         # BrainDB nodes are also searchable via KnowledgeGraph
         # (dual-write in add_knowledge keeps them in sync)
-        raw = self.context_engineer.build(task, current_file)
+        raw = self.context_engineer.build(
+            task, current_file,
+            exclude_ids=_ai_exclude or None,
+            current_context_tags=current_context_tags,
+            detail_level=detail_level,
+        )
 
         # Phase 4: remove episode lines already covered by L3 DERIVES_FROM
         try:
@@ -656,15 +789,16 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
 
     def add_knowledge(
         self,
-        title:      str   = "",
-        content:    str   = "",
-        kind:       str   = "Decision",
-        tags:       list  = None,
-        source:     str   = "",
-        k_type:     str   = "",
-        text:       str   = "",
-        confidence: float = 0.8,
-        scope:      str   = "global",
+        title:       str   = "",
+        content:     str   = "",
+        kind:        str   = "Decision",
+        tags:        list  = None,
+        source:      str   = "",
+        k_type:      str   = "",
+        text:        str   = "",
+        confidence:  float = 0.8,
+        scope:       str   = "global",
+        description: str   = "",  # MEM-02
     ) -> str:
         """手動加入知識片段（供 CLI 和 Agent 呼叫）"""
         kind    = k_type    or kind
@@ -679,12 +813,12 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
             tags      = tags or [],
             source_url= source,
         )
-                  # A-10: also write to unified BrainDB
         # A-10: also write to unified BrainDB
         try:
             self.db.add_node(node_id, kind, title, content=content,
                              tags=tags or [], source_url=source,
-                             confidence=confidence, scope=scope)
+                             confidence=confidence, scope=scope,
+                             description=description)  # MEM-02
         except Exception as _e:
             import logging; logging.getLogger(__name__).debug("db.add_node failed: %s", _e)
         # Phase 1: async embedding (non-blocking)
