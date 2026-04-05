@@ -2,7 +2,7 @@
 
 > **當前版本**：v0.19.0（2026-04-05）
 > **文件用途**：待辦改善項目。已完成項目見 `CHANGELOG.md`。
-> **分析基準**：873 tests collected；v0.13.0 所有 P1+P2 已完成，867 passed / 5 skipped / 1 intermittent。
+> **分析基準**：874 tests collected；v0.19.0 所有 P1+P2+P3 已完成，867 passed / 5 skipped。
 
 ---
 
@@ -10,631 +10,348 @@
 
 | 等級 | 說明 | 目標版本 |
 |------|------|---------|
-| **P1** | 明確影響正確性或安全性，應優先處理 | v0.12.0 |
-| **P2** | 影響核心功能品質，計劃排入 | v0.13.0 |
+| **P1** | 明確影響正確性或安全性，應優先處理 | v0.20.0 |
+| **P2** | 影響核心功能品質，計劃排入 | v0.20.0–v0.21.0 |
 | **P3** | 長期願景、低頻路徑、實驗性 | 評估中 |
 
 ---
 
 ## 矩陣優先總覽
 
+### 已完成（歷史記錄）
+
+| 優先 | ID | 影響 | 狀態 |
+|------|----|------|------|
+| P1 | SEC-03 | API Key Timing Attack | ✅ v0.12.0 |
+| P1 | BUG-D01 | 29 處靜默例外 | ✅ v0.12.0 |
+| P1 | BUG-D02 | Embedder Cache 競態 | ✅ v0.12.0 |
+| P1 | TEST-01 | 15 個失敗測試修復 | ✅ v0.12.0 |
+| P1 | PERF-05 | Decay N+1 查詢 | ✅ v0.12.0 |
+| P1 | BUG-E01 | `_search_batch` 截斷 False Negative | ✅ v0.12.0 |
+| P2 | FEAT-07 | `backfill-git` git 歷史回填 + AI 審核 | ✅ v0.13.0–v0.19.0 |
+| P2 | PERF-06 | `nodes(type, confidence DESC)` 複合索引 | ✅ v0.13.0 |
+| P2 | BUG-D03 | KRB cache 永不 VACUUM | ✅ v0.13.0 |
+| P2 | BUG-D04 | SessionStore FD 洩漏 | ✅ v0.13.0 |
+| P2 | ARCH-07 | scope 推斷邏輯去重 | ✅ v0.13.0 |
+| P2 | OBS-02 | Decay F1–F7 因子量測輸出 | ✅ v0.14.0 |
+| P2 | OBS-03 | rollback_node() 審計記錄 | ✅ v0.15.0 |
+| P2 | SEC-04 | Federation PII 過濾擴充 | ✅ v0.15.0 |
+| P2 | REV-02 | 衰減效用對比測試 | → `tests/TEST_PLAN.md §7` |
+| P3 | FEAT-05 | Analytics 時序圖表 + HTML 報告 | ✅ v0.16.0 |
+| P3 | FEAT-06 | `brain doctor` 矛盾/deprecated 比例 | ✅ v0.16.0 |
+| P3 | ARCH-08 | ConflictResolver 快取 TTL 驅逐 | ✅ v0.16.0 |
+| P3 | TEST-02 | Decay 100K 節點負載測試 | ✅ v0.16.0 |
+| P3 | TEST-03 | Chaos 硬編碼路徑移除 | ✅ v0.16.0 |
+
+### 待辦（v0.20.0 目標）
+
 | 優先 | ID | 影響 | 解決方案 | 阻塞依賴 | 象限 | 狀態 |
 |------|----|------|---------|---------|------|------|
-| **P1** | SEC-03 | API key 字串比對有 timing attack 漏洞 | `hmac.compare_digest()` 取代 `!=` | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
-| **P1** | BUG-D01 | 29 處 `except Exception: pass` 靜默吞錯 | 逐一加 `logger.warning`，critical 路徑改 `logger.error` | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
-| **P1** | BUG-D02 | `embedder.py._embedder_cache` 無鎖，多執行緒競態 | 加 `threading.Lock()` 保護 dict read/write | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
-| **P1** | TEST-01 | 15 個測試失敗（chaos 路徑、web_ui AttributeError、lora、embedding cache） | 修復或標記 skip；確保 CI 全綠 | 無 | 🎯 高價值 | ✅ v0.12.0 |
-| **P1** | PERF-05 | Decay `_detect_contradictions()` N+1 查詢：每對矛盾各一次 `SELECT confidence` | 批次預取所有節點信心值至 dict | 無 | ⚡ 快速獲益 | ✅ v0.12.0 |
-| **P1** | BUG-E01 | `_search_batch(terms[:8])` 截斷使「版本號」「路徑」等關鍵詞被丟棄，Rule 類 False Negative | ① 改 `terms[:15]`；② 補 API 同義詞；③ Rule 配額 2→3 | 無 | 🎯 高價值 | ✅ v0.12.0 |
-| **P2** | FEAT-07 | `archaeologist` 掃描 git 歷史後所有節點 `created_at = today`，舊專案 F1 衰減從零開始等 7 天 | ① `add_node()` 接受 `created_at` 參數；② 改 `INSERT OR REPLACE` → `UPSERT` 保留原始日期；③ 新增 `brain backfill-git` 指令 | 無 | 🎯 高價值 | ✅ v0.13.0 |
-| **P2** | PERF-06 | 缺少 `nodes(type, confidence DESC)` 複合索引，type 過濾搜尋全表掃描 | SCHEMA_VERSION=21：`CREATE INDEX idx_nodes_type_conf ON nodes(type, confidence DESC)` | 無 | ⚡ 快速獲益 | ✅ v0.13.0 |
-| **P2** | BUG-D03 | KRB `ai_screen_cache.db` 只 lazy 刪除過期項，從不 VACUUM，檔案持續增長 | 每次 `KRBAIAssistant.__init__` 呼叫時條件性執行 `VACUUM`（間隔 7 天） | 無 | 🔵 填空 | ✅ v0.13.0 |
-| **P2** | BUG-D04 | `session_store.py` per-thread 連線從未關閉，長執行伺服器 FD 洩漏 | 改用單一共享連線 `check_same_thread=False`（WAL 模式安全） | 無 | 📋 計劃執行 | ✅ v0.13.0 |
-| **P2** | ARCH-07 | `cli_utils._infer_scope()` 與 `brain_db.infer_scope()` 邏輯重複（兩套實作）| 保留 `brain_db.infer_scope()` 為單一來源，`cli_utils` 委派呼叫 | 無 | 📋 計劃執行 | ✅ v0.13.0 |
-| **P2** | OBS-02 | `decay_engine` 缺乏 F1–F7 各因子的量測輸出（無法調參） | 在 `_apply_decay()` 結束時 `db.emit("decay_factors", {f1, f2, ..., f7, final})`  | OBS-01 ✅ | 📋 計劃執行 | ✅ v0.14.0 |
-| **P2** | OBS-03 | `rollback_node()` 無審計記錄（誰在何時還原了什麼）| `node_history` 新增 `changed_by TEXT`；`rollback_node()` 寫入還原事件 | FEAT-01 ✅ | 📋 計劃執行 | ✅ v0.15.0 |
-| **P2** | SEC-04 | Federation PII 過濾缺失 IP（`192.168.x.x`）、Slack URL、Cloud service URL | 擴充 `_strip_pii()` regex 模式集 | 無 | 📋 計劃執行 | ✅ v0.15.0 |
-| **P2** | REV-02 | 衰減效用幫助還是傷害召回率，目前未知 | 90 天數據後執行對比測試；`analytics_engine` 新增 `decay_impact_score()` | 90天數據 | ⏳ 等待 | → `tests/TEST_PLAN.md §7` |
-| **P3** | FEAT-05 | `analytics_engine` 無時序圖表：知識庫成長曲線、信心分布遷移無法可視化 | `generate_timeseries()` 方法；`brain report --format html` 輸出 Chart.js 圖表 | OBS-01 ✅ | 🏗 長期 | ✅ v0.16.0 |
-| **P3** | FEAT-06 | `brain doctor` 只做基礎健康檢查，無法偵測矛盾節點比例、deprecated 比例 | 新增矛盾節點數量報告；deprecated 比例警告（> 20% 觸發 ⚠） | ARCH-06 ✅ | 📋 計劃執行 | ✅ v0.16.0 |
-| **P3** | ARCH-08 | `conflict_resolver.py` 快取無 TTL 淘汰，長執行記憶體持續增長 | 加入 TTL 驅逐（已有 `CACHE_SECONDS=86400` 常數，但無清理機制） | ARCH-06 ✅ | 🔵 填空 | ✅ v0.16.0 |
-| **P3** | TEST-02 | 缺乏針對 Decay Engine 的 100K 節點負載測試 | `tests/chaos/test_decay_load.py`：建立 100K 節點知識庫，量測衰減時間 | 無 | 🏗 長期 | ✅ v0.16.0 |
-| **P3** | TEST-03 | Chaos 測試有硬編碼 `/home/claude/synthex_v10/brain.py` 路徑（永遠失敗） | 用 `Path(__file__).parent` 或 fixture 取代硬編碼路徑 | 無 | ⚡ 快速獲益 | ✅ v0.16.0 |
+| **P1** | SEC-05 | `_brain_cache` 無鎖，並發 workdir 切換有競態 | 新增 `_cache_lock = threading.Lock()`；所有 `_brain_cache` 讀寫加鎖 | 無 | ⚡ 快速獲益 | 🔲 待辦 |
+| **P1** | REL-01 | `update_node()` FTS 同步失敗後未 rollback，節點資料與 FTS 索引不一致 | FTS 區塊加 `try/except` 後補 `self.conn.rollback()` 並重新 raise | 無 | ⚡ 快速獲益 | 🔲 待辦 |
+| **P2** | TEST-04 | `test_web_ui.py` 189 行覆蓋 1604 行 server.py（覆蓋率 < 12%）；信心分布、is_pinned、filterConf 完全無測試 | 補充 Flask test_client 整合測試：stats API、pin/unpin 持久化、conf_dist 結構、圖篩選 | 無 | 🎯 高價值 | 🔲 待辦 |
+| **P2** | UX-01 | WebUI 篩選狀態（kind/信心/釘選/搜尋）刷新即失，大圖（200+ 節點）無法書籤 | 將篩選狀態序列化至 URL hash（`#kind=Rule&conf=hi&q=auth`）；`loadGraph` / `filterConf` 讀寫 `location.hash` | 無 | 📋 計劃執行 | 🔲 待辦 |
+| **P2** | FEAT-08 | WebUI 純唯讀，節點內容只能 CLI 或直接改 DB；日常微調知識需跳出瀏覽器 | 節點面板新增「編輯」模式：可修改 title/content/confidence；`POST /api/node/<id>` 後端端點 | 無 | 📋 計劃執行 | 🔲 待辦 |
+| **P3** | PERF-07 | `session_store.py` 多處 `SELECT *` 拉取完整 value blob，僅需 metadata 的場景浪費 I/O | 依需求指定欄位：list 操作用 `SELECT key, created_at, expires_at`，content 操作才 `SELECT *` | 無 | 🔵 填空 | 🔲 待辦 |
+| **P3** | FEAT-09 | `brain backfill-git` 預設掃描 200 commits，大型專案無進度回饋，使用者不知道在跑 | Phase 1 每 10 commit 輸出一次進度（`\r[{i}/{total}] ...`）；`--limit 0` 表示不限制 | 無 | 🔵 填空 | 🔲 待辦 |
+| **P3** | OBS-04 | `brain status` 只顯示 DB 檔案統計；無法確認 MCP server 是否真的在回應 | `brain health [--mcp-port N]`：做 TCP connect + 送 `ping` JSON-RPC，回報延遲或錯誤 | 無 | 🏗 長期 | 🔲 待辦 |
 
 ---
 
 ## 依賴鏈
 
 ```
-SEC-03 ──┐
-BUG-D01 ─┤ 無依賴，v0.12.0 可立即執行
-BUG-D02 ─┤
-PERF-05 ─┘
+SEC-05 ──→ 無依賴（mcp_server.py 模組鎖）
+REL-01 ──→ 無依賴（brain_db.py 單一函式）
 
-PERF-06 ──→ 無依賴（schema migration）
-BUG-D03 ──→ 無依賴
-TEST-01 ──→ 無依賴（修復現有測試）
-TEST-03 ──→ 無依賴
+TEST-04 ──→ 無依賴（但驗收 SEC-05 / REL-01 修復的正確性）
+UX-01   ──→ 無依賴（純前端 URL hash 序列化）
+FEAT-08 ──→ 無依賴（新增後端端點 + 前端表單）
 
-OBS-02 ──→ OBS-01 ✅（structlog 基礎設施已就位）
-OBS-03 ──→ FEAT-01 ✅（node_history 表已存在）
-
-FEAT-06 ──→ ARCH-06 ✅（ConflictResolver 已有矛盾偵測）
-ARCH-08 ──→ ARCH-06 ✅（conflict_resolver.py 已存在）
-
-REV-02 ──→ 90 天真實數據（不可提前執行）
-FEAT-05 ──→ OBS-01 ✅ + 充分的 events 數據
+PERF-07 ──→ 無依賴（查詢最佳化，不改 schema）
+FEAT-09 ──→ 無依賴（僅 cli_admin.py print 輸出）
+OBS-04  ──→ 無依賴（新增 CLI 子指令）
 ```
 
 ---
 
 ## P1 — 正確性 / 安全性缺陷
 
-### SEC-03 — API Key Timing Attack
+### SEC-05 — `_brain_cache` 並發競態（mcp_server.py）
 
-**問題**：`api_server.py:154`：
+**問題**：`mcp_server.py:125`：
+
 ```python
-if auth[7:].strip() != key:   # 字串比對非恆定時間
+_brain_cache: dict[str, Any] = {}   # ← 無鎖
 ```
-透過計時差異可推算 key 長度與前綴，在本地網路環境下可量測。
+
+`_resolve_brain()` 在多 workdir 環境下並發呼叫時（FastMCP 多執行緒）：
+
+```python
+# Line 156-158：read-check-write 非原子
+if key not in _brain_cache:          # Thread A 通過檢查
+    _brain_cache[key] = ProjectBrain(key)  # Thread B 也在寫入同一 key
+```
+
+對比 `_session_nodes` 已正確加鎖（`_snodes_lock`），`_brain_cache` 卻沒有。
+CPython GIL 通常防止 dict 崩潰，但 **雙重初始化**（兩個 `ProjectBrain(key)` 同時建立）
+仍會造成：
+1. 重複開啟 SQLite WAL connection（可能觸發 `database is locked`）
+2. 兩個 Brain 實例各自有不同快取狀態，後寫者覆蓋前者
 
 **修復**：
+
 ```python
-import hmac
-if not hmac.compare_digest(auth[7:].strip(), key):
+# mcp_server.py 頂層新增
+_cache_lock = threading.Lock()
+
+# _resolve_brain() 內改為
+with _cache_lock:
+    if key not in _brain_cache:
+        try:
+            _brain_cache[key] = ProjectBrain(key)
+        except Exception:
+            return brain
+    return _brain_cache[key]
 ```
 
-**工時**：1 行，< 15 分鐘。
+同樣模式應用於 `multi_brain_query()` 中的 `_brain_cache` 存取（line 1053–1055）。
+
+**工時**：< 30 分鐘。**測試**：`test_mcp.py` 新增 concurrent workdir 切換測試。
 
 ---
 
-### BUG-D01 — 靜默例外吞錯（29 處）
+### REL-01 — `update_node()` FTS 失敗後未 rollback（brain_db.py）
 
-**問題**：18 個檔案共 29 處 `except Exception: pass`，bug 和資料損毀完全不可見。
+**問題**：`brain_db.py:537–549`：
 
-高危路徑（依嚴重程度）：
-
-| 檔案 | 嚴重程度 | 危險原因 |
-|------|---------|---------|
-| `brain_db.py`（6 處） | 🔴 高 | migration 失敗、edge 寫入失敗靜默 |
-| `cli_knowledge.py`（7 處） | 🟡 中 | 使用者操作失敗無反饋 |
-| `graph.py`（5 處） | 🔴 高 | graph 操作失敗無記錄 |
-| `federation.py`（4 處） | 🟡 中 | 匯入失敗靜默 |
-| `engine.py`（3 處） | 🟡 中 | sync 失敗靜默 |
-
-**修復方針**：
-- 核心儲存路徑（`brain_db.py`、`graph.py`）：`except Exception as e: logger.error("...", e)`
-- CLI 路徑：`except Exception as e: logger.warning("...", e)`
-- 非關鍵輔助路徑（rich render、emoji）：`except Exception: logger.debug("...", exc_info=True)`
-
-**工時**：2 天（逐一審查每個路徑）。
-
----
-
-### BUG-D02 — Embedder Cache 競態（多執行緒）
-
-**問題**：`embedder.py:305`：
 ```python
-_embedder_cache: dict = {}   # 無 threading.Lock
+self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
+# ↑ 節點已更新
+
+if title is not None or content is not None:
+    try:
+        self.conn.execute("DELETE FROM nodes_fts WHERE id=?", ...)
+        self.conn.execute("INSERT INTO nodes_fts ...", ...)
+    except Exception as _e:
+        logger.error("FTS index update failed: %s", _e)
+        # ← 沒有 rollback！
+
+self.conn.commit()  # 節點更新被 commit，但 FTS 索引可能是舊的
 ```
-FastMCP 在多執行緒環境下並發呼叫 `get_embedder()` 可能造成：
-1. 重複建立 embedder（浪費 300ms+）
-2. dict 寫入競態（CPython GIL 通常保護，但 Jython/PyPy 不保護）
+
+**後果**：FTS 索引與 nodes 資料不一致——節點 title/content 已更新，但
+`search_nodes()` 的 FTS5 查詢仍返回舊內容，導致**搜尋遺漏已更新的節點**。
 
 **修復**：
-```python
-_embedder_lock = threading.Lock()
-
-def get_embedder(provider: str = "") -> ...:
-    with _embedder_lock:
-        if provider in _embedder_cache:
-            return _embedder_cache[provider]
-        ...
-```
-
-**工時**：30 分鐘。
-
----
-
-### TEST-01 — 修復 15 個失敗測試
-
-**分類**：
-
-| 類別 | 測試數 | 原因 | 修復方向 |
-|------|--------|------|---------|
-| `TestBug08WebUIPathConsistency`（4） | 4 | `generate_graph_html()` 函數已移除或簽名改變 | 更新測試以匹配現有 web_ui API |
-| `TestB24RealUserPath`（4） | 4 | setup wizard 產生的 CLAUDE.md 格式變動 | 更新 expected 字串 |
-| `TestEngineWithMockedLLM::test_add_knowledge_positional_cli`（2） | 2 | positional arg 順序改變 | 修正測試呼叫簽名 |
-| `TestKnowledgeDistiller::test_lora_dataset_creates_jsonl`（2） | 2 | LoRA dataset 功能狀態不確定 | 確認功能存在或 `@pytest.mark.skip` |
-| `TestOpt03EmbeddingCache::test_cache_hit_is_same_object`（1） | 1 | BUG-D02 競態造成每次回傳新實例 | 修復 BUG-D02 即可解決 |
-| Chaos `test_l2_health_check_function_exists`（1） | 1 | 硬編碼 `/home/claude/synthex_v10/brain.py` | 見 TEST-03 |
-
-**目標**：測試套件從 742/873 提升至 873/873（≥99% 通過率）。
-
-**工時**：1.5 天。
-
----
-
-### PERF-05 — Decay N+1 矛盾信心查詢
-
-**問題**：`decay_engine.py` `_detect_contradictions()`：
-```python
-for node_a, node_b in contradiction_pairs:
-    conf_a = db.conn.execute("SELECT confidence FROM nodes WHERE id=?", (node_a,)).fetchone()
-    conf_b = db.conn.execute("SELECT confidence FROM nodes WHERE id=?", (node_b,)).fetchone()
-```
-100 對矛盾 = 200 次獨立 SELECT。
-
-**修復**：預取所有節點信心值：
-```python
-all_ids = {n for pair in contradiction_pairs for n in pair}
-conf_map = {r["id"]: r["confidence"] for r in db.conn.execute(
-    f"SELECT id, confidence FROM nodes WHERE id IN ({','.join('?'*len(all_ids))})",
-    list(all_ids)).fetchall()}
-```
-
-**工時**：1 小時。
-
----
-
-### BUG-E01 — `_search_batch` 截斷導致 Rule 召回 False Negative
-
-**觀察現象**：`benchmark_recall.py` 第 5 筆查詢 ❌：
-
-```
-query    : "如何設計 API 版本號，放路徑還是 Header"
-expected : api-01  "API 版本號在路徑中，非 Header"
-result   : 未出現在 get_context 回傳中
-```
-
-#### 根因分析（三層）
-
-**根因 A（主要）：`_search_batch` 只用 `terms[:8]`，關鍵詞被截斷**
-
-`_expand_query` 產生的 `expanded_terms`（15 個）按字面順序排列：
-
-| 位置 | 詞 | 說明 |
-|------|----|------|
-| 1 | `api` | 英文詞 |
-| 2 | `header` | 英文詞 |
-| 3–8 | `如何` `何設` `設計` `如何設` `何設計` `如何設計` | "如何設計" 的所有 n-gram |
-| **9–11** | **`版本` `本號` `版本號`** | **api-01 的核心辨別詞** |
-| **12–13** | **`放路` `路徑`** | **api-01 的另一辨別詞** |
-| 14–15 | `徑還` `還是` | 低信號詞 |
-
-`_search_batch` 呼叫時：`" ".join(terms[:8])` → 只送入前 8 個詞，**位置 9–13 的 `版本`、`版本號`、`路徑` 全部被丟棄**。
-
-FTS5 搜尋字串實際為：
-```
-"api header 如何 何設 設計 如何設 何設計 如何設計"
-```
-
-`api-01` 雖有 "api" 匹配，但其他 Rule 節點（如 `db-04`：「HTTP 呼叫或外部 API 不可放在資料庫 transaction 內部」）也有 "api" 且 BM25 不低，在 `limit=2` 下可能把 `api-01` 擠出。
-
-**根因 B（次要）：Rule 類型配額過低（`limit=2`）**
-
-`context.py:227`：
-```python
-rules = _search_batch(expanded_terms, node_type="Rule", limit=2)
-```
-50 個測試節點中 Rule 型節點共 12+ 個。只取前 2，任何 BM25 排名失準都會造成 False Negative。
-
-**根因 C（加劇）：查詢前綴 n-gram 佔用擴展配額**
-
-"如何設計" 產生 6 個 n-gram（如何, 何設, 設計, 如何設, 何設計, 如何設計），本質上都是「如何設計＝how to design」的噪音詞，消耗了 6 個名額，把有語義的「版本號」擠出 `[:8]` 視窗。
-
-同時 `synonyms.py` 完全缺少 API 版本化領域的同義詞：
-
-| 缺失詞 | 應擴展至 |
-|--------|---------|
-| `版本` | `versioning`, `v1`, `url`, `path`, `routing` |
-| `版本號` | `versioning`, `api version`, `url`, `v1` |
-| `路徑` (URL 語境) | `url`, `path`, `endpoint`, `route` |
-| `header` (HTTP 語境) | `accept`, `content-type`, `api versioning` |
-
----
-
-#### 修復方案
-
-**Fix-1：`context.py` — 改 `terms[:8]` → `terms[:15]`**（15 分鐘）
-
-`context.py:199` 的 `_search_batch` 內部：
-```python
-# 現行
-_q_vec = _emb.embed(" ".join(terms[:8]))
-...
-db_results = self._brain_db.hybrid_search(
-    " ".join(terms[:8]), ...
-)
-...
-db_results = self._brain_db.search_nodes(
-    " ".join(terms[:8]), ...
-)
-```
-
-改為：
-```python
-_SEARCH_TERMS_CAP = 15          # 與 EXPAND_LIMIT 對齊，不再早截斷
-_q_vec = _emb.embed(" ".join(terms[:_SEARCH_TERMS_CAP]))
-...
-db_results = self._brain_db.hybrid_search(
-    " ".join(terms[:_SEARCH_TERMS_CAP]), ...
-)
-...
-db_results = self._brain_db.search_nodes(
-    " ".join(terms[:_SEARCH_TERMS_CAP]), ...
-)
-```
-
-**Fix-2：`synonyms.py` — 補充 API 版本化領域同義詞**（30 分鐘）
 
 ```python
-# API 版本化
-"版本":    ["versioning", "v1", "url", "path", "routing", "api version"],
-"版本號":  ["versioning", "api version", "url", "path", "v1"],
-"路徑":    ["url", "path", "endpoint", "route", "routing"],
-"header":  ["http header", "accept", "content-type", "versioning"],
-"versioning": ["版本", "版本號", "url", "path", "v1"],
+try:
+    self.conn.execute(f"UPDATE nodes SET {', '.join(ups)} WHERE id=?", params)
+    if title is not None or content is not None:
+        nt = title   if title   is not None else ex["title"]
+        nc = content if content is not None else ex["content"]
+        self.conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
+        self.conn.execute(
+            "INSERT INTO nodes_fts(id,title,content,tags) VALUES(?,?,?,?)",
+            (node_id, self._ngram(nt), self._ngram(nc), ex.get("tags","[]"))
+        )
+    self.conn.commit()
+except Exception as _e:
+    self.conn.rollback()
+    logger.error("update_node failed, rolled back: %s", _e)
+    raise
 ```
 
-**Fix-3：`context.py` — Rule 配額 2 → 3**（5 分鐘）
-
-```python
-# context.py:227
-rules = _search_batch(expanded_terms, node_type="Rule", limit=3)   # 2 → 3
-```
-
----
-
-#### 驗收標準
-
-修復後執行：
-```bash
-python tests/benchmarks/benchmark_recall.py
-```
-
-- 第 5 筆查詢：`api-01` ✅（由 ❌ 變 ✅）
-- 整體召回率不下降（Fix 可能順帶修復其他 False Negative）
-- `benchmark_recall.py` 每個 FTS5 模式下召回率 ≥ 50%（無 sentence-transformers）
-
-**工時**：Fix-1 + Fix-2 + Fix-3 合計 < 1 小時；加測試驗收共 2 小時。
+**工時**：< 1 小時。**測試**：在 `test_core.py` 新增 FTS 一致性測試（更新後搜尋可命中）。
 
 ---
 
 ## P2 — 核心功能品質
 
-### FEAT-07 — Git 歷史時間回填：舊專案衰減從零開始問題
+### TEST-04 — WebUI 測試覆蓋率嚴重不足
 
-**問題**：`brain archaeologist`（或 `brain init`）掃描舊專案的 git 歷史後，知識節點的 `created_at` 全部等於今天。原因有兩層：
+**問題**：`tests/test_web_ui.py` 目前 **189 行**，覆蓋的是基本的 `/api/graph`、`/api/node/<id>/pin` 路徑。
+但 `web_ui/server.py` 已成長至 **1604 行**，包含：
 
-#### 根因 A：`add_node()` 不接受 `created_at` 參數
+| 功能 | 是否有測試 |
+|------|-----------|
+| `/api/stats` conf_dist 結構 | ❌ |
+| `is_pinned` 釘選持久化（pin → reload → 仍釘選） | ❌ |
+| `filterConf` 節點信心篩選 | ❌（純前端，需 Selenium / Playwright）|
+| 節點 fallback schema（`cols2` 缺欄位修正） | ❌ |
+| `/api/graph?kind=Rule` 篩選回傳 | ❌ |
+| 大型圖（500+ 節點）回應時間 | ❌ |
 
-`archaeologist._scan_git_history()`（`archaeologist.py:159–181`）正確地從 git log 中取得 `commit_date`：
+v0.19.0 的三個 WebUI 修復（conf_dist 零值、pinned 零值、is_pinned 不持久）完全靠人工測試發現，下次回歸時仍有機會復發。
 
-```python
-commit_date = meta.get("date", "")   # e.g. "2023-08-14 10:22:31 +0800"
-```
+**修復方向**：
 
-但呼叫 `graph.add_node()` 時完全不傳這個日期：
+1. **後端端點測試**（優先，用 Flask `test_client`）：
+   - `GET /api/stats` → 驗證 `conf_dist.hi + med + low + vlow == total_nodes`
+   - `POST /api/node/<id>/pin` → `GET /api/node/<id>` 確認 `is_pinned=true`
+   - `GET /api/graph?kind=Rule` → 所有回傳節點 `kind == "Rule"`
+   - `GET /api/graph` → 回傳 `nodes` list，每個節點含 `confidence, is_pinned, scope`
 
-```python
-self.graph.add_node(
-    node_id   = node_id,
-    node_type = chunk["type"],
-    title     = chunk["title"],
-    content   = chunk["content"],
-    source_url= commit_hash,
-    # ← commit_date 完全被丟棄
-)
-```
+2. **前端篩選測試**（選用，用 Playwright）：
+   - `filterConf('hi')` → 只有 confidence >= 0.80 的節點 opacity = 0.88
+   - `filterPinned()` → 只有 `is_pinned=true` 的節點可見
 
-`graph.add_node()` 和 `brain_db.add_node()` 的 INSERT 語句都不包含 `created_at`，全靠 SQLite `DEFAULT (datetime('now'))` 填入。
-
-#### 根因 B：`INSERT OR REPLACE` 每次都重置 `created_at`
-
-`brain_db.add_node()` 使用 `INSERT OR REPLACE`，這在 SQLite 中等於先 DELETE 再 INSERT。`DEFAULT` 重新觸發，即使是「更新」既有節點，`created_at` 也會被重置為現在。
-
-**影響**：
-
-- 掃描一個有 3 年 git 歷史的專案後，所有節點 `created_at = today`
-- 衰減引擎 F1 factor = `e^(-λ × 0 days)` = **1.0** — 完全無衰減
-- 7 天後才開始衰減，但 3 年前的 commit 理論上應該已衰減至 0.3–0.5
-- `_effective_confidence` 不反映實際知識時效性，知識庫信心分布失真
+**工時**：後端測試約 1 天；Playwright 另計。
 
 ---
 
-#### 修復方案
+### UX-01 — WebUI 篩選狀態無 URL 持久化
 
-**Fix-1：`graph.add_node()` 新增 `created_at` 參數**（`graph.py:232`）
+**問題**：目前 JavaScript 狀態（`currentFilter`、`confFilter`、`pinnedFilter`、`searchInput`）
+完全存活於記憶體。**重新整理** → 全部歸零。
 
-```python
-def add_node(self, node_id, node_type, title,
-             content="", tags=None, source_url="", author="",
-             meta=None, created_at: str = "") -> str:
-    ...
-    # INSERT 時：若未提供 created_at，用 DEFAULT；若提供，優先用提供值
-    if created_at:
-        self._conn.execute("""
-            INSERT OR IGNORE INTO nodes (id, type, ..., created_at) VALUES (...)
-        """, (..., created_at))
-        self._conn.execute("UPDATE nodes SET type=?, title=?, ... WHERE id=?", (...))
-    else:
-        # 原有邏輯
+使用場景：
+- 查看 `kind=Rule` 的節點時，想把 URL 分享給同事 → 對方看到的是全部節點
+- 已知低信心節點需要審核，整理一半去喝咖啡 → 回來後狀態消失
+
+**修復**：將篩選狀態序列化至 `location.hash`：
+
+```javascript
+// 寫入 hash
+function _syncHash() {
+  const parts = [];
+  if (currentFilter && currentFilter !== 'all') parts.push('kind=' + currentFilter);
+  if (confFilter)   parts.push('conf=' + confFilter);
+  if (pinnedFilter) parts.push('pin=1');
+  const q = document.getElementById('search-input')?.value?.trim();
+  if (q) parts.push('q=' + encodeURIComponent(q));
+  history.replaceState(null, '', parts.length ? '#' + parts.join('&') : '#');
+}
+
+// 讀取 hash（頁面載入時）
+function _restoreHash() {
+  const h = location.hash.slice(1);
+  if (!h) return;
+  const p = Object.fromEntries(h.split('&').map(s => s.split('=')));
+  if (p.kind) filterKind(p.kind);
+  if (p.conf) filterConf(p.conf);
+  if (p.pin)  filterPinned();
+  if (p.q)    { searchInput.value = decodeURIComponent(p.q); searchInput.dispatchEvent(new Event('input')); }
+}
 ```
 
-更好的寫法：改用 SQLite UPSERT（`INSERT ... ON CONFLICT DO UPDATE`），保留 `created_at` 不覆蓋：
+`filterKind`、`filterConf`、`filterPinned`、search handler 結尾各呼叫 `_syncHash()`；
+`loadGraph()` 完成後呼叫 `_restoreHash()`。
 
-```python
-self._conn.execute("""
-    INSERT INTO nodes (id, type, title, content, tags,
-                       source_url, author, meta, confidence, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
-    ON CONFLICT(id) DO UPDATE SET
-        type=excluded.type,
-        title=excluded.title,
-        content=excluded.content,
-        updated_at=datetime('now')
-        -- created_at 不更新，永遠保留初始值
-""", (..., created_at or None))
-```
-
-同樣修改 `brain_db.add_node()`（`brain_db.py:442`）。
-
-**Fix-2：`archaeologist._scan_git_history()` 傳入 `commit_date`**（`archaeologist.py:170`）
-
-```python
-self.graph.add_node(
-    node_id    = node_id,
-    node_type  = chunk["type"],
-    title      = chunk["title"],
-    content    = chunk["content"],
-    source_url = commit_hash,
-    author     = meta.get("author", ""),
-    meta       = {"confidence": chunk.get("confidence", 0.8)},
-    created_at = commit_date,   # ← 新增這一行
-)
-```
-
-**Fix-3：新增 `brain backfill-git` CLI 指令**
-
-針對已建立的 DB（舊節點 `created_at` 已錯誤設為 today），提供修正指令：
-
-```bash
-brain backfill-git [--workdir DIR] [--dry-run]
-```
-
-邏輯：
-1. 讀取所有 `source_url` 為 commit hash 格式（40 hex chars）的節點
-2. 執行 `git show --format="%ai" <hash>` 取得該 commit 的 author date
-3. `UPDATE nodes SET created_at=<commit_date>, updated_at=<commit_date> WHERE id=?`
-4. 若 `source_url` 是檔案路徑，執行 `git log --follow --format="%ai" -- <file> | tail -1` 取得檔案最早 commit 日期
-
-```python
-# cli_admin.py 新增
-def _cmd_backfill_git(args):
-    db = BrainDB(brain_dir)
-    nodes = db.conn.execute(
-        "SELECT id, source_url FROM nodes WHERE created_at > date('now', '-1 day')"
-    ).fetchall()
-    updated = 0
-    for node in nodes:
-        src = node["source_url"]
-        git_date = _resolve_git_date(src, workdir)
-        if git_date:
-            db.conn.execute(
-                "UPDATE nodes SET created_at=?, updated_at=? WHERE id=?",
-                (git_date, git_date, node["id"])
-            )
-            updated += 1
-    db.conn.commit()
-    print(f"回填完成：{updated}/{len(nodes)} 個節點時間戳已更新")
-```
+**工時**：< 2 小時（純前端）。
 
 ---
 
-#### 驗收標準
+### FEAT-08 — WebUI 節點行內編輯
 
-```bash
-brain archaeologist --workdir /my-old-project
-brain backfill-git  --workdir /my-old-project --dry-run  # 預覽
-brain backfill-git  --workdir /my-old-project            # 執行
-brain report                                              # 衰減報告應出現非 1.0 的 F1 值
-```
-
-3 年前的 commit 的節點應顯示 `confidence ≈ 0.3–0.5`（依 `base_decay_rate` 而定），而非 0.87。
-
-**工時**：Fix-1+2 共 2 小時；Fix-3（`brain backfill-git`）4 小時，含測試共 1 天。
-
----
-
-### PERF-06 — 缺少 type+confidence 複合索引
-
-**問題**：`search_nodes(node_type=...)` 呼叫產生：
-```sql
-SELECT n.* FROM nodes_fts f JOIN nodes n ON f.id=n.id WHERE n.type=? ORDER BY confidence DESC
-```
-目前索引：`idx_nodes_scope_conf(scope, confidence)`、`idx_nodes_pinned_conf(is_pinned, confidence)`。
-**缺少**：`idx_nodes_type_conf(type, confidence DESC)`。10k 節點下 type 過濾全表掃描。
-
-**修復**：SCHEMA_VERSION=21 migration：
-```sql
-ALTER TABLE nodes ... -- no new column needed
-CREATE INDEX IF NOT EXISTS idx_nodes_type_conf ON nodes(type, confidence DESC)
-```
-
-**工時**：30 分鐘（純 migration）。
-
----
-
-### BUG-D03 — KRB AI Assist Cache 永不 VACUUM
-
-**問題**：`krb_ai_assist.py` 的 `ai_screen_cache.db` lazy 刪除過期行但從不執行 `VACUUM`，SQLite 檔案只增不減。
-
-**修復**：在 `_init_db()` 末尾加條件性 VACUUM：
-```python
-last_vacuum = self._conn.execute(
-    "SELECT value FROM meta WHERE key='last_vacuum'").fetchone()
-if not last_vacuum or (datetime.now() - datetime.fromisoformat(last_vacuum[0])).days > 7:
-    self._conn.execute("VACUUM")
-    self._conn.execute("INSERT OR REPLACE INTO meta VALUES('last_vacuum', ?)",
-                       (datetime.now().isoformat(),))
-```
-
-**工時**：2 小時。
-
----
-
-### BUG-D04 — SessionStore Per-Thread 連線洩漏
-
-**問題**：`session_store.py` 使用 `threading.local()` 儲存 SQLite 連線，執行緒結束時連線不關閉，長執行伺服器（`brain serve`）可能耗盡 FD。
-
-**修復方案 A（最小改動）**：改用單一共享連線 + `check_same_thread=False`（WAL 模式下安全）。
-**修復方案 B**：改用 `weakref.finalize()` 在執行緒 GC 時自動關閉。
-
-**建議**：採用方案 A，與 `brain_db.py` 的模式一致。
-
-**工時**：3 小時。
-
----
-
-### ARCH-07 — 雙重 scope 推斷實作
-
-**問題**：`cli_utils._infer_scope()` 與 `brain_db.infer_scope()` 各自維護相同的推斷邏輯（git remote → 子目錄 → workdir → global）。兩者同步修改容易遺漏。
-
-**修復**：`cli_utils._infer_scope()` 改為：
-```python
-def _infer_scope(workdir: str, current_file: str = "") -> str:
-    from project_brain.brain_db import BrainDB
-    return BrainDB.infer_scope(workdir, current_file)
-```
-
-**工時**：1 小時 + 測試驗證。
-
----
-
-### OBS-02 — Decay F1–F7 因子量測缺失
-
-**問題**：`decay_engine._apply_decay()` 計算 7 個因子的乘積但從不記錄各因子貢獻，無法診斷「為何這個節點信心從 0.85 降到 0.21」。
-
-**修復**：`_apply_decay()` 結尾加：
-```python
-db.emit("decay_run", {
-    "node_id": node_id,
-    "factors": {"f1_time": f1, "f2_access": f2, "f3_contra": f3,
-                "f4_cross": f4, "f5_version": f5, "f6_adoption": f6, "f7_freq": f7},
-    "old_conf": old_conf, "new_conf": new_conf,
-})
-```
-`analytics_engine` 新增 `decay_factor_breakdown(node_id)` 讀取 events 表。
-
-**工時**：1 天。
-
----
-
-### OBS-03 — rollback_node() 無審計記錄
-
-**問題**：`brain restore <node_id> --version <N>` 執行後，`node_history` 中無法知道是誰在何時還原了什麼版本，違反知識演變可追溯性（FEAT-01 目標）。
+**問題**：知識庫管理完全依賴 CLI（`brain update`）或直接改 DB。
+已有節點面板，但只能讀取。日常校正信心分數、修正錯誤描述需要離開瀏覽器。
 
 **修復**：
-1. `node_history` 加 `changed_by TEXT DEFAULT 'system'`（v22 migration，可為 null）
-2. `rollback_node()` 參數加 `changed_by: str = ""`，寫入 `node_history` 帶 `change_type='rollback'`
 
-**工時**：半天。
+1. **後端**：`web_ui/server.py` 新增：
+   ```python
+   # PATCH /api/node/<nid>
+   # Body: {"title":str, "content":str, "confidence":float}
+   def _route_node_patch(nid):
+       data = request.get_json(silent=True) or {}
+       # 白名單欄位
+       allowed = {"title", "content", "confidence"}
+       updates = {k: v for k, v in data.items() if k in allowed}
+       if not updates:
+           return jsonify({"error": "no valid fields"}), 400
+       if "confidence" in updates:
+           updates["confidence"] = max(0.0, min(1.0, float(updates["confidence"])))
+       db.execute("UPDATE nodes SET ... WHERE id=?", ...)
+       return jsonify({"ok": True})
+   ```
 
----
+2. **前端**：節點面板底部加「✏ 編輯」按鈕，點擊後 title/content 變為 `<textarea>`，
+   confidence 變為 `<input type="range">`；「儲存」送 `PATCH /api/node/<nid>`，
+   成功後 reload 該節點資料並更新圖中標籤。
 
-### SEC-04 — Federation PII 過濾不完整
+3. **注意**：`server.py` 走 `brain_db` 路徑（非 `graph.py`），需確保 `update_node` 後
+   REL-01 修復已上線（FTS 一致性保障）。
 
-**問題**：`federation.py` `_strip_pii()` 目前過濾：email、`*.internal`、`.local` 域名。
-缺失：
-- IP 位址：`192.168.x.x`、`10.x.x.x`、`172.16-31.x.x`
-- Slack workspace URL：`*.slack.com`
-- 內部 Cloud 路徑：`s3.*/internal-bucket`
-- 內部 git URL：`github.corp.com/...`
-
-**修復**：擴充 regex 模式集（4 條新 pattern）。
-
-**工時**：2 小時 + 測試。
-
----
-
-### REV-02 — Decay 實際效用未量測
-
-**問題**：無法驗證衰減是幫助還是傷害召回率。
-
-**量測方案**：
-1. 對比有/無衰減兩組知識庫的召回率（`tests/benchmarks/benchmark_recall.py` 已有基礎）
-2. 統計 deprecated 節點在清除前的 `access_count`（零 access = 衰減正確）
-3. `analytics_engine` 新增 `decay_impact_score()`
-
-**執行條件**：需 90 天真實使用數據。目標：`brain report` 中顯示衰減效用指標。
+**工時**：後端 1 小時 + 前端 2 小時。阻塞：建議先完成 REL-01。
 
 ---
 
-## P3 — 長期 / 低頻 / 實驗性
+## P3 — 長期願景 / 低頻改善
 
-### FEAT-05 — analytics 時序報告 / HTML 儀表板
+### PERF-07 — `session_store.py` SELECT * 優化
 
-`analytics_engine.generate_timeseries()` 方法 + `brain report --format html` 輸出 Chart.js 圖表（知識庫成長曲線、信心分布、decay 趨勢）。工時：3 天。
+**問題**：`session_store.py` 有 4 處 `SELECT *`（行 353、392、446、552），
+在 list / count 場景下拉取完整 `value` TEXT blob（可達數 KB），實際只需 metadata。
 
----
+**修復**：依場景替換：
+- 列表 / 分頁操作 → `SELECT key, session_id, created_at, expires_at, size`
+- 搜尋（需比對 value）→ 保留 `SELECT *`
+- `get_session_entries()` → `SELECT *`（需要完整內容，不變）
 
-### FEAT-06 — brain doctor 矛盾 / deprecated 指標
-
-`brain doctor` 新增：
-- 矛盾節點比例（`CONFLICTS_WITH` edges 數量 / 總節點數）
-- Deprecated 比例（若 > 20% 觸發 ⚠ 警告）
-- Decay 未執行天數警告
-
-工時：1 天。
+**工時**：30 分鐘。
 
 ---
 
-### ARCH-08 — ConflictResolver 快取 TTL 淘汰
+### FEAT-09 — `backfill-git` 進度顯示
 
-`conflict_resolver.py` 已有 `CACHE_SECONDS=86400` 常數，但快取永不清空（dict 只增不減）。加入 TTL 淘汰：在 `resolve()` 呼叫時清除超過 `CACHE_SECONDS` 的項目。工時：2 小時。
+**問題**：預設掃描 200 commits，執行時靜默。大型專案（500+ commits + `--limit 0`）
+可能跑 5+ 分鐘，使用者不知道是否卡住。
 
----
+**修復**：`cli_admin.py` Phase 1 迴圈：
+```python
+for i, ch in enumerate(to_process, 1):
+    if i % 10 == 0 or i == len(to_process):
+        print(f"\r  [{i}/{len(to_process)}] 處理中…", end="", flush=True)
+    engine.learn_from_commit(ch)
+print()  # 換行
+```
 
-### TEST-02 — Decay Engine 100K 節點負載測試
+`--limit 0` 的語意：不限制掃描深度（現行 `--limit N` 預設 200）。
 
-`tests/chaos/test_decay_load.py`：建立 100K 節點，執行完整 decay 週期，量測：時間 < 60s、記憶體 < 500MB、無 SQLite lock 錯誤。工時：1 天。
-
----
-
-### TEST-03 — 修復 Chaos 測試硬編碼路徑
-
-`tests/chaos/test_chaos_and_load.py:380` 硬編碼 `/home/claude/synthex_v10/brain.py`，在任何其他環境永遠失敗。改用 `Path(__file__).parents[2] / "project_brain"` 或直接 import。工時：1 小時。
-
----
-
-## 版本路線圖
-
-| 版本 | 主題 | 主要工作 | Gate |
-|------|------|---------|------|
-| **v0.12.0** | 正確性修復 | SEC-03, BUG-D01, BUG-D02, BUG-E01, TEST-01, PERF-05, TEST-03 | 0 failing tests；所有 P1 修復通過；benchmark 召回率 ≥ 50%（FTS5 only） |
-| **v0.13.0** | 品質強化 | FEAT-07, PERF-06, BUG-D03, BUG-D04, ARCH-07, OBS-02, OBS-03, SEC-04 | 舊專案回填後 F1 衰減正確反映 commit 時間；無 bare except/pass（高危路徑） |
-| **v0.14.0** | 長期改善 | FEAT-06, ARCH-08, TEST-02, FEAT-05（視餘力） | REV-02 90天數據就位後 |
-| **v0.15.0** | 量測驗收 | REV-02 decay 效用量測與報告 | `brain report` 顯示衰減效用指標 |
+**工時**：< 30 分鐘。
 
 ---
 
-## 架構完整度（v0.11.0）
+### OBS-04 — `brain health` MCP 連接狀態檢查
 
-| 層 / 模組 | 完整度 | 已知缺口 |
-|----------|--------|---------|
-| L1a SessionStore | ✅ | BUG-D04 FD 洩漏 |
-| L2 Episodes / Temporal | ✅ | — |
-| L3 KnowledgeGraph | ✅ | — |
-| BrainDB | ✅ SCHEMA v20 | PERF-06 缺 type+conf 索引（v21）|
-| DecayEngine | ⚠️ 7/7 因子 | PERF-05 N+1；OBS-02 因子量測缺失；FEAT-07 舊專案 created_at 全為 today |
-| ContextEngineer | ⚠️ | BUG-E01 `_search_batch[:8]` 截斷；BUG-D01 部分 except/pass |
-| NudgeEngine | ✅ | — |
-| ConflictResolver | ✅ | ARCH-08 快取無 TTL 淘汰 |
-| Federation | ✅ | SEC-04 PII 過濾不完整 |
-| KRB | ✅ | BUG-D03 cache.db 永不 VACUUM |
-| MCP Server | ✅ | — |
-| API Server | ✅ | SEC-03 timing attack |
-| Embedder | ⚠️ | BUG-D02 cache 無鎖 |
-| Analytics | ✅ | OBS-02 decay 因子缺失；REV-02 待量測 |
-| Tests | ⚠️ | 15 failing；chaos 硬編碼路徑 |
+**問題**：`brain status` 回報 DB 統計，但無法確認 MCP server 是否在回應。
+使用者啟動 Claude Code 後不確定 MCP 工具是否可用。
+
+**修復**：`cli_admin.py` 新增 `cmd_health()`：
+
+```python
+def cmd_health(args):
+    port = args.mcp_port or int(os.environ.get("BRAIN_MCP_PORT", "3000"))
+    import socket, time
+    t0 = time.monotonic()
+    try:
+        s = socket.create_connection(("127.0.0.1", port), timeout=2)
+        s.close()
+        ms = int((time.monotonic() - t0) * 1000)
+        print(f"✅ MCP server 回應（port {port}，{ms}ms）")
+    except OSError as e:
+        print(f"❌ MCP server 無回應（port {port}）：{e}")
+```
+
+`cli_utils.py` 新增 `brain health [--mcp-port N]` 子指令。
+
+**工時**：1 小時。
+
+---
+
+## 驗收標準（v0.20.0）
+
+```
+pytest tests/ -x -q
+# 目標：≥ 880 passed（新增 TEST-04 測試後），0 failed
+```
+
+| 項目 | 驗收條件 |
+|------|---------|
+| SEC-05 | `test_mcp.py` 並發 workdir 切換不 deadlock / 不重複初始化 |
+| REL-01 | `test_core.py` 更新節點後搜尋可命中新內容 |
+| TEST-04 | `test_web_ui.py` ≥ 400 行；conf_dist、pin 持久化有獨立測試案例 |
+| UX-01 | 手動驗收：`#kind=Rule` URL 載入後自動套用篩選 |
+| FEAT-08 | 手動驗收：節點面板可編輯 title/content，儲存後圖中標籤即時更新 |
