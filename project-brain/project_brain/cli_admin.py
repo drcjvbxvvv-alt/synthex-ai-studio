@@ -761,8 +761,9 @@ def cmd_index(args):
 
 def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str) -> int:
     """用 Ollama 審核指定節點，更新 confidence。回傳已更新筆數。"""
-    import json as _json
-    import re  as _re2
+    import json    as _json
+    import re      as _re2
+    import sqlite3 as _sqlite3
     from .krb_ai_assist import OllamaClient, _build_prompt, _clean, MAX_CONTENT_PROMPT
 
     if not node_ids:
@@ -777,12 +778,17 @@ def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str
         print(f"  [ai-review] ⚠ 無法連線 Ollama（{ollama_url}）：{exc}，跳過 AI 審核")
         return 0
 
-    rows = db.conn.execute(
+    # 用獨立連線讀取節點，確保看到 Phase 1 提交的新節點
+    _read = _sqlite3.connect(str(db.db_path))
+    rows = _read.execute(
         f"SELECT id, type, title, content FROM nodes WHERE id IN ({','.join('?'*len(node_ids))})",
         node_ids,
     ).fetchall()
+    _read.close()
 
-    BATCH = 10
+    # llama3.2 tends to return a single object for multi-item batches,
+    # so keep BATCH=1 to guarantee one node → one response with matching id
+    BATCH = 1
     updated = 0
     for i in range(0, len(rows), BATCH):
         batch = rows[i : i + BATCH]
@@ -805,7 +811,12 @@ def _ai_review_nodes(db, node_ids: list[str], ollama_url: str, ollama_model: str
             raw  = resp.content[0].text.strip()
             raw  = _re2.sub(r"```(?:json)?|```", "", raw).strip()
             data = _json.loads(raw)
+            # llama3.2 sometimes returns a single object instead of array
+            if isinstance(data, dict):
+                data = [data]
             for item in data:
+                if not isinstance(item, dict):
+                    continue
                 nid  = str(item.get("id", ""))
                 conf = float(item.get("confidence", -1))
                 if nid and 0 <= conf <= 1:
@@ -913,11 +924,6 @@ def _cmd_backfill_git(args):
         # ── 3. 對每個未處理的 commit 呼叫 learn_from_commit ──────────
         from .engine import ProjectBrain
 
-        # 快照現有節點 ID，用於 Phase 3 識別新增節點
-        before_ids: set[str] = set(
-            r[0] for r in db.conn.execute("SELECT id FROM nodes").fetchall()
-        )
-
         brain = ProjectBrain(str(workdir))
         total_learned = 0
         for i, (commit_hash, msg, _date) in enumerate(new_commits):
@@ -929,17 +935,6 @@ def _cmd_backfill_git(args):
             except Exception as exc:
                 print(f"  ✗ {label} → 跳過（{exc}）")
         print(f"\n  共新增 {total_learned} 個知識節點\n")
-
-        # ── Phase 3（可選）：Ollama AI 審核新增節點信心分數 ──────────
-        if ai_review and total_learned > 0:
-            new_ids = [
-                r[0] for r in db.conn.execute("SELECT id FROM nodes").fetchall()
-                if r[0] not in before_ids
-            ]
-            print(f"[backfill-git] AI 審核 {len(new_ids)} 個新節點"
-                  f"（model={ollama_model} url={ollama_url}）")
-            reviewed = _ai_review_nodes(db, new_ids, ollama_url, ollama_model)
-            print(f"[backfill-git] AI 審核完成：{reviewed} 個節點信心分數已更新")
 
     # ── 4. 補正 created_at：用 valid_from 覆蓋錯誤的 datetime('now') ────
     # valid_from 由 _store_chunk 從 commit date 寫入，是可靠的真實時間來源。
@@ -953,6 +948,23 @@ def _cmd_backfill_git(args):
 
     db.conn.commit()
     print(f"[backfill-git] 時間戳補正：{ts_updated} 個節點")
+
+    # ── 5. （可選）Ollama AI 審核信心分數 ──────────────────────────────
+    # 目標：所有 confidence = 0.5 的節點（啟發式預設值，尚未 AI 審核）
+    if ai_review:
+        import sqlite3 as _sqlite3
+        _rconn = _sqlite3.connect(str(brain_dir / "brain.db"))
+        review_ids = [
+            r[0] for r in _rconn.execute(
+                "SELECT id FROM nodes WHERE confidence = 0.5 ORDER BY created_at DESC"
+            ).fetchall()
+        ]
+        _rconn.close()
+        print(f"[backfill-git] AI 審核 {len(review_ids)} 個待審節點"
+              f"（confidence=0.5，model={ollama_model}）")
+        reviewed = _ai_review_nodes(db, review_ids, ollama_url, ollama_model)
+        print(f"[backfill-git] AI 審核完成：{reviewed} 個節點信心分數已更新")
+
     return 0
 
 
