@@ -423,9 +423,24 @@ signal_log_days         = 0      # 0 = 永久保留（審計用）
 pipeline_metrics_days   = 90     # 品質指標保留天數
 
 # ── LLM 設定 ──────────────────────────────────────────────────
+# 記憶體分層與 LLM 用途：
+#
+#   L1 工作記憶（Working Memory）
+#      → sessions / 對話快取；純儲存，不呼叫 LLM。
+#
+#   L2 情節記憶（Episodic Memory）
+#      → 時序圖（temporal graph）；
+#        memory_synthesizer 合併片段時呼叫 LLM（下方 pipeline.llm）。
+#        建議：gemma4:27b（MoE，速度快）；複雜摘要可改用 gemma4:31b。
+#
+#   L3 語意知識（Semantic Knowledge / BrainDB nodes）
+#      → 自動管線的 ADD/SKIP 判斷呼叫 LLM（下方 pipeline.llm）。
+#        Phase 1：gemma4:27b（MoE，零成本本地推理）。
+#        Phase 3+ MERGE/SYNTHESIZE：建議切換至 gemma4:31b（Dense）。
+#
 [pipeline.llm]
 provider     = "{provider}"
-model        = "{model}"
+model        = "{model}"         # L2 合成 + L3 自動管線（Phase 1：gemma4:27b）
 base_url     = "{base_url}"
 timeout      = 30
 max_retries  = 3
@@ -436,18 +451,20 @@ model        = "claude-haiku-4-5-20251001"
 # api_key 從環境變數讀取：ANTHROPIC_API_KEY
 
 # ── 各任務模型覆蓋（只寫與預設不同的任務）────────────────────
-# Phase 3+ 複雜推理任務使用更強的 Dense 模型
+# Phase 3+ 複雜推理任務（MERGE / CONTRADICT / SYNTHESIS）使用更強的 Dense 模型
 # [pipeline.models]
 # merge      = {{ model = "gemma4:31b", fallback = "gemma4:27b" }}
 # contradict = {{ model = "gemma4:31b", fallback = "gemma4:27b" }}
 # synthesis  = {{ model = "gemma4:31b", fallback = "gemma4:27b" }}
 
 # ── Embedder ──────────────────────────────────────────────────
+# L3 向量搜尋（BrainDB semantic search）使用此 embedding 模型。
+# L1 / L2 不使用向量嵌入。
 [embedder]
 provider = "ollama"              # ollama | openai | local（TF-IDF 零依賴）
-model    = "nomic-embed-text"
+model    = "nomic-embed-text"    # 768 維嵌入，適合程式碼 + 中文混合文字
 url      = "{base_url}"
-fallback = "local"               # Ollama 不可用 → TF-IDF
+fallback = "local"               # Ollama 不可用 → TF-IDF（無需任何模型）
 
 # ── 衰減引擎 ──────────────────────────────────────────────────
 [decay]
