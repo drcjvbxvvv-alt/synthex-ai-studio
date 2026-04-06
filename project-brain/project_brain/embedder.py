@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 # Max 1 024 entries (~4 MB assuming 256-dim float vectors).
 _TFIDF_CACHE: OrderedDict = OrderedDict()
 _TFIDF_CACHE_MAX = 1024
+# OPT-10: hit/miss counters for observability
+_TFIDF_CACHE_HITS   = 0
+_TFIDF_CACHE_MISSES = 0
 
 # Standard dimensions
 DIM_MULTILINGUAL = 384   # multilingual-e5-small
@@ -258,10 +261,13 @@ class LocalTFIDFEmbedder:
     def embed(self, text: str) -> list[float]:
         # OPT-03: check module-level LRU cache first; include DIM so a
         # dim change (via env var restart) never returns a wrong-size vector.
+        global _TFIDF_CACHE_HITS, _TFIDF_CACHE_MISSES
         cache_key = hashlib.md5(f"{self.DIM}:{text or ''}".encode()).hexdigest()
         if cache_key in _TFIDF_CACHE:
             _TFIDF_CACHE.move_to_end(cache_key)   # BUG-14: promote to MRU position
+            _TFIDF_CACHE_HITS += 1                 # OPT-10
             return _TFIDF_CACHE[cache_key]
+        _TFIDF_CACHE_MISSES += 1                   # OPT-10
 
         import math, struct, re
         text = (text or "")[:4000].lower()
@@ -301,6 +307,19 @@ class LocalTFIDFEmbedder:
     @classmethod
     def is_available(cls) -> bool:
         return True  # always available
+
+
+def tfidf_cache_stats() -> dict:
+    """OPT-10: Return LocalTFIDF LRU cache hit/miss counters."""
+    total = _TFIDF_CACHE_HITS + _TFIDF_CACHE_MISSES
+    rate  = _TFIDF_CACHE_HITS / total if total else 0.0
+    return {
+        "hits":     _TFIDF_CACHE_HITS,
+        "misses":   _TFIDF_CACHE_MISSES,
+        "size":     len(_TFIDF_CACHE),
+        "capacity": _TFIDF_CACHE_MAX,
+        "hit_rate": round(rate, 3),
+    }
 
 
 _embedder_cache: dict = {}  # provider → embedder instance (module-level singleton)

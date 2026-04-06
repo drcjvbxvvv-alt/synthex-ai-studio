@@ -42,13 +42,14 @@
 | **P2** | FEAT-01 | Decay Engine 無自動觸發（只有手動 CLI） | ✅ v0.26.0 |
 | **P2** | FEAT-02 | MCP 工具缺 `batch_add_knowledge` | ✅ v0.26.0 |
 | **P2** | FEAT-03 | ContextEngineer 節點類型預算無上限，Pitfall 可擠爆 | ✅ v0.26.0 |
-| **P3** | FEAT-04 | 知識節點缺版本 diff 視圖（`brain history <id> --diff`） | ☐ 待實作 |
-| **P3** | FEAT-05 | 匯入/匯出格式只有 CSV，缺 JSON / GraphML | ☐ 待實作 |
-| **P3** | FEAT-06 | BrainDB 無備份策略，毀損無恢復 | ☐ 待實作 |
-| **P3** | OPT-07 | Nudge Engine 用未衰減的 confidence，推薦精準度下降 | ☐ 待實作 |
-| **P3** | OPT-08 | KnowledgeGraph nodes 無複合索引（type + created_at） | ☐ 待實作 |
-| **P3** | OPT-09 | Logging 無結構化（使用 % 格式，難以 grep / 整合 ELK） | ☐ 待實作 |
-| **P3** | OPT-10 | Embedder Cache 無 hit/miss 統計 | ☐ 待實作 |
+| **P3** | FEAT-04 | 知識節點缺版本 diff 視圖（`brain history <id> --diff`） | ✅ v0.27.0 |
+| **P3** | FEAT-05 | 匯入/匯出格式只有 CSV，缺 JSON / GraphML | ✅ v0.28.0 |
+| **P3** | FEAT-06 | BrainDB 無備份策略，毀損無恢復 | ✅ v0.28.0 |
+| **P3** | OPT-07 | Nudge Engine 用未衰減的 confidence，推薦精準度下降 | ✅ v0.29.0 |
+| **P3** | OPT-08 | KnowledgeGraph nodes 無複合索引（type + created_at） | ✅ v0.29.0 |
+| **P3** | OPT-09 | Logging 無結構化（使用 % 格式，難以 grep / 整合 ELK） | ✅ v0.29.0 |
+| **P3** | OPT-10 | Embedder Cache 無 hit/miss 統計 | ✅ v0.29.0 |
+| **P3** | REFACTOR-01 | CLI 命令臃腫（37 個），與 MCP tools 定位錯亂，需精簡 | ✅ v0.27.0 |
 | **P2** | TEST-04 | WebUI 測試覆蓋率 < 12%（scope 欄位 migration 不同步） | ⏸ 擱置 |
 | **P2** | FEAT-08 | WebUI 節點行內編輯 | ⏸ 擱置 |
 | **P2** | REV-01 | 量化對照實驗 Layer 2/3（需線上數據） | △ 進行中 |
@@ -480,37 +481,35 @@ context 組裝時按類型做配額限制，保證多樣性。
 
 ## P3 — 長期改善
 
-### FEAT-04 — 知識節點版本 Diff 視圖
+### FEAT-04 — 知識節點版本 Diff 視圖 ✅ v0.27.0
 
-**位置**：`brain_db.py`（`node_history` 表已存快照）
+**位置**：`cli_knowledge.py`（`cmd_history`）
 
-**現況**：`node_history` 在每次 update 時存整份 content，但無 diff 計算與展示 CLI。
-
-**修法**：新增 `brain history <node_id> --diff`：
-```python
-import difflib
-def show_diff(old_content: str, new_content: str) -> str:
-    return "\n".join(difflib.unified_diff(
-        old_content.splitlines(), new_content.splitlines(),
-        lineterm=""
-    ))
-```
+**實作**：`brain history <node_id> --diff` 使用 `difflib.unified_diff` 顯示相鄰版本差異，每對版本最多輸出 40 行，超出省略。
 
 ---
 
-### FEAT-05 — 匯入/匯出支援 JSON / GraphML
+### FEAT-05 — 匯出支援 GraphML ✅ v0.28.0
 
-**位置**：`cli_knowledge.py`（`cmd_export` / `cmd_import`）
+**位置**：`brain_db.py`（`export_graphml`）、`cli_admin.py`（`cmd_export`）
 
-**現況**：只支援 CSV。GraphML 可直接匯入 Gephi / Neo4j 做圖形分析。
+**實作**：
+- `brain export --format graphml` → 輸出 `.graphml` 檔案
+- 使用標準 GraphML XML 格式（含 key 宣告），可直接匯入 Gephi / yEd / Neo4j
+- 節點屬性：title、type、content、confidence、scope、tags、created_at
+- 邊屬性：relation、weight
 
 ---
 
-### FEAT-06 — BrainDB 自動備份策略
+### FEAT-06 — BrainDB 自動備份 ✅ v0.28.0
 
-**位置**：`brain_db.py`（`__init__`）
+**位置**：`brain_db.py`（`__init__` → `_maybe_backup`）
 
-**修法**：每天啟動時做 `VACUUM INTO '.brain/backups/brain_YYYYMMDD.db'`，保留最近 7 天。
+**實作**：
+- 每次 BrainDB 啟動時自動檢查今日是否已備份
+- 使用 `VACUUM INTO .brain/backups/brain_YYYYMMDD.db`（原子備份，自動 checkpoint WAL）
+- 保留最近 7 份，超出自動刪除最舊的
+- 備份失敗只寫 warning log，不影響正常啟動
 
 ---
 
@@ -551,6 +550,141 @@ ON nodes(type, created_at DESC);
 **位置**：`embedder.py`（`_TFIDF_CACHE`）
 
 **修法**：加 `_cache_hits`, `_cache_misses` counter，`brain status` 顯示 cache 命中率。
+
+---
+
+### REFACTOR-01 — CLI 命令精簡（37 → 27 個） ✅ v0.27.0
+
+> **背景**：此系統以 AI Agent 為主要使用者，MCP tools 是真正的操作介面。CLI 的定位應是
+> **人類維護介面**（初始化、檢查、除錯），而非 MCP 的映像複製。
+> 目前 37 個命令中存在 9 組直接重複，3 個是 AI 專用不需 CLI 暴露。
+
+---
+
+#### 現況分析：命令重疊矩陣
+
+| 問題類型 | 冗餘命令 | 保留命令 | 說明 |
+|---------|---------|---------|------|
+| **直接重複** | `timeline` | `history` | 兩者皆顯示節點版本歷史，`history` 功能更完整（支援 `--at <date>`） |
+| **直接重複** | `restore` | `rollback` | 兩者皆還原版本，`rollback --to <N>` 語意更清晰 |
+| **直接重複** | `context` | `ask` | `context` 已是 `ask` 別名（`_apply_aliases`），CLI 定義可移除 |
+| **功能重疊** | `health` | `doctor` | `doctor` 已涵蓋 health 檢查，`health` 只是子集 |
+| **功能重疊** | `health-report` | `report` | `report --format text` 已含健康度資訊 |
+| **功能重疊** | `analytics` | `report` | 合為 `report --analytics`（或 `report analytics` 子命令） |
+| **功能重疊** | `deprecate` | `deprecated` | `deprecated mark <id>` 取代獨立的 `deprecate` 命令 |
+| **功能重疊** | `lifecycle` | `deprecated` | `deprecated info <id>` 取代獨立的 `lifecycle` 命令 |
+| **AI 專用** | `counterfactual` | —（移除） | AI 直接呼叫 MCP `reasoning_chain`，不需 CLI 介面 |
+| **極低頻** | `meta` | —（移除） | Meta 知識管理，無使用記錄，功能保留但不對外 CLI 暴露 |
+
+---
+
+#### 目標架構（分兩層）
+
+**Primary（日常使用，`brain --help` 直接顯示）**
+
+```
+brain init           初始化 .brain/
+brain setup          一鍵設定（第一次使用）
+brain serve          啟動 MCP / REST server
+brain webui          D3.js 視覺化
+brain status         快速狀態摘要（吸收 health-report 的摘要輸出）
+brain doctor         深度健康檢查 + 自動修復（吸收 health）
+brain config         顯示 / 驗證設定
+brain add            手動加入知識
+brain ask            查詢知識（context 保留為別名）
+brain search         純語意搜尋
+brain sync           從 git commit 學習（hook 呼叫）
+brain scan           舊專案考古掃描
+brain export         匯出知識庫
+brain import         匯入知識庫
+```
+
+**Advanced（進階維護，`brain --help --advanced` 顯示）**
+
+```
+brain backfill-git   從 git 歷史批次回填
+brain optimize       資料庫 VACUUM + FTS5 重建
+brain report         ROI + 健康度 + 使用率（吸收 analytics）
+brain history <id>   版本歷史（吸收 timeline，支援 --diff 實作 FEAT-04）
+brain rollback <id>  版本還原（吸收 restore）
+brain deprecated     棄用節點管理（吸收 deprecate + lifecycle 子命令）
+brain migrate        跨專案知識遷移
+brain fed            聯邦知識同步
+brain session        工作記憶管理
+brain index          向量索引重建
+brain link-issue     連結 GitHub / Linear issue（ROI 歸因）
+```
+
+**移除（9 個）**
+
+| 命令 | 移除原因 | 遷移路徑 |
+|------|---------|---------|
+| `context` | 已是 `ask` 別名 | → `brain ask`（`context` 保留在 `_apply_aliases`） |
+| `health` | `doctor` 已涵蓋 | → `brain doctor` |
+| `health-report` | `report` 已涵蓋 | → `brain report --format text` |
+| `timeline` | `history` 已涵蓋 | → `brain history <id>` |
+| `restore` | `rollback` 已涵蓋 | → `brain rollback <id> --to <N>` |
+| `analytics` | 合入 `report` | → `brain report --analytics` |
+| `deprecate` | 合入 `deprecated` | → `brain deprecated mark <id>` |
+| `lifecycle` | 合入 `deprecated` | → `brain deprecated info <id>` |
+| `counterfactual` | AI 用 MCP tool | → MCP `reasoning_chain` |
+| `meta` | 無使用記錄 | 功能保留，不對外暴露 |
+
+---
+
+#### 實作步驟
+
+**Phase 1 — 移除純重複命令（dispatch 移除，_apply_aliases 補 redirect）**
+
+```python
+# cli_utils.py _apply_aliases() — 加入向後相容 redirect
+_aliases = {
+    ...
+    'context':       'ask',
+    'health':        'doctor',
+    'health-report': 'report',
+    'timeline':      'history',
+    'restore':       'rollback',
+    'analytics':     'report',
+    'deprecate':     'deprecated',
+    'lifecycle':     'deprecated',
+    'counterfactual': None,  # 直接拒絕，提示用 MCP
+}
+```
+
+**Phase 2 — 擴充保留命令吸收移除命令的功能**
+
+- `brain history <id>` 加 `--diff` 旗標（完成 FEAT-04）
+- `brain rollback <id>` 加 `--version` 作為 `--to` 別名（相容 restore 用法）
+- `brain deprecated` 加 `mark <id>` / `info <id>` 子命令
+- `brain report` 加 `--analytics` 旗標
+- `brain doctor` 吸收 `health` 的 MCP port 檢查（`--mcp-port` 旗標）
+
+**Phase 3 — `--help` 分層顯示**
+
+```python
+# _build_parser() 中標記進階命令
+ADVANCED_CMDS = {
+    'backfill-git', 'optimize', 'report', 'history', 'rollback',
+    'deprecated', 'migrate', 'fed', 'session', 'index', 'link-issue',
+}
+# brain --help 只顯示 Primary；brain --help --advanced 顯示全部
+```
+
+---
+
+#### 驗收條件
+
+| 項目 | 驗收條件 |
+|------|---------|
+| 命令數 | dispatch table ≤ 26 個（移除 9 個冗餘命令定義） |
+| 向後相容 | `brain context` / `brain health` / `brain timeline` / `brain restore` 輸出 deprecation warning 並自動轉發 |
+| `history --diff` | `brain history <id> --diff` 輸出 unified diff（完成 FEAT-04） |
+| `deprecated mark` | `brain deprecated mark <id> --reason "..."` 正確標記節點 |
+| `deprecated info` | `brain deprecated info <id>` 顯示生命週期（等同舊 lifecycle） |
+| `report --analytics` | `brain report --analytics` 顯示使用率分析（等同舊 analytics） |
+| Help 分層 | `brain --help` 只顯示 Primary 14 個命令；`brain --help --advanced` 顯示全部 |
+| 測試 | 移除命令的原有測試遷移至新命令，整體測試數不減少 |
 
 ---
 

@@ -478,7 +478,9 @@ def cmd_meta_knowledge(args):
 
 
 def cmd_timeline(args):
-    """FEAT-06: 顯示節點的版本歷史（brain timeline <node_id_or_title>）"""
+    """REFACTOR-01: 已整合至 history，保留供向後相容。"""
+    print(f"  {Y}⚠ brain timeline 已整合至 brain history（支援 --diff）{R}")
+    print(f"  {D}  請改用：brain history <node_id> [--diff]{R}")
     wd      = _workdir(args)
     query   = " ".join(args.node_ref) if isinstance(args.node_ref, list) else (args.node_ref or "")
     if not query:
@@ -543,19 +545,39 @@ def cmd_history(args):
 
     history = db.get_node_history(node["id"])
     ver = node.get("version") or "?"
+    show_diff = getattr(args, 'diff', False)
     print(f"\n{C}{B}📜  版本歷史：{node['title']}{R}  {GR}(current v{ver}){R}")
     print(f"  {GR}節點 ID：{node['id']}{R}")
     print(f"  {GR}{'─'*50}{R}")
     if not history:
         _info("尚無版本歷史（更新節點後才會記錄）")
         return
-    for h in history:
+    for i, h in enumerate(history):
         ctype = h.get("change_type") or "update"
         print(f"  {G}v{h['version']}{R}  {GR}{(h.get('snapshot_at') or '')[:19]}{R}"
               f"  [{ctype}]  conf={h.get('confidence') or '?'}"
               f"  {D}{h.get('change_note') or ''}{R}")
         if h.get("title"):
             print(f"       標題：{h['title'][:60]}")
+        # FEAT-04: --diff 顯示相鄰版本 unified diff
+        if show_diff and i + 1 < len(history):
+            import difflib
+            old_c = (history[i + 1].get("content") or "").splitlines()
+            new_c = (h.get("content") or "").splitlines()
+            diff  = list(difflib.unified_diff(
+                old_c, new_c,
+                fromfile=f"v{history[i+1]['version']}",
+                tofile=f"v{h['version']}",
+                lineterm="",
+            ))
+            if diff:
+                print(f"  {D}{'·'*46}{R}")
+                for line in diff[:40]:
+                    color = G if line.startswith("+") else (RE if line.startswith("-") else D)
+                    print(f"  {color}{line}{R}")
+                if len(diff) > 40:
+                    print(f"  {D}  … 省略 {len(diff)-40} 行{R}")
+                print(f"  {D}{'·'*46}{R}")
     print()
 
 
@@ -593,7 +615,9 @@ def _at_snapshot(db, at_str: str, workdir: str = "") -> None:
 
 
 def cmd_restore(args):
-    """FEAT-01: brain restore <node_id> --version <N> — 還原到指定版本"""
+    """REFACTOR-01: 已整合至 rollback，保留供向後相容。"""
+    print(f"  {Y}⚠ brain restore 已整合至 brain rollback（--version 旗標亦可用）{R}")
+    print(f"  {D}  請改用：brain rollback {getattr(args,'node_id','')} --version {getattr(args,'version','N')}{R}")
     wd      = _workdir(args)
     node_id = getattr(args, 'node_id', '')
     ver     = getattr(args, 'version', None)
@@ -613,7 +637,7 @@ def cmd_restore(args):
 
 
 def cmd_deprecated(args):
-    """ARCH-05: brain deprecated list/purge"""
+    """ARCH-05 + REFACTOR-01: brain deprecated list/mark/purge/info"""
     sub = getattr(args, 'deprecated_sub', 'list') or 'list'
     wd  = _workdir(args)
     bd  = Path(wd) / ".brain"
@@ -646,12 +670,52 @@ def cmd_deprecated(args):
         else:
             _info(f"沒有棄用超過 {days} 天的節點")
 
+    elif sub == 'mark':
+        # REFACTOR-01: 整合自 cmd_deprecate
+        nid = getattr(args, 'node_id', None) or ''
+        if not nid:
+            _err("用法：brain deprecated mark <node_id> [--reason <reason>] [--replaced-by <id>]")
+            return
+        ok = db.deprecate_node(
+            nid,
+            replaced_by=getattr(args, 'replaced_by', ''),
+            reason=getattr(args, 'reason', ''),
+        )
+        if ok:
+            _ok(f"節點 {nid} 已標記為棄用")
+        else:
+            _err(f"找不到節點：{nid}")
+
+    elif sub == 'info':
+        # REFACTOR-01: 整合自 cmd_lifecycle
+        import json as _j
+        nid = getattr(args, 'node_id', None) or ''
+        if not nid:
+            _err("用法：brain deprecated info <node_id>"); return
+        lc = db.get_lifecycle(nid)
+        if not lc:
+            _err("找不到節點"); return
+        status_icon = "🔴 deprecated" if lc["status"] == "deprecated" else "🟢 active"
+        print(f"\n  節點: {B}{lc['title']}{R}")
+        print(f"  狀態: {status_icon}")
+        print(f"  信心: {lc['confidence']:.2f}  建立: {(lc['created_at'] or '')[:10]}  更新: {(lc['updated_at'] or '')[:10]}")
+        if lc["replaced_by"]:
+            print(f"  取代節點: {', '.join(lc['replaced_by'])}")
+        if lc["history"]:
+            print(f"\n  歷史版本 ({len(lc['history'])} 筆):")
+            for h in lc["history"][:5]:
+                print(f"    v{h.get('version','?')}  {(h.get('changed_at','') or '')[:16]}  {h.get('change_note','')[:40]}")
+        print()
+
     else:
-        _err(f"未知子命令：{sub}（可用：list, purge）")
+        _err(f"未知子命令：{sub}（可用：list, mark, purge, info）")
 
 
 def cmd_deprecate(args):
-    """FEAT-13: brain deprecate <node_id>"""
+    """REFACTOR-01: 已整合至 deprecated mark，保留供向後相容。"""
+    nid = getattr(args, 'node_id', '')
+    print(f"  {Y}⚠ brain deprecate 已整合至 brain deprecated mark{R}")
+    print(f"  {D}  請改用：brain deprecated mark {nid} --reason \"...\"{R}")
     wd = _workdir(args)
     bd = Path(wd) / ".brain"
     if not bd.exists():
@@ -671,7 +735,10 @@ def cmd_deprecate(args):
 
 
 def cmd_lifecycle(args):
-    """FEAT-13: brain lifecycle <node_id>"""
+    """REFACTOR-01: 已整合至 deprecated info，保留供向後相容。"""
+    nid = getattr(args, 'node_id', '')
+    print(f"  {Y}⚠ brain lifecycle 已整合至 brain deprecated info{R}")
+    print(f"  {D}  請改用：brain deprecated info {nid}{R}")
     import json as _j
     wd = _workdir(args)
     bd = Path(wd) / ".brain"
@@ -696,12 +763,13 @@ def cmd_lifecycle(args):
 
 
 def cmd_rollback(args):
-    """FEAT-06: 恢復節點到指定版本（brain rollback <node_id> --to <version>）"""
+    """FEAT-06 + REFACTOR-01: 恢復節點到指定版本（--to N 或 --version N）"""
     wd      = _workdir(args)
     node_id = args.node_id
-    to_ver  = args.to
+    to_ver  = args.to  # parser 已將 --version 的 dest 設為 'to'
     if not node_id or to_ver is None:
-        _err("用法：brain rollback <node_id> --to <version>"); return
+        _err("用法：brain rollback <node_id> --to <N>  或  brain rollback <node_id> --version <N>")
+        return
     bd = Path(wd) / ".brain"
     if not bd.exists():
         _err("Brain 尚未初始化，請執行：brain setup"); return

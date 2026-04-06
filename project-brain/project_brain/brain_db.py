@@ -34,6 +34,41 @@ class BrainDB:
         # ARCH-02: single shared connection — eliminates per-thread fd leak
         self._conn_obj: sqlite3.Connection = self._make_connection()
         self._setup()
+        # FEAT-06: 每日自動備份（靜默，不阻塞啟動）
+        self._maybe_backup()
+
+    def _maybe_backup(self) -> None:
+        """FEAT-06: 每日靜默備份 brain.db → .brain/backups/brain_YYYYMMDD.db
+
+        規則：
+          - 每天最多備份一次（比較最新備份的日期）
+          - 使用 SQLite VACUUM INTO，保證備份為完整且不含 WAL 的乾淨資料庫
+          - 保留最近 7 份，超過自動刪除
+        """
+        if not self.db_path.exists():
+            return
+        try:
+            backup_dir = self.brain_dir / "backups"
+            backup_dir.mkdir(exist_ok=True)
+            today_tag  = datetime.now(timezone.utc).strftime("%Y%m%d")
+            today_path = backup_dir / f"brain_{today_tag}.db"
+            # 今天已備份就跳過
+            if today_path.exists():
+                return
+            # VACUUM INTO 建立完整備份（自動 checkpoint WAL）
+            self._conn_obj.execute(f"VACUUM INTO '{today_path}'")
+            logger.debug("FEAT-06: daily backup created → %s", today_path.name)
+            # 清理超過 7 份的舊備份（按名稱排序，最舊的先刪）
+            backups = sorted(backup_dir.glob("brain_????????.db"))
+            for old in backups[:-7]:
+                try:
+                    old.unlink()
+                    logger.debug("FEAT-06: removed old backup %s", old.name)
+                except OSError:
+                    pass
+        except Exception as _e:
+            # 備份失敗不應影響正常啟動
+            logger.warning("FEAT-06: daily backup failed (non-fatal): %s", _e)
 
     def _make_connection(self) -> sqlite3.Connection:
         """ARCH-02: open the shared SQLite connection. Override in subclasses."""
@@ -1699,6 +1734,86 @@ class BrainDB:
                     f'CREATE (a)-[:{rel}]->(b)'
                 )
         return "\n".join(lines)
+
+    def export_graphml(self, node_type: str = None, scope: str = None) -> str:
+        """FEAT-05: Export knowledge graph as GraphML XML (Gephi / yEd / Neo4j compatible).
+
+        GraphML is the standard graph interchange format — can be directly
+        loaded into Gephi, yEd, or imported into Neo4j via the GraphML plugin.
+        """
+        import xml.etree.ElementTree as ET
+
+        data = self.export_json(node_type=node_type, scope=scope)
+
+        root = ET.Element("graphml", {
+            "xmlns":              "http://graphml.graphdrawing.org/graphml",
+            "xmlns:xsi":          "http://www.w3.org/2001/XMLSchema-instance",
+            "xsi:schemaLocation": (
+                "http://graphml.graphdrawing.org/graphml "
+                "http://graphml.graphdrawing.org/graphml/1.0/graphml.xsd"
+            ),
+        })
+
+        # Declare node attribute keys
+        _node_attrs = [
+            ("title",      "string"),
+            ("type",       "string"),
+            ("content",    "string"),
+            ("confidence", "double"),
+            ("scope",      "string"),
+            ("tags",       "string"),
+            ("created_at", "string"),
+        ]
+        for attr_id, attr_type in _node_attrs:
+            ET.SubElement(root, "key", {
+                "id": attr_id, "for": "node",
+                "attr.name": attr_id, "attr.type": attr_type,
+            })
+
+        # Declare edge attribute keys
+        ET.SubElement(root, "key", {
+            "id": "relation", "for": "edge",
+            "attr.name": "relation", "attr.type": "string",
+        })
+        ET.SubElement(root, "key", {
+            "id": "weight", "for": "edge",
+            "attr.name": "weight", "attr.type": "double",
+        })
+
+        graph_el = ET.SubElement(root, "graph", {
+            "id": "brain", "edgedefault": "directed",
+        })
+
+        # Nodes
+        for n in data["nodes"]:
+            node_el = ET.SubElement(graph_el, "node", {"id": n["id"]})
+            for attr_id, _ in _node_attrs:
+                val = n.get(attr_id)
+                if val is None:
+                    continue
+                d = ET.SubElement(node_el, "data", {"key": attr_id})
+                d.text = str(val)
+
+        # Edges
+        for i, e in enumerate(data.get("edges", [])):
+            src = e.get("source_id", "")
+            tgt = e.get("target_id", "")
+            if not src or not tgt:
+                continue
+            edge_el = ET.SubElement(graph_el, "edge", {
+                "id": e.get("id", f"e{i}"),
+                "source": src,
+                "target": tgt,
+            })
+            rel = ET.SubElement(edge_el, "data", {"key": "relation"})
+            rel.text = e.get("relation", "RELATED")
+            w = ET.SubElement(edge_el, "data", {"key": "weight"})
+            w.text = str(e.get("weight", 1.0))
+
+        ET.indent(root, space="  ")
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(
+            root, encoding="unicode"
+        )
 
     def import_json(self, data: dict, overwrite: bool = False,
                     merge_strategy: str = "skip") -> dict:

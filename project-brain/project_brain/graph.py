@@ -122,9 +122,10 @@ class KnowledgeGraph:
             created_at  TEXT DEFAULT (datetime('now'))
         );
 
-        CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
-        CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
-        CREATE INDEX IF NOT EXISTS idx_nodes_type   ON nodes(type);
+        CREATE INDEX IF NOT EXISTS idx_edges_source      ON edges(source_id);
+        CREATE INDEX IF NOT EXISTS idx_edges_target      ON edges(target_id);
+        CREATE INDEX IF NOT EXISTS idx_nodes_type        ON nodes(type);
+        CREATE INDEX IF NOT EXISTS idx_nodes_type_created ON nodes(type, created_at DESC);
         CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
             id UNINDEXED, title, content, tags,
             content='nodes', content_rowid='rowid'

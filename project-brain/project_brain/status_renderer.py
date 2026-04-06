@@ -285,6 +285,22 @@ def render_status(
         except Exception as _e:
             logger.debug("flywheel health query failed in status_renderer", exc_info=True)
 
+    # ── OPT-10: Embedder 快取統計 ───────────────────────────────
+    try:
+        from project_brain.embedder import tfidf_cache_stats as _tcs
+        _cs = _tcs()
+        _rate_color = GREEN if _cs["hit_rate"] >= 0.5 else YELLOW
+        lines.append(section("Embedder 快取", ""))
+        lines.append(
+            f"  {INFO}  TF-IDF LRU  "
+            f"命中 {_rate_color}{BOLD}{_cs['hits']}{RESET}  "
+            f"未命中 {GRAY}{_cs['misses']}{RESET}  "
+            f"大小 {WHITE}{_cs['size']}/{_cs['capacity']}{RESET}  "
+            f"命中率 {_rate_color}{_cs['hit_rate']:.0%}{RESET}"
+        )
+    except Exception as _e:
+        logger.debug("embedder cache stats failed in status_renderer: %s", _e)
+
     # ── 頁尾 ──────────────────────────────────────────────────
     lines.append(f"\n{hr('═')}")
     lines.append(f"{GRAY}  Project Brain  v{version}  ·  {brain_dir}{RESET}\n")

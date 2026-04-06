@@ -269,14 +269,19 @@ class NudgeEngine:
         Returns: [{"node_id": ..., "question": "...", "current_confidence": 0.38}]
         """
         try:
-            results = self.graph.search_nodes(task, limit=10)
+            # OPT-07: prefer _brain_db.search_nodes so effective_confidence is pre-computed
+            if self._brain_db is not None:
+                results = self._brain_db.search_nodes(task, limit=10)
+            else:
+                results = self.graph.search_nodes(task, limit=10)
         except Exception as _e:
             logger.debug("generate_questions: graph search failed: %s", _e)
             return []
 
         questions = []
         for r in results:
-            conf = float(r.get("confidence", 0.8) or 0.8)
+            # OPT-07: use decay-adjusted effective_confidence instead of raw confidence
+            conf = float(r.get("effective_confidence") or r.get("confidence", 0.8) or 0.8)
             if conf >= threshold:
                 continue
             title = r.get("title","")

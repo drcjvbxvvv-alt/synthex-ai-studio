@@ -81,7 +81,11 @@ def cmd_status(args):
 
 
 def cmd_health(args):
-    """OBS-04: 檢查 MCP server 連接狀態與 .brain 目錄健康度"""
+    """REFACTOR-01: 已整合至 doctor --mcp-port，保留供向後相容。"""
+    mcp_port = getattr(args, 'mcp_port', None)
+    port_hint = f" --mcp-port {mcp_port}" if mcp_port else " --mcp-port 3000"
+    print(f"  \033[33m⚠ brain health 已整合至 brain doctor\033[0m")
+    print(f"  \033[90m  請改用：brain doctor{port_hint}\033[0m")
     import socket, time as _time
     G = "\033[32m"; Y = "\033[33m"; R = "\033[31m"; RE = "\033[0m"
 
@@ -379,7 +383,9 @@ def cmd_scan(args):
 
 
 def cmd_health_report(args):
-    """FEAT-01: 知識庫健康度儀表板（brain health-report）"""
+    """REFACTOR-01: 已整合至 report，保留供向後相容。"""
+    print(f"  {Y}⚠ brain health-report 已整合至 brain report{R}")
+    print(f"  {D}  請改用：brain report --format {getattr(args,'format','text')}{R}")
     wd = _workdir(args)
     bd = Path(wd) / ".brain"
     if not bd.exists():
@@ -589,6 +595,29 @@ new Chart(document.getElementById('growthChart'),{{
 
     print(f"\n  {Y}{report['summary']}{R}\n")
 
+    # REFACTOR-01: --analytics 旗標，整合自 cmd_analytics
+    if getattr(args, 'analytics', False):
+        from project_brain.brain_db import BrainDB
+        _db = BrainDB(bd)
+        r   = _db.usage_analytics()
+        print(f"  {B}{C}📊  Usage Analytics{R}")
+        print(f"  {GR}{'═' * 46}{R}")
+        _info(f"Total nodes: {r['total_nodes']}  Episodes: {r['total_episodes']}")
+        if r['by_type']:
+            _info(f"By type:  {'  '.join(f'{t}:{n}' for t,n in r['by_type'].items())}")
+        if r['by_scope']:
+            _info(f"By scope: {'  '.join(f'{s}:{n}' for s,n in list(r['by_scope'].items())[:5])}")
+        if r['top_accessed_nodes']:
+            print(f"\n  {B}Top accessed nodes:{R}")
+            for n in r['top_accessed_nodes'][:5]:
+                print(f"    {GR}{n['access_count']:>3}×{R}  {n['title'][:50]}")
+        if r['knowledge_growth']:
+            print(f"\n  {B}Knowledge growth (recent weeks):{R}")
+            for w in r['knowledge_growth'][:6]:
+                bar = "▓" * min(w['count'], 20)
+                print(f"    {GR}{w['week']}{R}  {G}{bar}{R} {w['count']}")
+        print()
+
     if out:
         import json as _j
         out_path = Path(out)
@@ -599,7 +628,9 @@ new Chart(document.getElementById('growthChart'),{{
 
 
 def cmd_analytics(args):
-    """FEAT-03: 使用率分析報告（brain analytics）"""
+    """REFACTOR-01: 已整合至 report --analytics，保留供向後相容。"""
+    print(f"  {Y}⚠ brain analytics 已整合至 brain report --analytics{R}")
+    print(f"  {D}  請改用：brain report --analytics{R}")
     wd = _workdir(args)
     bd = Path(wd) / ".brain"
     if not bd.exists():
@@ -686,6 +717,10 @@ def cmd_export(args):
     elif fmt == 'neo4j':
         content = db.export_neo4j(node_type=kind, scope=sc)
         ext = ".cypher"
+    elif fmt == 'graphml':
+        # FEAT-05: GraphML 格式，可直接匯入 Gephi / yEd / Neo4j
+        content = db.export_graphml(node_type=kind, scope=sc)
+        ext = ".graphml"
     else:
         import json as _j
         content = _j.dumps(db.export_json(node_type=kind, scope=sc),
@@ -1476,6 +1511,22 @@ def cmd_doctor(args):
             _warn2(f"知識庫健康檢查失敗：{e}")
     else:
         _warn2("brain.db 不存在，跳過知識庫健康檢查")
+
+    # REFACTOR-01: 吸收 health 的 MCP port 檢查（--mcp-port）
+    mcp_port = getattr(args, 'mcp_port', None)
+    if mcp_port is not None:
+        import socket, time as _time
+        _section("MCP Server")
+        port = int(mcp_port or os.environ.get("BRAIN_MCP_PORT", "3000"))
+        t0 = _time.monotonic()
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=2)
+            s.close()
+            ms = int((_time.monotonic() - t0) * 1000)
+            _ok2(f"MCP server 回應  port={port}  latency={ms}ms")
+        except OSError as e:
+            _err2(f"MCP server 無回應  port={port}  ({e})",
+                  "執行：brain serve --mcp 啟動 MCP server")
 
     print(f"\n  {D}{'─' * 44}{R}")
     parts = []

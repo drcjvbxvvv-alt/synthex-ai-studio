@@ -27,12 +27,13 @@ from project_brain.cli_utils import (
     _now, _load_dotenv, _settings_block, _show_guide,
     _scan_banner, _verify_sqlite_vec,
     _build_parser, _apply_aliases,
+    setup_logging,
 )
 
 from project_brain.cli_knowledge import (
     cmd_ask, cmd_search, cmd_timeline, cmd_history,
     cmd_restore, cmd_deprecated, cmd_deprecate, cmd_lifecycle, cmd_rollback,
-    cmd_link_issue, cmd_meta_knowledge, cmd_review, cmd_counterfactual,
+    cmd_link_issue, cmd_review,
     cmd_sync,
     _cmd_add_interactive,
 )
@@ -177,6 +178,7 @@ def cmd_context(args):
 
 def main():
     _load_dotenv()
+    setup_logging()   # OPT-09: JSON logging if BRAIN_LOG_JSON=1
     parser = _build_parser()
 
     if len(sys.argv) == 1:
@@ -200,7 +202,7 @@ def main():
         'sync':          cmd_sync,
         'add':           cmd_add,
         'context':       cmd_context,
-        'meta':          cmd_meta_knowledge,
+        # meta: REFACTOR-01 已移除，由 _apply_aliases 攔截並 exit
         'doctor':        cmd_doctor,
         'health':        cmd_health,
         'config':        cmd_config,
@@ -226,7 +228,7 @@ def main():
         'deprecated':    cmd_deprecated,
         'migrate':       cmd_migrate,
         'fed':            cmd_fed,
-        'counterfactual': cmd_counterfactual,
+        # counterfactual: REFACTOR-01 已移除，由 _apply_aliases 攔截並 exit
         'backfill-git':  _cmd_backfill_git,
         'deprecate':     cmd_deprecate,
         'lifecycle':     cmd_lifecycle,

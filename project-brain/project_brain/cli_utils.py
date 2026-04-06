@@ -170,6 +170,45 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def setup_logging(verbosity: int = 0) -> None:
+    """OPT-09: Configure root logger.
+
+    If BRAIN_LOG_JSON=1 is set, emit structured JSON lines instead of plain text.
+    verbosity controls level: 0→WARNING, 1→INFO, 2→DEBUG.
+    """
+    import json as _json
+    import time as _time
+
+    level = {0: logging.WARNING, 1: logging.INFO}.get(verbosity, logging.DEBUG)
+
+    if os.environ.get("BRAIN_LOG_JSON", "0") == "1":
+        class _JsonFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+                payload = {
+                    "ts":      _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(record.created)),
+                    "level":   record.levelname,
+                    "logger":  record.name,
+                    "msg":     record.getMessage(),
+                }
+                if record.exc_info:
+                    payload["exc"] = self.formatException(record.exc_info)
+                return _json.dumps(payload, ensure_ascii=False)
+
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    if not root.handlers:
+        root.addHandler(handler)
+    else:
+        # replace first handler (avoid duplicate output on re-run)
+        root.handlers[0] = handler
+
+
 def _load_dotenv():
     """
     從 .env 檔案載入環境變數。
@@ -401,16 +440,32 @@ def _build_parser():
         prog='brain',
         description='Project Brain — AI 記憶系統（獨立版，可搭配任何 LLM）',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""命令快速參考：
+        epilog="""── Primary 命令 ──────────────────────────────────────────────
   brain setup                          一鍵設定（第一次使用）
+  brain init                           初始化 .brain/ 目錄
   brain add "JWT 筆記"                 加入知識（快速模式）
-  brain ask "JWT 怎麼設定"              查詢知識
-  brain status                         查看記憶狀態
-  brain doctor                         系統健康檢查
-  brain doctor --fix                   自動修復問題
-  brain serve --port 7891              啟動 REST API
-  brain webui --port 7890              D3.js 視覺化驗證
+  brain ask "JWT 怎麼設定"             查詢知識
+  brain search <關鍵詞>                純語意搜尋
+  brain status                         查看三層記憶狀態
+  brain doctor                         系統健康檢查 + 自動修復
+  brain doctor --mcp-port 3000         同時檢查 MCP server
+  brain serve --port 7891              啟動 REST API / MCP server
+  brain webui --port 7890              D3.js 視覺化
   brain sync --quiet                   從 git commit 學習（hook 呼叫）
+  brain scan                           舊專案考古掃描
+  brain export / brain import          匯出 / 匯入知識庫
+  brain config                         顯示設定來源
+
+── Advanced 命令（維護 / 進階）────────────────────────────
+  brain history <id>                   版本歷史（--diff 顯示差異）
+  brain rollback <id> --to <N>         版本還原（--version <N> 亦可）
+  brain deprecated list/mark/purge/info  棄用節點管理
+  brain report [--analytics]           ROI + 健康度 + 使用率報告
+  brain backfill-git                   從 git 歷史批次回填
+  brain optimize                       資料庫維護
+  brain migrate / brain fed            跨專案遷移 / 聯邦同步
+  brain session / brain index          工作記憶 / 向量索引
+  brain link-issue                     連結 GitHub/Linear issue
 
 環境變數：
   BRAIN_WORKDIR         預設工作目錄（省略 --workdir）
@@ -429,8 +484,9 @@ def _build_parser():
 
     sub = parser.add_subparsers(dest='cmd', metavar='<command>')
 
-    def mkp(name, help_text):
-        p = sub.add_parser(name, help=help_text)
+    def mkp(name, help_text, advanced=False):
+        _help = argparse.SUPPRESS if advanced else help_text
+        p = sub.add_parser(name, help=_help)
         p.add_argument('--workdir', '-w', default=None,
                        help='專案目錄（預設：自動從當前目錄往上找 .brain/，無需設定）')
         return p
@@ -497,16 +553,18 @@ def _build_parser():
     p.add_argument('--max-api-calls', dest='max_api_calls', type=int, default=20,
                    help='pre-screen 最大 API 呼叫次數（預設 20）')
 
-    p = mkp('doctor', '系統健康檢查與自動修復')
+    p = mkp('doctor', '系統健康檢查與自動修復（含 MCP server 狀態）')
     p.add_argument('--fix', action='store_true', help='嘗試自動修復發現的問題')
-
-    p = mkp('health', 'OBS-04: 檢查 MCP server 連接狀態與 .brain 健康度')
     p.add_argument('--mcp-port', dest='mcp_port', type=int, default=None,
-                   help='MCP server port（預設：BRAIN_MCP_PORT 或 3000）')
+                   help='同時檢查 MCP server 連線（整合自 health）')
+
+    # REFACTOR-01: health 已整合至 doctor --mcp-port，保留 parser 供向後相容
+    p = mkp('health', argparse.SUPPRESS, advanced=True)
+    p.add_argument('--mcp-port', dest='mcp_port', type=int, default=None)
 
     mkp('config', '顯示並驗證所有設定來源（5 處）')
 
-    p = mkp('optimize', 'C-1: 資料庫維護 — VACUUM + FTS5 rebuild（節省磁碟）')
+    p = mkp('optimize', '資料庫維護 — VACUUM + FTS5 rebuild', advanced=True)
     p.add_argument('--prune-episodes', action='store_true',
                    help='清理舊 Episode（L2 git commit 記錄），搭配 --older-than 使用')
     p.add_argument('--older-than', dest='older_than', type=int, default=365,
@@ -531,13 +589,17 @@ def _build_parser():
                    help='掃描全部 commit（預設只掃最近 100 個）')
     p.add_argument('--quiet', action='store_true', help='靜默模式')
 
-    p = mkp('health-report', 'FEAT-01：知識庫健康度儀表板')
+    # REFACTOR-01: health-report 已整合至 report，保留 parser 供向後相容
+    p = mkp('health-report', argparse.SUPPRESS, advanced=True)
     p.add_argument('--format', choices=['text','json'], default='text')
 
-    p = mkp('report', 'PH1-06：週期性 ROI + 健康度 + 使用率綜合報告')
+    p = mkp('report', 'ROI + 健康度 + 使用率綜合報告（--analytics 顯示詳細分析）',
+            advanced=True)
     p.add_argument('--days', type=int, default=7, help='回溯天數（預設：7）')
     p.add_argument('--format', choices=['text','json'], default='text')
     p.add_argument('--output', '-o', default=None, help='儲存報告至檔案')
+    p.add_argument('--analytics', action='store_true',
+                   help='同時顯示使用率分析（整合自 analytics 命令）')
 
     p = mkp('search', 'PH2-02：純語意搜尋（不組裝 Context，速度更快）')
     p.add_argument('query', nargs='+', help='搜尋關鍵詞')
@@ -548,65 +610,80 @@ def _build_parser():
     p.add_argument('--scope', default=None, help='只搜尋特定 scope')
     p.add_argument('--format', choices=['text','json'], default='text')
 
-    p = mkp('link-issue', 'PH2-06：連結 Brain 節點與 GitHub/Linear issue（ROI 歸因）')
+    p = mkp('link-issue', '連結 Brain 節點與 GitHub/Linear issue（ROI 歸因）', advanced=True)
     p.add_argument('--node-id', dest='node_id', default=None, help='Brain 節點 ID（可用前綴）')
     p.add_argument('--url', default=None, help='GitHub / Linear issue URL')
     p.add_argument('--list', action='store_true', help='列出所有已連結的 issue')
 
-    p = mkp('analytics', 'FEAT-03：使用率分析報告')
+    # REFACTOR-01: analytics 已整合至 report --analytics，保留 parser 供向後相容
+    p = mkp('analytics', argparse.SUPPRESS, advanced=True)
     p.add_argument('--format', choices=['text','json'], default='text')
-    p.add_argument('--export', choices=['csv'], default=None,
-                   help='匯出格式（csv）')
-    p.add_argument('--output', '-o', default=None, help='輸出路徑')
+    p.add_argument('--export', choices=['csv'], default=None)
+    p.add_argument('--output', '-o', default=None)
 
-    p = mkp('export', 'FEAT-05：匯出知識庫（JSON / Markdown）')
-    p.add_argument('--format', choices=['json','markdown','neo4j'], default='json')
+    p = mkp('export', '匯出知識庫（JSON / Markdown）')
+    p.add_argument('--format', choices=['json','markdown','neo4j','graphml'], default='json',
+                   help='匯出格式（json/markdown/neo4j/graphml，預設 json）')
     p.add_argument('--kind',   default=None, help='只匯出某類型節點')
     p.add_argument('--scope',  default=None, help='只匯出某 scope 節點')
     p.add_argument('--output', '-o', default=None, help='輸出路徑（預設：brain_export.json）')
 
-    p = mkp('import', 'FEAT-05：匯入知識庫（JSON）')
+    p = mkp('import', '匯入知識庫（JSON）')
     p.add_argument('file', help='匯入檔案路徑（brain export 產生的 JSON）')
     p.add_argument('--overwrite', action='store_true', help='覆蓋已存在的節點')
     p.add_argument('--merge-strategy', choices=['skip','overwrite','confidence_wins','interactive'],
                    default='skip', dest='merge_strategy',
                    help='衝突解決策略（預設: skip）')
 
-    p = mkp('index', '向量索引（語意搜尋 Phase 1）')
+    p = mkp('index', '向量索引重建（語意搜尋）', advanced=True)
     p.add_argument('--quiet', action='store_true')
 
-    p = mkp('timeline', 'FEAT-06：顯示節點版本歷史')
-    p.add_argument('node_ref', nargs='+', help='節點 ID 或標題')
+    # REFACTOR-01: timeline 已整合至 history（支援 --diff），保留 parser 供向後相容
+    p = mkp('timeline', argparse.SUPPRESS, advanced=True)
+    p.add_argument('node_ref', nargs='+')
 
-    p = mkp('rollback', 'FEAT-06：恢復節點到指定版本')
+    p = mkp('rollback', '版本還原（--to N 或 --version N）', advanced=True)
     p.add_argument('node_id', help='節點 ID')
-    p.add_argument('--to', type=int, required=True, help='目標版本號')
+    p.add_argument('--to', type=int, default=None, help='目標版本號')
+    p.add_argument('--version', type=int, dest='to', default=None,
+                   help='目標版本號（--to 的別名，整合自 restore）')
 
-    p = mkp('history', 'FEAT-01/FEAT-03：顯示節點版本歷史，或 --at <date> 查看時間快照')
+    p = mkp('history', '版本歷史（--diff 顯示差異 / --at <date> 時間快照）', advanced=True)
     p.add_argument('node_id', nargs='?', default='', help='節點 ID 或標題（與 --at 二擇一）')
     p.add_argument('--at', default='', metavar='DATE_OR_REF',
-                   help='FEAT-03：查看該時間點的知識快照（ISO 日期或 git ref）')
+                   help='查看該時間點的知識快照（ISO 日期或 git ref）')
+    p.add_argument('--diff', action='store_true',
+                   help='顯示相鄰版本的 unified diff（FEAT-04）')
 
-    p = mkp('restore', 'FEAT-01：還原節點到指定版本')
-    p.add_argument('node_id', help='節點 ID')
-    p.add_argument('--version', type=int, required=True, help='目標版本號')
+    # REFACTOR-01: restore 已整合至 rollback --version，保留 parser 供向後相容
+    p = mkp('restore', argparse.SUPPRESS, advanced=True)
+    p.add_argument('node_id')
+    p.add_argument('--version', type=int, required=True)
 
-    p = mkp('deprecated', 'ARCH-05：管理已棄用節點（list / purge）')
+    p = mkp('deprecated', '棄用節點管理（list / mark / purge / info）', advanced=True)
     p.add_argument('deprecated_sub', nargs='?', default='list',
-                   choices=['list', 'purge'], help='子命令（預設：list）')
+                   choices=['list', 'purge', 'mark', 'info'],
+                   help='子命令（預設：list）')
+    p.add_argument('node_id', nargs='?', default=None,
+                   help='節點 ID（mark / info 時必填）')
     p.add_argument('--limit', type=int, default=50, help='列出筆數上限（預設 50）')
     p.add_argument('--older-than', dest='older_than', type=int, default=90,
                    help='purge：刪除棄用超過幾天的節點（預設 90）')
+    p.add_argument('--replaced-by', default='', dest='replaced_by',
+                   help='mark：取代節點 ID')
+    p.add_argument('--reason', default='', help='mark：棄用原因')
 
-    p = mkp('deprecate', 'FEAT-13：標記節點為棄用')
-    p.add_argument('node_id', help='節點 ID')
-    p.add_argument('--replaced-by', default='', dest='replaced_by', help='取代節點 ID')
-    p.add_argument('--reason', default='', help='棄用原因')
+    # REFACTOR-01: deprecate 已整合至 deprecated mark，保留 parser 供向後相容
+    p = mkp('deprecate', argparse.SUPPRESS, advanced=True)
+    p.add_argument('node_id')
+    p.add_argument('--replaced-by', default='', dest='replaced_by')
+    p.add_argument('--reason', default='')
 
-    p = mkp('lifecycle', 'FEAT-13：查看節點生命週期')
-    p.add_argument('node_id', help='節點 ID')
+    # REFACTOR-01: lifecycle 已整合至 deprecated info，保留 parser 供向後相容
+    p = mkp('lifecycle', argparse.SUPPRESS, advanced=True)
+    p.add_argument('node_id')
 
-    p = mkp('migrate', 'FEAT-07：跨專案知識遷移')
+    p = mkp('migrate', '跨專案知識遷移', advanced=True)
     p.add_argument('--from', dest='from_path', required=True,
                    help='來源 brain.db 路徑（或含 .brain/ 的目錄）')
     p.add_argument('--to', dest='to_path', default=None,
@@ -616,7 +693,7 @@ def _build_parser():
                    help='只遷移信心值 >= 此值的節點（預設 0.0）')
     p.add_argument('--dry-run', action='store_true', help='預覽模式（不實際寫入）')
 
-    p = mkp('fed', 'VISION-03：跨專案聯邦知識共享（export / import / sync / subscribe）')
+    p = mkp('fed', '聯邦知識共享（export / import / sync / subscribe）', advanced=True)
     p.add_argument('fed_sub', nargs='?', default='list',
                    choices=['export','import','sync','imports','subscribe','unsubscribe','list'],
                    help='子命令（預設：list）')
@@ -633,7 +710,7 @@ def _build_parser():
     p.add_argument('--remove-source', dest='remove_source', default=None,
                    help='sync：移除來源（依名稱）')
 
-    p = mkp('backfill-git', 'FEAT-07: 從 git 歷史回填知識節點至 .brain')
+    p = mkp('backfill-git', '從 git 歷史批次回填知識節點', advanced=True)
     p.add_argument('--dry-run', action='store_true', dest='dry_run',
                    help='只顯示要處理的 commit，不實際寫入')
     p.add_argument('--limit', type=int, default=200, metavar='N',
@@ -645,20 +722,19 @@ def _build_parser():
     p.add_argument('--ollama-model', dest='ollama_model', default=None,
                    help='Ollama 模型名稱（預設：BRAIN_OLLAMA_MODEL 或 llama3.2）')
 
-    p = mkp('counterfactual', 'DEEP-03：反事實推理')
-    p.add_argument('hypothesis', nargs='+', help='假設條件（如：如果我們用 NoSQL）')
+    # REFACTOR-01: counterfactual 已移除，_apply_aliases 會 sys.exit(1) 並顯示提示
 
     p = mkp('webui', 'D3.js 視覺化（驗證知識庫）')
     p.add_argument('--port', type=int, default=7890)
 
-    p = mkp('session', 'FEAT-04：管理 L1a 工作記憶（list / archive）')
+    p = mkp('session', '工作記憶管理（list / archive）', advanced=True)
     p.add_argument('session_sub', nargs='?', default='list',
                    choices=['list', 'archive'], help='子命令（預設：list）')
     p.add_argument('--session', default='', help='archive：指定 session ID（預設：當前）')
     p.add_argument('--older-than', dest='older_than', type=int, default=0,
                    help='archive：同時清理超過 N 天的歸檔')
 
-    p = mkp('serve', '啟動 OpenAI 相容 API（讓 Ollama/LM Studio/Cursor 查詢知識）')
+    p = mkp('serve', '啟動 OpenAI 相容 API / MCP server')
     p.add_argument('--port',           type=int,   default=7891,  help='監聽 port（預設：7891）')
     p.add_argument('--production',     action='store_true',       help='生產模式：使用 Gunicorn multi-worker')
     p.add_argument('--workers',        type=int,   default=4,     help='Gunicorn worker 數量（--production 時有效）')
@@ -700,13 +776,28 @@ def _apply_aliases():
         sys.argv[1] = corrected
 
     _deprecated_cmds = {
-        'daemon':       ('status',     'brain status 查看系統狀態（daemon 已整合）'),
-        'watch-ack':    ('watch',      'brain watch --ack <id>（watch-ack 已整合）'),
-        'mcp-install':  ('serve',      'brain serve --mcp --install（mcp-install 已整合）'),
-        'causal-chain': ('add-causal', 'brain add-causal --list（causal-chain 已整合）'),
+        'daemon':          ('status',     'brain status 查看系統狀態（daemon 已整合）'),
+        'watch-ack':       ('watch',      'brain watch --ack <id>（watch-ack 已整合）'),
+        'mcp-install':     ('serve',      'brain serve --mcp --install（mcp-install 已整合）'),
+        'causal-chain':    ('add-causal', 'brain add-causal --list（causal-chain 已整合）'),
+        # REFACTOR-01: CLI 精簡 — 已移除命令的向後相容導向
+        'context':         ('ask',        'brain ask <query>（context 已整合為 ask 的別名）'),
+        'health':          ('doctor',     'brain doctor（health 已整合，可用 --mcp-port 檢查 MCP）'),
+        'health-report':   ('report',     'brain report（health-report 已整合為 report）'),
+        'timeline':        ('history',    'brain history <id>（timeline 已整合，支援 --diff）'),
+        'restore':         ('rollback',   'brain rollback <id> --to <N> 或 --version <N>'),
+        'analytics':       ('report',     'brain report --analytics（analytics 已整合為 report 子功能）'),
+        'deprecate':       ('deprecated', 'brain deprecated mark <id> --reason "..."'),
+        'lifecycle':       ('deprecated', 'brain deprecated info <id>'),
+        'counterfactual':  (None,         'counterfactual 已移除 CLI 介面，AI 請直接使用 MCP reasoning_chain 工具'),
+        'meta':            (None,         'meta 已移除 CLI 介面，請使用 brain add --kind Rule 替代'),
     }
     if len(sys.argv) > 1 and sys.argv[1] in _deprecated_cmds:
         new_cmd, hint = _deprecated_cmds[sys.argv[1]]
+        if new_cmd is None:
+            print(f"  {RE}✗ '{sys.argv[1]}' 已從 CLI 移除{R}")
+            print(f"  {D}  {hint}{R}")
+            sys.exit(1)
         print(f"  {D}⚠ '{sys.argv[1]}' 已廢棄，自動導向：{C}{new_cmd}{R}")
         print(f"  {D}建議改用：{hint}{R}")
         sys.argv[1] = new_cmd
