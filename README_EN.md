@@ -1,5 +1,25 @@
 ##### [繁體中文](./README.md) | English
 
+<div align="center">
+
+```
+          [Rule] ──PREVENTS──▶ [Pitfall]
+             ╲                    ╱
+           REQUIRES           CAUSES
+                ╲            ╱
+                 ▼          ▼
+               [Decision] ◈ [ADR]
+                confidence · decay
+```
+
+### P · R · O · J · E · C · T &nbsp; B · R · A · I · N
+
+*Every conversation stands on the shoulders of every decision that came before*
+
+</div>
+
+---
+
 # Project Brain
 
 > **Engineering memory infrastructure for AI Agents.**

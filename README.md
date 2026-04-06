@@ -1,5 +1,25 @@
 ##### [English](./README_EN.md) | 繁體中文
 
+<div align="center">
+
+```
+          [Rule] ──PREVENTS──▶ [Pitfall]
+             ╲                    ╱
+           REQUIRES           CAUSES
+                ╲            ╱
+                 ▼          ▼
+               [Decision] ◈ [ADR]
+                confidence · decay
+```
+
+### P · R · O · J · E · C · T &nbsp; B · R · A · I · N
+
+*每次對話，都站在所有前人決策的肩膀上*
+
+</div>
+
+---
+
 # Project Brain
 
 > **為 AI Agent 設計的工程記憶基礎設施。**
