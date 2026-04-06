@@ -109,6 +109,21 @@ class DecayConfig:
 
 
 @dataclass
+class ReviewModelConfig:
+    provider: str = "ollama"
+    model:    str = "gemma4:31b"           # Dense 模型，品質優先
+    base_url: str = _DEFAULT_OLLAMA_URL
+
+
+@dataclass
+class ReviewConfig:
+    auto_approve_threshold: float = 0.80
+    staging_ttl_days:       int   = 30
+    min_confidence:         float = 0.50
+    llm: ReviewModelConfig = field(default_factory=ReviewModelConfig)
+
+
+@dataclass
 class FederationConfig:
     enabled:               bool  = False
     min_export_confidence: float = 0.6
@@ -141,6 +156,7 @@ class BrainConfig:
     pipeline:    PipelineConfig    = field(default_factory=PipelineConfig)
     embedder:    EmbedderConfig    = field(default_factory=EmbedderConfig)
     decay:       DecayConfig       = field(default_factory=DecayConfig)
+    review:      ReviewConfig      = field(default_factory=ReviewConfig)
     federation:  FederationConfig  = field(default_factory=FederationConfig)
     mcp:         MCPConfig         = field(default_factory=MCPConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
@@ -259,6 +275,15 @@ def _build_config(raw: dict) -> BrainConfig:
     if abs(total - 1.0) > 0.01:
         logger.warning("decay 六因子權重加總為 %.2f（應為 1.0），請檢查 brain.toml [decay]", total)
 
+    rv = raw.get("review", {})
+    cfg.review.auto_approve_threshold = rv.get("auto_approve_threshold", cfg.review.auto_approve_threshold)
+    cfg.review.staging_ttl_days       = rv.get("staging_ttl_days",       cfg.review.staging_ttl_days)
+    cfg.review.min_confidence         = rv.get("min_confidence",          cfg.review.min_confidence)
+    rvl = rv.get("model", {})
+    cfg.review.llm.provider = rvl.get("provider", cfg.review.llm.provider)
+    cfg.review.llm.model    = rvl.get("model",    cfg.review.llm.model)
+    cfg.review.llm.base_url = rvl.get("base_url", cfg.review.llm.base_url)
+
     fed = raw.get("federation", {})
     cfg.federation.enabled               = fed.get("enabled",               cfg.federation.enabled)
     cfg.federation.min_export_confidence = fed.get("min_export_confidence", cfg.federation.min_export_confidence)
@@ -363,6 +388,26 @@ def get_llm_client(task: str = "default",
     # 4. 最後備援：OpenAI-compat with fallback model
     client, model = _make_openai_client(llm.base_url, llm.model)
     return client, model
+
+
+def get_krb_client(brain_dir: Optional[Path] = None) -> tuple[Any, str]:
+    """
+    取得 KRB 審核用的 LLM client，讀取 [review.model] 設定。
+    Ollama 不可用時自動 fallback 至 [pipeline.llm] 設定。
+
+    Returns: (client, model_name)
+    """
+    cfg = load_config(brain_dir)
+    rv  = cfg.review.llm
+
+    if rv.provider in ("ollama", "openai"):
+        if _is_ollama_available(rv.base_url, timeout=2):
+            client, model = _make_openai_client(rv.base_url, rv.model)
+            return client, model
+        logger.debug("get_krb_client: [review.model] Ollama 不可用，fallback → pipeline.llm")
+
+    # fallback：走 pipeline.llm（可能是 Ollama 27B 或 Haiku）
+    return get_llm_client(task="default", brain_dir=brain_dir)
 
 
 def _make_openai_client(base_url: str, model: str) -> tuple[Any, str]:

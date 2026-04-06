@@ -21,6 +21,14 @@
 - 向後相容：`BRAIN_LLM_PROVIDER`、`BRAIN_OLLAMA_URL`、`BRAIN_OLLAMA_MODEL` 等舊 env var 仍有效
 - 遷移：`nudge_engine.py`、`memory_synthesizer.py`、`conflict_resolver.py`、`cli_utils.py` 的 fallback 邏輯統一至 `brain_config`
 
+### brain.toml 補充調整（post v0.30.0）
+
+- **`[review]` 新增 KRB 配置**：`auto_approve_threshold`、`staging_ttl_days`、`min_confidence`
+- **`[review.model]` 獨立 KRB 模型設定**：provider / model / base_url，預設 gemma4:31b（Dense，品質優先）；Ollama 不可用時 fallback 至 `[pipeline.llm]`
+- **`[decay]` 移除六因子權重手動設定**：`weight_time` 等欄位從模板移除，改為說明註釋（手動調整需加總 1.0，容易出錯）
+- `brain_config.py` 新增 `ReviewModelConfig`、`ReviewConfig` dataclass；`_build_config()` 解析 `[review.model]`；新增 `get_krb_client(brain_dir)` 函式
+- `krb_ai_assist.py` 新增 `KRBAIAssistant.from_brain_config(krb)` classmethod（推薦初始化方式），fallback chain：`[review.model]` Ollama → `[pipeline.llm]` Ollama → Haiku；舊的 hardcode `DEFAULT_MODEL = haiku` / `DEFAULT_OLLAMA_MODEL = llama3.2` 僅作為最終備援
+
 ---
 
 ## v0.29.0（2026-04-06）— OPT-07~10 效能優化 + 自動知識管線設計文件

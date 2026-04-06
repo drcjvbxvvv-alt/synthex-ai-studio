@@ -22,7 +22,8 @@ project_brain/krb_ai_assist.py — PH3-03 AI-Assisted KRB Review
   Ollama 本地運行 → $0（需本地 GPU/CPU）
 
 後端選擇：
-  雲端（預設）：KRBAIAssistant(krb, anthropic.Anthropic())
+  brain.toml ：KRBAIAssistant.from_brain_config(krb)  # 讀取 [review.model]（推薦）
+  雲端        ：KRBAIAssistant(krb, anthropic.Anthropic())
   本地 Ollama ：KRBAIAssistant.from_ollama(krb)  # 使用 llama3.2，零成本
 """
 from __future__ import annotations
@@ -249,6 +250,47 @@ class KRBAIAssistant:
         self._brain_dir: Path = Path(krb.brain_dir)
         self._cache_db  = self._brain_dir / "krb_ai_cache.db"
         self._setup_cache()
+
+    @classmethod
+    def from_brain_config(
+        cls,
+        krb,
+        brain_dir=None,
+    ) -> "KRBAIAssistant":
+        """
+        從 brain.toml [review.model] 建立 KRBAIAssistant（推薦方式）。
+
+        讀取 brain_config.get_krb_client() 的 fallback chain：
+          [review.model] Ollama → [pipeline.llm] Ollama → Haiku
+
+        Ollama provider 使用 krb_ai_assist.OllamaClient（無需 openai 套件）。
+        """
+        try:
+            from pathlib import Path as _Path
+            from project_brain.brain_config import load_config, _find_brain_dir, _is_ollama_available
+            bd  = _Path(brain_dir) if brain_dir else _find_brain_dir()
+            cfg = load_config(bd)
+            rv  = cfg.review.llm
+
+            if rv.provider in ("ollama", "openai"):
+                if _is_ollama_available(rv.base_url, timeout=2):
+                    return cls(krb, OllamaClient(base_url=rv.base_url), model=rv.model)
+                logger.debug("from_brain_config: [review.model] Ollama 不可用，fallback → pipeline.llm")
+
+            # fallback → pipeline.llm
+            pl = cfg.pipeline.llm
+            if pl.provider in ("ollama", "openai"):
+                if _is_ollama_available(pl.base_url, timeout=2):
+                    return cls(krb, OllamaClient(base_url=pl.base_url), model=pl.model)
+
+            # 最終 fallback → Anthropic Haiku
+            fb = pl.fallback
+            client = make_client("anthropic")
+            return cls(krb, client, model=fb.model)
+
+        except Exception as e:
+            logger.warning("from_brain_config failed, using default Ollama: %s", e)
+            return cls(krb, OllamaClient(), model=DEFAULT_OLLAMA_MODEL)
 
     @classmethod
     def from_ollama(
