@@ -242,10 +242,19 @@ def _load_dotenv():
 
 def _settings_block() -> str:
     """目前設定區塊（LLM + 工作目錄），顯示在 help 頂部"""
-    provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
-    if provider == "openai":
+    try:
+        from project_brain.brain_config import load_config, _find_brain_dir
+        brain_dir = _find_brain_dir()
+        cfg      = load_config(brain_dir)
+        provider = cfg.pipeline.llm.provider
+        model    = cfg.pipeline.llm.model
+        base_url = cfg.pipeline.llm.base_url
+    except Exception:
+        provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+        model    = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
         base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
-        model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.1:8b")
+
+    if provider in ("ollama", "openai"):
         if "11434" in base_url:
             vendor = "Ollama"
         elif "1234" in base_url:
@@ -255,11 +264,10 @@ def _settings_block() -> str:
         llm_tag = f"{G}{vendor} - {model}（免費）{R}"
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        model   = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
         if api_key:
             llm_tag = f"{Y}Anthropic - {model}{R}"
         else:
-            llm_tag = f"{RE}未設定{R}  {GR}→ 建立 .env 或設定 ANTHROPIC_API_KEY{R}"
+            llm_tag = f"{RE}未設定{R}  {GR}→ 設定 ANTHROPIC_API_KEY 或使用 Ollama{R}"
 
     workdir = os.environ.get("BRAIN_WORKDIR", "（當前目錄）")
     w = 54
@@ -562,7 +570,10 @@ def _build_parser():
     p = mkp('health', argparse.SUPPRESS, advanced=True)
     p.add_argument('--mcp-port', dest='mcp_port', type=int, default=None)
 
-    mkp('config', '顯示並驗證所有設定來源（5 處）')
+    p = mkp('config', '顯示並驗證所有設定來源')
+    p.add_argument('config_subcmd', nargs='?', default=None,
+                   metavar='[init]',
+                   help='init：重新生成 brain.toml')
 
     p = mkp('optimize', '資料庫維護 — VACUUM + FTS5 rebuild', advanced=True)
     p.add_argument('--prune-episodes', action='store_true',

@@ -105,21 +105,23 @@ class MemorySynthesizer:
             return self._concat_fallback(l1, l2, l3)
 
     def _call_llm(self, prompt: str) -> str:
-        """Call LLM for synthesis. Tries Anthropic first, then Ollama."""
-        provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+        """Call LLM for synthesis via brain_config。"""
+        from project_brain.brain_config import load_config, _find_brain_dir
+        cfg      = load_config(_find_brain_dir())
+        provider = cfg.pipeline.llm.provider
 
-        if provider == "openai" or os.environ.get("BRAIN_LLM_BASE_URL"):
-            return self._call_openai_compat(prompt)
+        if provider in ("openai", "ollama"):
+            return self._call_openai_compat(prompt, cfg)
         else:
-            return self._call_anthropic(prompt)
+            return self._call_anthropic(prompt, cfg)
 
-    def _call_anthropic(self, prompt: str) -> str:
+    def _call_anthropic(self, prompt: str, cfg=None) -> str:
         import anthropic
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
         client = anthropic.Anthropic(api_key=api_key)
-        model  = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
+        model  = cfg.pipeline.llm.model if cfg else os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
         msg = client.messages.create(
             model=model,
             max_tokens=MAX_BRIEF_TOKENS,
@@ -127,11 +129,16 @@ class MemorySynthesizer:
         )
         return msg.content[0].text.strip()
 
-    def _call_openai_compat(self, prompt: str) -> str:
+    def _call_openai_compat(self, prompt: str, cfg=None) -> str:
         from openai import OpenAI
-        base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
-        client   = OpenAI(base_url=base_url, api_key="ollama")
-        model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.2:3b")
+        if cfg:
+            base_url = cfg.pipeline.llm.base_url
+            model    = cfg.pipeline.llm.model
+        else:
+            base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
+            model    = os.environ.get("BRAIN_LLM_MODEL", "gemma4:27b")
+        url    = base_url if "/v1" in base_url else base_url.rstrip("/") + "/v1"
+        client = OpenAI(base_url=url, api_key="ollama")
         resp = client.chat.completions.create(
             model=model,
             max_tokens=MAX_BRIEF_TOKENS,

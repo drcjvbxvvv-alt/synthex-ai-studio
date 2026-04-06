@@ -302,6 +302,46 @@ class BrainDB:
             # v22: MEM-02 — description column for AI relevance selection manifest
             ("description column on nodes",
              "ALTER TABLE nodes ADD COLUMN description TEXT NOT NULL DEFAULT ''"),
+            # v23: AUTO-PIPELINE Phase 1 — signal_queue table
+            ("signal_queue table",
+             """CREATE TABLE IF NOT EXISTS signal_queue (
+                 id           TEXT PRIMARY KEY,
+                 kind         TEXT NOT NULL,
+                 workdir      TEXT NOT NULL,
+                 timestamp    TEXT NOT NULL,
+                 summary      TEXT NOT NULL,
+                 raw_content  TEXT NOT NULL,
+                 metadata     TEXT NOT NULL DEFAULT '{}',
+                 priority     INTEGER NOT NULL DEFAULT 5,
+                 status       TEXT NOT NULL DEFAULT 'pending',
+                 attempts     INTEGER NOT NULL DEFAULT 0,
+                 error        TEXT,
+                 created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                 processed_at TEXT,
+                 CHECK (status IN ('pending','processing','done','failed','skipped'))
+             )"""),
+            # v24: AUTO-PIPELINE — signal_queue priority index
+            ("signal_queue priority index",
+             "CREATE INDEX IF NOT EXISTS idx_signal_queue_status_priority"
+             " ON signal_queue (status, priority, created_at)"),
+            # v25: AUTO-PIPELINE — signal_queue dedup unique index (partial, pending only)
+            ("signal_queue dedup index",
+             "CREATE UNIQUE INDEX IF NOT EXISTS idx_signal_dedup"
+             " ON signal_queue (kind, workdir, summary)"
+             " WHERE status = 'pending'"),
+            # v26: AUTO-PIPELINE Phase 1 — pipeline_metrics table (Layer 5 feedback)
+            ("pipeline_metrics table",
+             """CREATE TABLE IF NOT EXISTS pipeline_metrics (
+                 node_id       TEXT NOT NULL,
+                 signal_id     TEXT NOT NULL,
+                 action        TEXT NOT NULL,
+                 llm_model     TEXT NOT NULL DEFAULT '',
+                 created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                 was_useful    INTEGER,
+                 feedback_at   TEXT,
+                 feedback_note TEXT,
+                 PRIMARY KEY (node_id, signal_id)
+             )"""),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):

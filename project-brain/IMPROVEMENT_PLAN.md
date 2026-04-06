@@ -52,6 +52,7 @@
 | **P3** | REFACTOR-01 | CLI 命令臃腫（37 個），與 MCP tools 定位錯亂，需精簡 | ✅ v0.27.0 |
 | **P2** | TEST-04 | WebUI 測試覆蓋率 < 12%（scope 欄位 migration 不同步） | ⏸ 擱置 |
 | **P2** | FEAT-08 | WebUI 節點行內編輯 | ⏸ 擱置 |
+| **P3** | FEAT-09 | LLM 配置集中化：config 檔 + 統一自動降級，取代分散 env var | ✅ v0.30.0 |
 | **P2** | REV-01 | 量化對照實驗 Layer 2/3（需線上數據） | △ 進行中 |
 | **P2** | REV-02 | 衰減效用對比測試（需 90 天數據） | △ 進行中 |
 
@@ -685,6 +686,161 @@ ADVANCED_CMDS = {
 | `report --analytics` | `brain report --analytics` 顯示使用率分析（等同舊 analytics） |
 | Help 分層 | `brain --help` 只顯示 Primary 14 個命令；`brain --help --advanced` 顯示全部 |
 | 測試 | 移除命令的原有測試遷移至新命令，整體測試數不減少 |
+
+---
+
+### FEAT-09 — `brain.toml` 統一配置檔 + 自動降級
+
+**背景**：
+目前所有配置透過 env var 分散在 6+ 個模組，兩套命名（`BRAIN_LLM_*` vs `BRAIN_OLLAMA_*`）並存，fallback 邏輯各自實作，無法依任務類型指定不同模型。使用者無法一眼看到所有可調參數。
+
+**問題清單**：
+- `BRAIN_LLM_*` 與 `BRAIN_OLLAMA_*` 並存，行為不一致
+- fallback 邏輯重複散落於 `nudge_engine.py`、`cli_utils.py`、`memory_synthesizer.py`、`conflict_resolver.py` 等
+- 無法依任務類型分配模型（Phase 1 → 27B MoE，Phase 3 → 31B Dense）
+- 預設模型硬編碼分散各處：`haiku`、`llama3.1:8b`、`qwen2.5:7b`、`llama3.2:3b`
+- `brain init --local-only` 生成的 `.brain/.env` 與未來 `brain.toml` 功能重疊
+
+---
+
+**配置檔設計（`.brain/brain.toml`）**：
+
+```toml
+# .brain/brain.toml
+# Project Brain 配置檔 — 版本 v0.1（對應 Project Brain v0.30+）
+# 不存在此檔案時，所有設定使用程式碼預設值，行為與舊版相同。
+
+# ── 核心設定 ──────────────────────────────────────────────────
+[brain]
+max_context_tokens  = 6000       # context 最大 token 預算
+freshness_warn_days = 30         # 超過幾天的知識顯示過時警告
+dedup_threshold     = 0.85       # 語意去重 cosine 閾值
+# workdir 不在此設定（per-invocation 動態偵測，固定設定反而造成多專案混淆）
+
+# ── 自動知識生產管線 ───────────────────────────────────────────
+[pipeline]
+enabled                 = true
+worker_interval_seconds = 60     # worker 輪詢間隔
+max_queue_size          = 500    # 佇列上限，超過丟棄低優先信號
+max_auto_confidence     = 0.85   # 自動提取的信心上限
+
+[pipeline.gates]
+test_failure_count = 3           # TEST_FAILURE 信號累積幾次才觸發分析（Phase 2）
+
+# ── 信號開關（true = 啟用，false = 靜默丟棄）────────────────────
+[pipeline.signals]
+git_commit    = true             # Phase 1
+task_complete = true             # Phase 1
+test_failure  = false            # Phase 2，切 true 即啟用
+mcp_tool_call = false            # Phase 2
+knowledge_gap = false            # Phase 3+
+
+# ── 信號保留時間 ───────────────────────────────────────────────
+[pipeline.retention]
+signal_queue_done_days  = 30     # 已處理的信號保留天數（除錯用）
+signal_log_days         = 0      # 0 = 永久保留（審計用）
+pipeline_metrics_days   = 90     # 品質指標保留天數
+
+# ── LLM 主設定（預設模型 + fallback chain）────────────────────
+[pipeline.llm]
+provider     = "ollama"          # ollama | anthropic | openai
+model        = "gemma4:27b"      # Phase 1 主力（27B MoE，推理快）
+base_url     = "http://localhost:11434"
+timeout      = 30
+max_retries  = 3
+
+[pipeline.llm.fallback]          # Ollama 不可用時自動切換
+provider     = "anthropic"
+model        = "claude-haiku-4-5-20251001"
+# api_key 從環境變數讀取：ANTHROPIC_API_KEY
+
+# ── 各任務的模型覆蓋（只寫與預設不同的任務）──────────────────
+# key 名稱對齊 SignalKind（git_commit、task_complete 等）
+[pipeline.models]
+# Phase 3+（覆蓋預設 27B MoE，使用更強的 Dense 模型）
+merge       = { model = "gemma4:31b", fallback = "gemma4:27b" }  # 先降 27B 再降 haiku
+contradict  = { model = "gemma4:31b", fallback = "gemma4:27b" }
+synthesis   = { model = "gemma4:31b", fallback = "gemma4:27b" }
+# Phase 1 任務不需要列出（使用 [pipeline.llm] 預設值）
+
+# ── Embedder ─────────────────────────────────────────────────
+[embedder]
+provider = "ollama"              # ollama | openai | local（TF-IDF）
+model    = "nomic-embed-text"
+url      = "http://localhost:11434"
+fallback = "local"               # Ollama 不可用 → TF-IDF（零依賴）
+
+# ── 衰減引擎 ──────────────────────────────────────────────────
+[decay]
+enabled             = true
+run_interval_hours  = 24
+
+# 六因子權重（加總應為 1.0，載入時驗證）
+weight_time         = 0.25       # F1 時間衰減
+weight_version_gap  = 0.20       # F2 技術版本差距
+weight_git_activity = 0.15       # F3 git 活動反衰減
+weight_contradiction= 0.15       # F4 矛盾懲罰
+weight_code_ref     = 0.15       # F5 程式碼引用確認
+weight_query_freq   = 0.10       # F6 查詢頻率反衰減
+
+# ── Federation ────────────────────────────────────────────────
+[federation]
+enabled               = false
+min_export_confidence = 0.6
+max_export_nodes      = 500
+
+# ── MCP Server ────────────────────────────────────────────────
+[mcp]
+port           = 7891
+rate_limit_rpm = 60
+
+# ── 可觀測性 ──────────────────────────────────────────────────
+[observability]
+log_level           = "INFO"     # DEBUG | INFO | WARNING
+log_context_builds  = true       # 記錄每次 context 組裝的 token 數與節點數
+daily_token_limit   = 0          # 0 = 無限制；正數 = 達到後暫停管線
+```
+
+---
+
+**優先順序**（三層，向下相容）：
+```
+env var  >  .brain/brain.toml（專案）  >  ~/.config/brain/brain.toml（全域）  >  code default
+```
+- 現有 env var 使用者不需要任何改動
+- 全域 config 適合放 Ollama URL 等所有專案共用的設定，避免每個專案重複寫
+
+---
+
+**`brain init` 行為**：
+- `brain init` 與 `brain setup` 本質相同（建 DB、git hook、CLAUDE.md、legacy migration），合併為單一指令
+- `brain setup` 保留為 `brain init` 的別名（alias），避免 breaking 現有使用者習慣，日後文件統一導向 `brain init`
+- `brain init` 同時生成 `.brain/brain.toml`（含完整預設值與中文說明）
+- `brain init --local-only`：生成預填 Ollama 設定的 `brain.toml`，取代現有的 `.brain/.env`
+- `brain config init`：單獨重新生成 `brain.toml`（不重建 DB），已存在時提示確認覆蓋
+- 不存在 `brain.toml` 時，行為與舊版完全相同（code default），不 breaking
+
+---
+
+**實作要點**：
+- 新增 `project_brain/brain_config.py`：讀取 toml（Python 3.11+ `tomllib`，舊版用 `tomli`）
+- 提供 `get_config() -> BrainConfig`（singleton，啟動時載入一次）與 `get_llm_client(task: str) -> LLMClient`
+- fallback chain 集中在 `LLMClientFactory`：偵測 Ollama（`/api/tags` timeout=2s），失敗則走 fallback
+- 載入時驗證：decay 六因子加總 ≠ 1.0 → warning；port 超出範圍 → error
+- 各模組逐步遷移：`os.environ.get("BRAIN_LLM_PROVIDER", ...)` → `get_config().pipeline.llm`
+- `brain init` 在建立 `.brain/` 後同步寫入 `brain.toml` 模板
+
+---
+
+**驗收條件**：
+- `brain init` 後 `.brain/brain.toml` 存在，所有欄位有預設值與中文說明
+- `get_llm_client("git_commit")` 回傳 Gemma4 27B；Ollama 停止後自動回傳 Haiku
+- `get_llm_client("synthesis")` 先嘗試 31B，31B 不存在降 27B，Ollama 全掛降 Haiku
+- env var `BRAIN_LLM_MODEL=llama3.2:3b` 可覆蓋 toml 設定
+- `brain init --local-only` 不再生成 `.brain/.env`，改生成預填 Ollama 的 `brain.toml`
+- 全專案無重複的 `os.environ.get("BRAIN_LLM_PROVIDER", ...)` fallback 邏輯
+
+**依賴**：獨立開發，與 Phase 1 Step 3 並行或優先完成皆可。建議在 PipelineWorker 實作前完成，讓 Worker 直接使用 `get_llm_client()`。
 
 ---
 

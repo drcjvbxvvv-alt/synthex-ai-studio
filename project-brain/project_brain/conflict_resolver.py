@@ -135,23 +135,46 @@ class ConflictResolver:
         if client is not None:
             return client, model or DEFAULT_MODEL
 
-        # 優先 Anthropic（若有 API key）
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if key:
-            try:
-                import anthropic
-                return anthropic.Anthropic(api_key=key), DEFAULT_MODEL
-            except ImportError:
-                pass
-
-        # 回退 Ollama
-        ollama_url = os.environ.get("BRAIN_OLLAMA_URL", DEFAULT_OLLAMA_URL)
-        ollama_model = os.environ.get("BRAIN_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
         try:
-            urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=2)
-            return OllamaClient(ollama_url), ollama_model
+            from project_brain.brain_config import load_config, _find_brain_dir, _is_ollama_available
+            cfg      = load_config(_find_brain_dir())
+            provider = cfg.pipeline.llm.provider
+            llm_model = model or cfg.pipeline.llm.model
+            base_url  = cfg.pipeline.llm.base_url
+
+            if provider in ("ollama", "openai"):
+                if _is_ollama_available(base_url, timeout=2):
+                    return OllamaClient(base_url.replace("/v1", "")), llm_model
+            else:
+                key = os.environ.get("ANTHROPIC_API_KEY", "")
+                if key:
+                    import anthropic
+                    return anthropic.Anthropic(api_key=key), llm_model
+
+            # fallback chain
+            fb = cfg.pipeline.llm.fallback
+            if fb.provider == "anthropic":
+                key = os.environ.get("ANTHROPIC_API_KEY", "")
+                if key:
+                    import anthropic
+                    return anthropic.Anthropic(api_key=key), fb.model
         except Exception as _e:
-            logger.debug("Ollama availability check failed", exc_info=True)
+            logger.debug("brain_config resolve failed, using env var fallback", exc_info=True)
+            # legacy env var fallback
+            key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if key:
+                try:
+                    import anthropic
+                    return anthropic.Anthropic(api_key=key), DEFAULT_MODEL
+                except ImportError:
+                    pass
+            ollama_url   = os.environ.get("BRAIN_OLLAMA_URL", DEFAULT_OLLAMA_URL)
+            ollama_model = os.environ.get("BRAIN_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+            try:
+                urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=2)
+                return OllamaClient(ollama_url), ollama_model
+            except Exception:
+                pass
 
         return None, None
 

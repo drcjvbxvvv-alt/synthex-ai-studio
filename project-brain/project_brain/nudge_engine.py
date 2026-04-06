@@ -428,28 +428,30 @@ class NudgeEngine:
         return verdict, new_conf, reason
 
     def _call_llm(self, prompt: str) -> str:
-        """Call LLM. Tries Anthropic first (BRAIN_LLM_PROVIDER), then Ollama."""
-        import os, urllib.request, json as _j
-        provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
-        if provider in ("openai", "ollama") or os.environ.get("BRAIN_LLM_BASE_URL"):
-            base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
-            model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.2:3b")
+        """Call LLM via brain_config（優先 Ollama，fallback Haiku）。"""
+        from project_brain.brain_config import load_config, _find_brain_dir
+        cfg      = load_config(_find_brain_dir())
+        llm      = cfg.pipeline.llm
+        provider = llm.provider
+
+        if provider in ("openai", "ollama"):
             from openai import OpenAI
-            client   = OpenAI(base_url=base_url, api_key="ollama")
+            base_url = llm.base_url
+            url      = base_url if "/v1" in base_url else base_url.rstrip("/") + "/v1"
+            client   = OpenAI(base_url=url, api_key="ollama")
             resp     = client.chat.completions.create(
-                model=model, max_tokens=200,
+                model=llm.model, max_tokens=200,
                 messages=[{"role": "user", "content": prompt}]
             )
             return resp.choices[0].message.content.strip()
         else:
-            import anthropic
+            import anthropic, os
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
             if not api_key:
                 raise ValueError("ANTHROPIC_API_KEY not set")
-            model  = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
             client = anthropic.Anthropic(api_key=api_key)
             msg    = client.messages.create(
-                model=model, max_tokens=200,
+                model=llm.model, max_tokens=200,
                 messages=[{"role": "user", "content": prompt}]
             )
             return msg.content[0].text.strip()

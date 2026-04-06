@@ -45,8 +45,8 @@ class TestCmdInitIntegration:
         args = _args(workdir=str(tmp_path), name="test-project", local_only=False)
         cmd_init(args)
 
-        db_file = tmp_path / ".brain" / "knowledge_graph.db"
-        assert db_file.exists(), "knowledge_graph.db 未建立"
+        db_file = tmp_path / ".brain" / "brain.db"
+        assert db_file.exists(), "brain.db 未建立"
 
     def test_idempotent_reinit(self, tmp_path, capsys):
         from project_brain.cli import cmd_init

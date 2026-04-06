@@ -15,54 +15,36 @@ from project_brain.constants import DEFAULT_SEARCH_LIMIT
 
 
 def cmd_init(args):
-    """初始化 Project Brain（建立 .brain/ 目錄 + 知識圖譜）"""
+    """初始化 Project Brain（建立 .brain/ + brain.toml + git hook + CLAUDE.md）"""
     wd         = _workdir(args)
-    name       = getattr(args, 'name', '') or Path(wd).name
     local_only = getattr(args, 'local_only', False)
 
-    if local_only:
-        import os
-        bd = Path(wd) / ".brain"
-        bd.mkdir(exist_ok=True)
-        env_path = bd / ".env"
-        local_env = (
-            "# Project Brain 本地模式（brain init --local-only）\n"
-            "# 所有資料不離開本機\n"
-            "BRAIN_LLM_PROVIDER=openai\n"
-            "BRAIN_LLM_BASE_URL=http://localhost:11434/v1\n"
-            "BRAIN_LLM_MODEL=llama3.1:8b\n"
-            "BRAIN_LOCAL_ONLY=1\n"
-            "# L2 時序記憶使用本地 SQLite（不需要 FalkorDB）\n"
-            "GRAPHITI_DISABLED=1\n"
-        )
-        env_path.write_text(local_env)
-        _ok(f"本地模式啟用：設定已寫入 {env_path}")
-        _info("LLM：Ollama（需要先執行 ollama serve && ollama pull llama3.1:8b）")
-        _info("L2：使用 SQLite 替代 FalkorDB（無需 Docker）")
-        _info("所有資料完全離線，不呼叫任何外部 API")
-        print()
-        os.environ.setdefault("BRAIN_LLM_PROVIDER", "openai")
-        os.environ.setdefault("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
-        os.environ.setdefault("GRAPHITI_DISABLED", "1")
+    # 完整初始化（DB + git hook + CLAUDE.md + MCP）
+    from project_brain.setup_wizard import run_setup
+    run_setup(workdir=wd)
 
-    b = _brain(wd)
-    print(b.init(project_name=name))
-
+    # brain.toml 生成（setup_wizard 完成後補上）
+    bd = Path(wd) / ".brain"
     try:
-        from project_brain.brain_db import BrainDB
-        _bd = Path(wd) / '.brain'
-        _db = BrainDB(_bd)
-        _db.conn.execute(
-            "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('project_name',?)",
-            (name,)
-        )
-        _db.conn.commit()
+        from project_brain.brain_config import generate_brain_toml
+        toml_path = bd / "brain.toml"
+        if toml_path.exists():
+            _info(f"brain.toml 已存在，略過（使用 'brain config init' 重新生成）")
+        else:
+            generate_brain_toml(bd, local_only=local_only)
+            if local_only:
+                _ok(f"brain.toml 已生成（Ollama 本地模式）")
+                _info("LLM：gemma4:27b on Ollama（需要先執行 ollama serve && ollama pull gemma4:27b）")
+                _info("所有資料完全離線，不呼叫任何外部 API")
+            else:
+                _ok(f"brain.toml 已生成（可編輯 {toml_path} 調整設定）")
     except Exception as _e:
-        logger.debug("project_name brain_meta write failed", exc_info=True)
+        logger.debug("brain.toml generation failed", exc_info=True)
 
+    # synonyms.json（自訂同義詞設定檔）
     try:
         import json as _j
-        _syn_path = Path(wd) / '.brain' / 'synonyms.json'
+        _syn_path = bd / 'synonyms.json'
         if not _syn_path.exists():
             _default_synonyms = {
                 "_comment": "PH2-05: 自訂同義詞設定檔。新增你的業務術語，會與內建同義詞合併。格式：{ '術語': ['同義詞1','同義詞2'] }",
@@ -71,6 +53,11 @@ def cmd_init(args):
             _syn_path.write_text(_j.dumps(_default_synonyms, ensure_ascii=False, indent=2), encoding='utf-8')
     except Exception as _e:
         logger.debug("synonyms.json creation failed", exc_info=True)
+
+
+def cmd_setup(args):
+    """brain setup 是 brain init 的別名（向後相容）"""
+    cmd_init(args)
 
 
 def cmd_status(args):
@@ -130,10 +117,37 @@ def cmd_config(args):
     wd = args.workdir or os.environ.get("BRAIN_WORKDIR") or os.getcwd()
     brain_dir = Path(wd) / ".brain"
 
+    # brain config init：重新生成 brain.toml
+    subcmd = getattr(args, 'config_subcmd', None)
+    if subcmd == 'init':
+        from project_brain.brain_config import generate_brain_toml
+        toml_path = brain_dir / "brain.toml"
+        if toml_path.exists():
+            answer = input(f"  brain.toml 已存在，確認覆蓋？ [y/N] ").strip().lower()
+            if answer != 'y':
+                _info("已取消。")
+                return
+        generate_brain_toml(brain_dir)
+        _ok(f"brain.toml 已重新生成：{toml_path}")
+        return
+
     print(f"\n{B}⚙  Project Brain — 設定來源一覽{R}\n")
 
+    # brain.toml（新）
+    toml_path = brain_dir / "brain.toml"
+    print(f"  {C}0. .brain/brain.toml{R}", f"{'✓' if toml_path.exists() else '（未設定，使用預設值）  brain config init 可生成'}")
+    if toml_path.exists():
+        try:
+            from project_brain.brain_config import load_config
+            cfg = load_config(brain_dir)
+            print(f"     LLM：{cfg.pipeline.llm.provider} / {cfg.pipeline.llm.model}")
+            print(f"     pipeline.enabled：{cfg.pipeline.enabled}")
+            print(f"     decay.enabled：{cfg.decay.enabled}")
+        except Exception as e:
+            print(f"     {RE}讀取失敗：{e}{R}")
+
     cfg_path = brain_dir / "config.json"
-    print(f"  {C}1. .brain/config.json{R}", f"{'✓' if cfg_path.exists() else '✗ 不存在'}")
+    print(f"\n  {C}1. .brain/config.json{R}", f"{'✓' if cfg_path.exists() else '✗ 不存在'}")
     if cfg_path.exists():
         try:
             cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
@@ -306,10 +320,18 @@ def cmd_scan(args):
         _info("接著執行：brain embed  →  建立向量索引")
         return
 
-    provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic")
-    has_key  = bool(os.environ.get("ANTHROPIC_API_KEY") or
-                    os.environ.get("OPENAI_API_KEY") or
-                    provider == "openai")
+    try:
+        from project_brain.brain_config import load_config, _find_brain_dir
+        _cfg     = load_config(_find_brain_dir())
+        provider = _cfg.pipeline.llm.provider
+        model_name = _cfg.pipeline.llm.model
+    except Exception:
+        provider   = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic")
+        model_name = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
+
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or
+                   os.environ.get("OPENAI_API_KEY") or
+                   provider in ("openai", "ollama"))
     if not has_key:
         _err("找不到 API key，無法使用 LLM 模式")
         print(f"""
@@ -318,11 +340,9 @@ def cmd_scan(args):
   {G}1. 本機掃描（免費，無需 API）{R}
      brain scan --local
 
-  {G}2. 本地 Ollama{R}
-     ollama pull qwen2.5:7b
-     export BRAIN_LLM_PROVIDER=openai
-     export BRAIN_LLM_BASE_URL=http://localhost:11434/v1
-     export BRAIN_LLM_MODEL=qwen2.5:7b
+  {G}2. 本地 Ollama（免費）{R}
+     ollama pull gemma4:27b
+     在 brain.toml 設定 provider="ollama", model="gemma4:27b"
      brain scan --llm
 
   {G}3. Claude Haiku（約 $0.05 / 100 commits）{R}
@@ -330,8 +350,6 @@ def cmd_scan(args):
      brain scan --llm
 """)
         return
-
-    model_name = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
     scope_msg  = "全部 commit" if scan_all else "最近 100 個 commit"
     _scan_banner("llm", provider=provider, model=model_name, scope=scope_msg)
 
@@ -1202,11 +1220,18 @@ def cmd_doctor(args):
     else:
         _warn2("brain 指令不在 PATH 中", "執行：pip install -e . 或確認 PATH 設定")
 
-    provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
-    api_key  = os.environ.get("ANTHROPIC_API_KEY", "")
-    if provider == "openai":
+    try:
+        from project_brain.brain_config import load_config
+        _cfg     = load_config(bd if bd.exists() else None)
+        provider = _cfg.pipeline.llm.provider
+        model    = _cfg.pipeline.llm.model
+        base_url = _cfg.pipeline.llm.base_url
+    except Exception:
+        provider = os.environ.get("BRAIN_LLM_PROVIDER", "anthropic").lower()
+        model    = os.environ.get("BRAIN_LLM_MODEL", "claude-haiku-4-5-20251001")
         base_url = os.environ.get("BRAIN_LLM_BASE_URL", "http://localhost:11434/v1")
-        model    = os.environ.get("BRAIN_LLM_MODEL", "llama3.1:8b")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if provider in ("ollama", "openai"):
         _ok2(f"本地 LLM 模式  {D}({model} @ {base_url}){R}")
     elif api_key:
         masked = api_key[:8] + "..." + api_key[-4:]
@@ -1214,7 +1239,7 @@ def cmd_doctor(args):
     else:
         _warn2("ANTHROPIC_API_KEY 未設定，AI 提取功能不可用",
                "設定後可使用 brain scan / brain sync 自動提取知識\n"
-               "     或改用本地 LLM：export BRAIN_LLM_PROVIDER=openai")
+               "     或改用本地 LLM：在 brain.toml 設定 provider='ollama'")
 
     env_wd = os.environ.get("BRAIN_WORKDIR", "")
     bd_found = Path(wd, ".brain").exists()

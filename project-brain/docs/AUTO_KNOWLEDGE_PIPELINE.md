@@ -1,6 +1,6 @@
 # 自動知識生產管線 — 設計文件
 
-**文件版本**：v0.2
+**文件版本**：v0.3.4
 **建立日期**：2026-04-06
 **更新日期**：2026-04-06
 **狀態**：Phase 1 可實作
@@ -1035,15 +1035,15 @@ def _validate(self, raw: dict) -> KnowledgeDecision:
 ### 13.1 整合點一覽
 
 ```
-現有元件                    整合方式
-────────────────────────────────────────────────────────────
-mcp_server.create_server()  啟動 PipelineWorker daemon
-mcp_server._observe()       新增，每次工具呼叫後發信號
-decay daemon (FEAT-01)      每日額外執行 SynthesisEngine
-extractor.py                改為同時寫入 SignalQueue（不只 brain.add_knowledge）
-brain.db (brain.db)         新增 signal_queue + pipeline_metrics 表
-NudgeEngine                 接收 CONTRADICT 信號產生 question
-report_knowledge_outcome    同時更新 pipeline_metrics
+現有元件                    整合方式                              階段
+──────────────────────────────────────────────────────────────────────
+mcp_server.create_server()  啟動 PipelineWorker daemon           Phase 1
+mcp_server._observe()       新增，每次工具呼叫後發信號             Phase 1
+extractor.py                改為同時寫入 SignalQueue             Phase 1
+brain.db                    新增 signal_queue + pipeline_metrics Phase 1
+report_knowledge_outcome    同時更新 pipeline_metrics            Phase 1
+NudgeEngine                 接收 CONTRADICT 信號產生 question     Phase 3+
+decay daemon (FEAT-01)      未來可觸發 SynthesisEngine           Phase 4+
 ```
 
 ### 13.2 新增 MCP 工具
@@ -1270,10 +1270,14 @@ SQLite 寫入競爭         輕微（signal_queue 寫入 < 1ms）
 
 以下問題在評估後已有定論：
 
-1. **LLM 模型選擇** ✓
-   - **決定**：ADD/SKIP 使用本地 Gemma 4（Ollama），費用為零
-   - MERGE/SYNTHESIZE 延至 Phase 3+ 再決定模型，目前不需要選
-   - 雲端備援：若本地模型不可用，降級至 Haiku（低成本）
+1. **LLM 模型選擇** ✓  <!-- v0.3.4 -->
+   - **Phase 1**：ADD/SKIP 判斷使用 **Gemma 4 27B MoE（Ollama 本地）**，費用為零
+     - 27B MoE 參數量足以完成簡單的 add/skip 二元判斷，推理速度快
+     - 不需要 Haiku 作為過渡；Step 1~2 單元測試已驗證架構正確性，Step 3~4 直接接 Gemma4
+   - **Phase 3+**：MERGE / SYNTHESIZE / 複雜多節點推理任務保留給 **Gemma 4 31B Dense**
+     - Dense 架構在複雜推理任務上優於 MoE；Phase 3 才需要，目前不實作
+   - **雲端備援**：若本地 Ollama 不可用，降級至 Haiku（低成本），非常態
+   - **結論**：整個 Phase 1 端對端費用為零
 
 2. **信號保留時間** ✓
    - **決定**：`signal_queue` 已處理記錄保留 **30 天**（除錯用途），之後清理
@@ -1295,7 +1299,67 @@ SQLite 寫入競爭         輕微（signal_queue 寫入 < 1ms）
    - 回溯時必須加速率限制（每分鐘最多 N 次 LLM 呼叫），避免一次打爆 2 年 history
    - 建議從 `--since 7d` 開始試跑，驗證品質後再擴大範圍
 
+6. **本地模型 JSON 穩定性與驗收策略** ✓  <!-- v0.3.1 -->
+   - **決定**：不在動工前做一次性驗收測試；防禦層（`_validate()` fallback to SKIP + confidence 硬截斷）是必然要加的，與模型穩定性無關
+   - Ollama `format: "json"` 只保證合法 JSON，不保證符合 schema；常見失敗模式：多了包裝層、欄位名稱大小寫錯誤、confidence 超出範圍
+   - **Phase 1 實作順序**：先用 Haiku 打通完整閉環（架構問題與模型問題分開調試），驗收後再換 Gemma 4 本地模型
+   - 換模型後觀察 `_validate()` fallback 率：
+     - < 5%：正常上線
+     - 5~15%：加重試邏輯（最多 2 次）
+     - > 15%：改用 Ollama structured output API + schema 約束
+
+7. **Phase 1 費用** ✓  <!-- v0.3.4 更新 -->
+   - 步驟 1~2（signal_queue、mock Executor）：無 LLM，**零費用**
+   - 步驟 3~4（PipelineWorker + 端對端驗收）：**Gemma 4 27B MoE on Ollama，零費用**
+     - 原計畫用 Haiku 過渡，已取消；架構正確性由步驟 1~2 單元測試保證，不需要 Haiku 作為偵錯基準
+   - **結論：Phase 1 全程費用為零，不需要 Anthropic API key**
+   - Haiku 保留為 Ollama 不可用時的緊急備援，不是常態路徑
+
 ---
+
+## 附錄 B — Phase 1 Step 1 實作記錄（signal_queue + SignalQueue）
+
+**實作日期**：2026-04-06
+**版本**：v0.29.0 → v0.30.0（下次提交）
+**檔案**：
+- `project_brain/pipeline.py` — `Signal` / `SignalKind` / `SignalQueue`
+- `project_brain/brain_db.py` — migration v23~v26
+- `tests/unit/test_pipeline_signal.py` — 24 個單元測試
+
+### 實驗結果
+
+```
+測試結果：24 passed in 0.52s（100%）
+
+覆蓋場景：
+  T-01  基本入隊 / 出隊                          ✅
+  T-02  去重：同 (kind, workdir, summary) 只保留一個 ✅
+  T-03  背壓：佇列滿時低優先丟棄、高優先通過          ✅
+  T-04  mark_done                                ✅
+  T-05  mark_failed 重試（未達上限回 pending）     ✅
+  T-06  mark_skipped                             ✅
+  T-07  cleanup_stale（超期 pending → skipped）  ✅
+  T-08  stats() 計數正確                         ✅
+  T-09  dequeue_batch CAS（不重複取）             ✅
+  T-10  Signal 序列化往返（含截斷驗證）            ✅
+  T-11  BrainDB migration v23~v26 表與索引建立    ✅
+```
+
+### 設計決策（實作過程確認）
+
+- **去重索引用 partial unique index**（`WHERE status='pending'`）：完成的信號不佔用去重名額，同一 commit 在下次開發可重新分析。經測試 T-02 驗證正確。
+- **mark_failed 重試機制**：達 `MAX_ATTEMPTS=3` 才真正 failed，中間回到 pending 等下次 worker 輪詢。這讓暫時性 API 超時自動恢復，無需人工介入。
+- **summary 截斷 500 chars**：去重索引鍵長度有限，超長 summary 會 hash 衝突；截斷保持行為可預期。
+- **raw_content 截斷 10000 chars**：大型 diff 不必完整存入 SQLite，LLM prompt 自己會截斷，雙重截斷無害。
+
+### 觀察到的邊界情況
+
+- `dequeue_batch()` 的 CAS 更新（`WHERE status='pending'`）在並發測試中行為正確，SQLite WAL 模式 + write lock 的組合足夠。
+- partial unique index 在 SQLite 中無法跨越 `done/failed/skipped` 狀態，`done` 後再次入隊同摘要訊號可正常接受（T-02 最後一個測試確認）。
+
+### 下一步（Phase 1 Step 2）
+
+`KnowledgeExecutor`（ADD/SKIP，先用 mock KnowledgeDecision 測試），不涉及 LLM。
 
 ---
 
@@ -1332,4 +1396,202 @@ class SynthesisEngine:
 
 ---
 
-*文件版本 v0.2 — Phase 1 可實作*
+---
+
+## 附錄 C — Phase 1 Step 2 實作記錄（KnowledgeExecutor ADD/SKIP）
+
+**實作日期**：2026-04-06
+**版本**：v0.3.3
+**檔案**：
+- `project_brain/pipeline.py` — `NodeSpec` / `KnowledgeDecision` / `ExecutionResult` / `KnowledgeExecutor`
+- `tests/unit/test_pipeline_executor.py` — 18 個單元測試
+
+### 實驗結果
+
+```
+測試結果：18 passed in 0.63s（100%）
+
+覆蓋場景：
+  E-01  ADD 在 BrainDB 建立節點，欄位正確（title / type / confidence）  ✅
+  E-02  ADD 在 meta 中標記 source='auto_pipeline' + signal_id          ✅
+  E-03  ADD 寫入 pipeline_metrics（action='add'）                      ✅
+  E-04  SKIP 不建立任何節點                                             ✅
+  E-05  SKIP 寫入 pipeline_metrics（action='skip'，node_id=''）        ✅
+  E-06  冪等：同 signal_id 重複執行 → 第二次 skipped=True，不建重複節點  ✅
+  E-07  不支援的 action（'merge'）降級為 SKIP                           ✅
+  E-08  ADD 缺少 node spec → ok=False，error 含 'missing'              ✅
+  E-09  signal=None 時 ADD 仍可正常執行                                 ✅
+  E-10  validate: confidence 上限截斷為 0.85（輸入 0.99）               ✅
+  E-11  validate: 空 title / 缺少 node dict 降級為 SKIP                ✅
+  E-12  validate: 未知 action 降級為 SKIP                               ✅
+  E-13  validate: 完全無效 dict 安全降級，不拋例外                       ✅
+  E-14  node.kind 不在允許列表時 → 存入 DB 為 'Note'                    ✅
+  E-15  ADD 節點可被 BrainDB.search_nodes 搜尋到                        ✅
+  （加）validate 完整 roundtrip（llm_model / tags / description 保留）   ✅
+  （加）E-11 缺少 node dict 降級（獨立測試）                             ✅
+  （加）額外 E-11 variant（空 title 與缺 node 分開）                     ✅
+```
+
+> 實際收集測試數為 18（比驗收標準 15 多 3 個 validate variant），全部通過。
+
+### 設計決策（實作過程確認）
+
+- **冪等 guard 使用 `pipeline_metrics` 查詢**：`SELECT 1 FROM pipeline_metrics WHERE signal_id=? AND action='add'`，首次 ADD 成功後寫入，第二次執行前查到已有記錄，直接回傳 `skipped=True` 並附原 `node_id`。不需額外欄位或鎖。
+- **`_VALID_KINDS` frozenset**：`{"Rule","Decision","Note","Pitfall","Context","Reference"}`，任何非法 kind 靜默降為 `"Note"`，避免 BrainDB 的 CHECK constraint 失敗。
+- **`MAX_AUTO_CONFIDENCE = 0.85`**：防止 LLM 輸出 1.0 的信心值把 auto-generated 節點評級與人工節點混同，保留人工修訂空間。
+- **`_record_metric` 使用 `INSERT OR IGNORE`**：pipeline_metrics 寫入失敗不影響主流程，只記錄 warning，符合 "non-fatal side effect" 原則。
+- **`validate()` classmethod 不拋例外**：任何輸入（`None`、`int`、空 dict）皆安全降級為 SKIP，讓呼叫方不需要 try/except。
+
+### 觀察到的邊界情況
+
+- `BrainDB.add_node()` 接受 `meta: dict` 參數，`source` 和 `signal_id` 可直接放入 meta dict 傳入，無需額外欄位。
+- `search_nodes("PKCE")` 可正確找到 title 或 content 含關鍵字的節點（E-15），說明 BrainDB 的全文搜尋對 auto-generated 節點無差異。
+- signal=None 時（E-09），`_do_add` 只需跳過 `signal.id` 相關欄位即可，`pipeline_metrics.signal_id` 寫入空字串 `""`。
+
+### 下一步（Phase 1 Step 3）
+
+`PipelineWorker` — 基本 polling loop，接入 Haiku（現有 API key）作為 LLM 判斷層，完成完整 signal → decision → execution 閉環。
+
+---
+
+*文件版本 v0.3.3 — Phase 1 Step 2 完成（KnowledgeExecutor，18 tests passed）*
+
+---
+
+## 附錄 D — Phase 1 Step 3 測試規劃（PipelineWorker，待實作）
+
+**狀態**：規劃中，暫緩實作（涉及付費 LLM API）
+**接入模型**：**Gemma 4 27B MoE on Ollama**（Phase 1 主力，零費用）；Haiku 僅作 Ollama 不可用時的緊急備援
+
+---
+
+### 設計概要
+
+`PipelineWorker` 是 Phase 1 完整閉環的最後一塊：
+
+```
+[SignalQueue] → dequeue_batch()
+    → [LLM Judge] prompt → KnowledgeDecision JSON
+    → KnowledgeExecutor.validate(raw) → KnowledgeDecision
+    → KnowledgeExecutor.run(decision, signal)
+    → mark_done / mark_failed
+```
+
+主要職責：
+1. 定期輪詢 `SignalQueue.dequeue_batch()`
+2. 組裝 prompt，呼叫 LLM，解析 JSON 回應
+3. 呼叫 `KnowledgeExecutor.validate()` 清洗 LLM 輸出
+4. 呼叫 `KnowledgeExecutor.run()` 執行決策
+5. 根據結果呼叫 `mark_done` / `mark_failed`（自動重試由 SignalQueue 處理）
+
+---
+
+### 驗收標準（W-01 ~ W-08）
+
+| ID   | 描述                                                                 | 測試方式         |
+|------|----------------------------------------------------------------------|-----------------|
+| W-01 | `run_once()` 從佇列取出 signal，呼叫 LLM，回傳 `WorkerResult`          | mock LLM        |
+| W-02 | LLM 回傳合法 JSON → `validate()` → `run()` → `mark_done`            | mock LLM        |
+| W-03 | LLM 回傳非法 JSON → `validate()` 降級為 skip → `mark_done`           | mock LLM        |
+| W-04 | LLM 拋出例外 → `mark_failed`，signal 回到 pending                    | mock LLM raises |
+| W-05 | 達 `MAX_ATTEMPTS` → signal 狀態為 `failed`，不再重試                  | mock LLM        |
+| W-06 | `run_once()` 在佇列空時立即回傳 `WorkerResult(processed=0)`           | 直接測試        |
+| W-07 | prompt 包含 signal 的 `summary` 與 `raw_content`                     | mock + assert   |
+| W-08 | `batch_size` 參數控制每輪最多處理幾個 signal                           | mock LLM        |
+
+---
+
+### 測試策略（不花 API 費用）
+
+**全部測試使用 mock LLM**，不發出任何真實 HTTP 請求：
+
+```python
+class MockLLMJudge:
+    """可設定回傳固定 JSON 或拋出例外的測試替身。"""
+    def __init__(self, response: str | Exception):
+        self._response = response
+
+    async def judge(self, signal: Signal) -> str:
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+VALID_JSON = json.dumps({
+    "action": "add", "reason": "commit adds JWT rule",
+    "signal_id": "sig-001",
+    "node": {"title": "JWT RS256", "content": "Use RS256.",
+             "kind": "Rule", "confidence": 0.75}
+})
+INVALID_JSON = "```json\n{broken```"
+```
+
+**端對端冒煙測試**（真實 API，自選執行，費用極低）：
+
+```bash
+# 手動執行，費用約 $0.001 / 次
+BRAIN_WORKER_SMOKE=1 python -m pytest tests/integration/test_worker_smoke.py -v -k smoke
+```
+
+smoke test 步驟：
+1. 建立含 1 個 GIT_COMMIT signal 的 in-memory BrainDB
+2. 呼叫真實 Haiku API（`claude-haiku-4-5-20251001`）
+3. 驗證：`pipeline_metrics` 有一筆記錄，`action` 為 `add` 或 `skip`
+4. 若 action=add，驗證 `nodes` 表有節點且 `meta.source='auto_pipeline'`
+
+---
+
+### Prompt 設計草稿
+
+```
+You are a knowledge extraction agent for a developer's personal knowledge base.
+
+Analyze the following development event and decide whether it contains
+knowledge worth storing permanently.
+
+Signal type: {signal.kind}
+Summary: {signal.summary}
+Content:
+{signal.raw_content[:3000]}
+
+Respond with ONLY valid JSON (no markdown, no explanation):
+{{
+  "action": "add" | "skip",
+  "reason": "one sentence explaining your decision",
+  "signal_id": "{signal.id}",
+  "node": {{                          // only required when action="add"
+    "title": "concise title",
+    "content": "the knowledge itself",
+    "kind": "Rule" | "Decision" | "Pitfall" | "Note" | "Context" | "Reference",
+    "confidence": 0.5-0.85,
+    "tags": ["tag1", "tag2"],
+    "description": "optional one-liner"
+  }}
+}}
+
+Rules:
+- Skip version bumps, formatting-only changes, and trivial commits.
+- Add only when there is a clear, reusable insight or constraint.
+- confidence must be between 0.5 and 0.85 (hard ceiling).
+```
+
+---
+
+### 費用估算
+
+| 情境             | 每次費用（Haiku）   | 說明                                       |
+|-----------------|--------------------|--------------------------------------------|
+| 單一 smoke test  | ~$0.001            | 1 signal，prompt ~400 tokens               |
+| 100 signals/天  | ~$0.10             | 假設平均 prompt 500 + output 200 tokens     |
+| 1000 signals/天 | ~$1.00             | 超過此量建議切換 Gemma 4 on Ollama（免費）   |
+
+> **切換條件**：daily signal volume > 200 → 改用本地 Gemma 4，`validate()` fallback rate 預計 < 5%（見 §18 決策 #6）
+
+---
+
+### 實作要點（供未來參考）
+
+- `PipelineWorker` 建議為 **async** class，`run_loop()` 用 `asyncio.sleep(poll_interval)` 實現輪詢
+- `judge()` 方法注入 LLM client，便於測試替換（dependency injection）
+- JSON 解析失敗時：先嘗試從 markdown code block 中提取（LLM 常回傳 ` ```json ... ``` `），再失敗才呼叫 `validate({})` 降級
+- `poll_interval` 預設 30 秒，`batch_size` 預設 5，兩者皆可 env var 覆蓋
+- 建議加 `BRAIN_PIPELINE_ENABLED=1` 環境變數 gate，預設關閉，避免意外觸發 API 呼叫

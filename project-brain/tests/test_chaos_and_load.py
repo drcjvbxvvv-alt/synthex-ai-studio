@@ -1054,28 +1054,26 @@ class TestV90KnowledgeResolver:
 
 
 class TestV90LocalOnlyInit:
-    """brain init --local-only 模式"""
+    """brain init --local-only 模式（FEAT-09：改用 brain.toml 取代 .env）"""
 
-    def test_local_only_creates_env_file(self, tmp_path):
-        import subprocess
-        r = subprocess.run(
-            ["python", "brain.py", "init", "--workdir", str(tmp_path), "--local-only"],
-            capture_output=True, text=True
-        )
-        env_file = tmp_path / ".brain" / ".env"
-        assert env_file.exists(), ".brain/.env should be created"
-        env_content = env_file.read_text()
-        assert "BRAIN_LLM_PROVIDER=openai" in env_content
-        assert "GRAPHITI_DISABLED=1" in env_content
-
-    def test_local_only_env_has_ollama_config(self, tmp_path):
+    def test_local_only_creates_brain_toml(self, tmp_path):
         import subprocess
         subprocess.run(
             ["python", "brain.py", "init", "--workdir", str(tmp_path), "--local-only"],
             capture_output=True, text=True
         )
-        env = (tmp_path / ".brain" / ".env").read_text()
-        assert "localhost:11434" in env
+        toml_file = tmp_path / ".brain" / "brain.toml"
+        assert toml_file.exists(), ".brain/brain.toml should be created"
+
+    def test_local_only_toml_has_ollama_config(self, tmp_path):
+        import subprocess
+        subprocess.run(
+            ["python", "brain.py", "init", "--workdir", str(tmp_path), "--local-only"],
+            capture_output=True, text=True
+        )
+        toml_content = (tmp_path / ".brain" / "brain.toml").read_text()
+        assert "ollama" in toml_content
+        assert "localhost:11434" in toml_content
 
 
 class TestV90EmotionalWeight:
