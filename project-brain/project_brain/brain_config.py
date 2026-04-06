@@ -470,14 +470,15 @@ fallback = "local"               # Ollama 不可用 → TF-IDF（無需任何模
 [decay]
 enabled            = true
 run_interval_hours = 24
+# 六因子權重由系統自動計算，不建議手動調整（加總需為 1.0，否則結果不可預期）
 
-# 六因子權重（加總須為 1.0）
-weight_time          = 0.25     # F1 時間衰減
-weight_version_gap   = 0.20     # F2 技術版本差距
-weight_git_activity  = 0.15     # F3 git 活動反衰減
-weight_contradiction = 0.15     # F4 矛盾懲罰
-weight_code_ref      = 0.15     # F5 程式碼引用確認
-weight_query_freq    = 0.10     # F6 查詢頻率反衰減
+# ── 知識審核委員會（KRB）────────────────────────────────────────
+# KRB 負責把自動提取的候選知識（confidence 較低）過篩到正式 KB。
+# 人工執行：brain review list / brain review approve <id>
+[review]
+auto_approve_threshold = 0.80   # 超過此信心值自動核准，無需人工審核
+staging_ttl_days       = 30     # 候選知識在暫存區保留天數，到期自動清除
+min_confidence         = 0.50   # 自動提取低於此值直接丟棄，不進暫存區
 
 # ── Federation ────────────────────────────────────────────────
 [federation]
