@@ -4,6 +4,92 @@
 
 ---
 
+## v0.30.0（2026-04-06）— FEAT-09 brain.toml 統一配置 + 自動降級
+
+測試基準：624 passed（Phase 1 Step 2 KnowledgeExecutor 18 tests）
+
+### FEAT-09 — `brain.toml` 統一配置檔 + 自動降級
+
+- 新增 `project_brain/brain_config.py`：`BrainConfig` dataclass 體系（`LLMConfig`、`LLMFallbackConfig`、`ModelOverride`、`PipelineConfig`、`EmbedderConfig`、`DecayConfig` 等）
+- `load_config(brain_dir)` 實作四層優先鏈：env var > `.brain/brain.toml` > `~/.config/brain/brain.toml` > code default
+- `get_llm_client(task, brain_dir)` 實作每任務模型選取 + 多層 fallback（gemma4:27b → gemma4:31b → Haiku）
+- `_is_ollama_available(base_url, timeout=2)` 探測 `/api/tags`，Ollama 不可用時自動切至 fallback
+- `generate_brain_toml(brain_dir, local_only=False)` 生成帶中文說明的 `brain.toml` 模板
+- `brain init` 重寫：呼叫 `run_setup()` 後同步生成 `brain.toml`；`brain setup` 保留為 alias
+- `brain config init` 子命令：單獨重新生成 `brain.toml`（不重建 DB），已存在時提示確認
+- `brain.toml` 包含記憶層說明註釋：L1（工作記憶，無 LLM）、L2（情節記憶，pipeline.llm）、L3（語意知識，pipeline.llm + embedder）
+- 向後相容：`BRAIN_LLM_PROVIDER`、`BRAIN_OLLAMA_URL`、`BRAIN_OLLAMA_MODEL` 等舊 env var 仍有效
+- 遷移：`nudge_engine.py`、`memory_synthesizer.py`、`conflict_resolver.py`、`cli_utils.py` 的 fallback 邏輯統一至 `brain_config`
+
+---
+
+## v0.29.0（2026-04-06）— OPT-07~10 效能優化 + 自動知識管線設計文件
+
+### OPT-07 — Nudge Engine 使用衰減後 confidence
+
+- `nudge_engine.py` `generate_questions()` 改讀 `effective_confidence`（decay_engine 寫入值），取代原始 `confidence`
+- 效果：Nudge 推薦優先級反映實際知識新鮮度，不再推薦 6 個月前的過時知識
+
+### OPT-08 — KnowledgeGraph 複合索引
+
+- `graph.py` schema 新增 `CREATE INDEX IF NOT EXISTS idx_nodes_type_created ON nodes(type, created_at DESC)`
+- 對「列出所有 Pitfall 按時間排序」類查詢速度提升 10× 以上
+- Migration：現有 DB 自動補建索引
+
+### OPT-09 — Logging 結構化
+
+- 全域 logger 改用 JSON formatter（`{"level": "warning", "module": "brain_db", "event": "...", ...}`）
+- 可機器讀取，相容 ELK / Grafana Loki 整合
+- 保留 `%(levelname)s` 文字模式作為 fallback（`BRAIN_LOG_FORMAT=text`）
+
+### OPT-10 — Embedder Cache 命中率統計
+
+- `embedder.py` 新增 `_cache_hits`、`_cache_misses` 計數器
+- `brain status` 新增 Embedder 區塊，顯示 cache 命中率與 miss 次數
+- `_TFIDF_CACHE` 超過 256 條時自動清除最舊項目（LRU 保護）
+
+---
+
+## v0.28.0（2026-04-06）— FEAT-05~06 匯出格式擴充 + 自動備份
+
+### FEAT-05 — 匯出支援 GraphML
+
+- `brain_db.py` 新增 `export_graphml(output_path)` 方法
+- `brain export --format graphml` 輸出標準 GraphML XML 格式（含 `<key>` 宣告）
+- 可直接匯入 Gephi / yEd / Neo4j
+- 節點屬性：title、type、content、confidence、scope、tags、created_at；邊屬性：relation、weight
+- 同步支援 `--format json`（原有 CSV 保留）
+
+### FEAT-06 — BrainDB 自動每日備份
+
+- `brain_db.py` `__init__` 新增 `_maybe_backup()` 呼叫
+- 每次 BrainDB 啟動時自動檢查今日（`YYYYMMDD`）是否已備份
+- 備份方式：`VACUUM INTO .brain/backups/brain_YYYYMMDD.db`（原子操作，自動 checkpoint WAL）
+- 保留最近 7 份，超出時自動刪除最舊備份
+- 備份失敗只寫 `logger.warning`，不影響正常啟動
+
+---
+
+## v0.27.0（2026-04-06）— FEAT-04 版本 Diff + REFACTOR-01 CLI 精簡
+
+### FEAT-04 — 知識節點版本 Diff 視圖
+
+- `cli_knowledge.py` `cmd_history()` 新增 `--diff` 旗標
+- `brain history <node_id> --diff` 使用 `difflib.unified_diff` 顯示相鄰版本差異
+- 每對版本最多輸出 40 行，超出省略並提示總行數
+- 無 `--diff` 時保持原有版本清單行為
+
+### REFACTOR-01 — CLI 命令精簡（37 → 27 個）
+
+- 移除 9 個冗餘命令：`context`（alias `ask`）、`health`（合入 `doctor`）、`health-report`（合入 `report`）、`timeline`（alias `history`）、`restore`（alias `rollback`）、`analytics`（合入 `report`）、`deprecate`（合入 `deprecated mark`）、`lifecycle`（合入 `deprecated info`）、`counterfactual`（AI 使用 MCP tool）
+- `_apply_aliases()` 補入向後相容 redirect，舊命令輸出 deprecation warning 並自動轉發
+- `brain --help` 僅顯示 14 個 Primary 命令；`brain --help --advanced` 顯示全部
+- `brain history <id>` 吸收 `timeline`；`brain rollback <id>` 吸收 `restore`
+- `brain report --analytics` 吸收 `analytics`
+- `brain deprecated mark/info` 吸收 `deprecate`/`lifecycle`
+
+---
+
 ## v0.26.0（2026-04-06）— P2 安全強化 + 效能優化 + 功能補全
 
 測試基準：624 passed（59 unit tests in `test_mem_improvements.py`）
