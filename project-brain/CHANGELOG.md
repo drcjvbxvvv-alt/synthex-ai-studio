@@ -4,6 +4,43 @@
 
 ---
 
+## v0.31.0（2026-04-09）— Phase 1 止血修復
+
+測試基準：860 passed（排除 14 個既有 WebUI/schema-version 失敗）
+
+### BLOCKER-02 — review_board.approve() 雙 DB 原子化
+
+- `review_board.py:approve()` 改為先寫 BrainDB（FTS5 索引），再寫 KnowledgeGraph
+- BrainDB 失敗時直接 raise，staged_nodes 保持 `pending`（不再靜默損壞）
+- KnowledgeGraph 失敗時自動回滾 BrainDB（`delete_node`），再 raise
+- 消除「L3 節點存在但 FTS5 搜不到」的長期資料不一致狀態
+
+### HIGH-02 — BUG-07 `brain init` 假 ERROR log
+
+- `brain_db.py:migrate_from_legacy()` 加表存在性預檢（`sqlite_master` 查詢）
+- 不存在的 legacy 表改為 `logger.debug` 跳過，不再輸出 ERROR
+- `brain init` 在既有 DB 上不再誤報失敗
+
+### HIGH-04 — multi_brain_query workdir 路徑驗證強化
+
+- `mcp_server.py:multi_brain_query()` 對 `extra_brain_dirs` 每個路徑補充：
+  - `..` 部分檢查
+  - 符號連結解析後的 `_FORBIDDEN_ROOTS` 檢查（防 symlink 攻擊）
+- `BRAIN_EXTRA_DIRS` 環境變數路徑同步套用相同防護
+
+### MEDIUM-05 — EXPAND_LIMIT 硬上界
+
+- `context.py:EXPAND_LIMIT` 加 `min(..., 100)` 截斷
+- 防止 `BRAIN_EXPAND_LIMIT=10000` 觸發 FTS5 查詢爆炸
+
+### 文件
+
+- 新增 `docs/ARCHITECTURE_REVIEW.md`（v0.30 系統反思與重構架構書，1409 行）
+  - 3 BLOCKER + 4 HIGH + 7 MEDIUM + 5 LOW 缺陷清單
+  - Phase 1-4 修復路線圖，含雙軌模型標註（開發 Model / 運行 Model）
+
+---
+
 ## v0.30.0（2026-04-06）— FEAT-09 brain.toml 統一配置 + 自動降級
 
 測試基準：624 passed（Phase 1 Step 2 KnowledgeExecutor 18 tests）

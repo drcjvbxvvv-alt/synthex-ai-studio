@@ -59,7 +59,8 @@ FRESHNESS_WARN_DAYS = int(os.environ.get("BRAIN_FRESHNESS_WARN_DAYS", "30"))
 
 # P-1: synonym expansion cap — set BRAIN_EXPAND_LIMIT to reduce noise
 # Default 15 (was 30). Lower = less synonym noise, higher = better recall.
-EXPAND_LIMIT = int(os.environ.get("BRAIN_EXPAND_LIMIT", "15"))
+# MEDIUM-05: hard upper bound to prevent FTS5 DOS via BRAIN_EXPAND_LIMIT=10000
+EXPAND_LIMIT = min(int(os.environ.get("BRAIN_EXPAND_LIMIT", "15")), 100)
 
 # RQ-1: semantic dedup threshold — set BRAIN_DEDUP_THRESHOLD to tune
 # 0.85 = only deduplicate near-identical sections (default, conservative).

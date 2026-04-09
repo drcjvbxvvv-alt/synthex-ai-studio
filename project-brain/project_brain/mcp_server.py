@@ -1177,7 +1177,28 @@ def create_server(workdir: str) -> Any:
             for d in extra_brain_dirs[:10]:
                 try:
                     d_clean = _safe_str(str(d), 500, "extra_brain_dirs[i]")
-                    if d_clean and ".." not in d_clean:
+                    if not d_clean:
+                        continue
+                    # HIGH-04: SEC-01 style check — resolve symlinks and block
+                    # forbidden system roots.  ".." check alone is bypassable via
+                    # symlinks (e.g. /tmp/evil -> /etc).
+                    _raw = Path(d_clean)
+                    if ".." in _raw.parts:
+                        logger.warning("multi_brain_query: skipping traversal path %s", d_clean)
+                        continue
+                    _resolved = _raw.resolve()
+                    _blocked = False
+                    for _fr in _FORBIDDEN_ROOTS:
+                        try:
+                            _resolved.relative_to(_fr)
+                            logger.warning(
+                                "multi_brain_query: skipping forbidden root path %s", d_clean
+                            )
+                            _blocked = True
+                            break
+                        except ValueError:
+                            pass
+                    if not _blocked:
                         dirs_to_query.append(d_clean)
                 except Exception as _e:
                     logger.debug("extra_brain_dirs entry parse failed", exc_info=True)
@@ -1187,7 +1208,19 @@ def create_server(workdir: str) -> Any:
             if env_extra:
                 for d in env_extra.split(":"):
                     d = d.strip()
-                    if d and ".." not in d:
+                    if not d or ".." in Path(d).parts:
+                        continue
+                    # HIGH-04: same forbidden-root check for env var paths
+                    _resolved = Path(d).resolve()
+                    _blocked = False
+                    for _fr in _FORBIDDEN_ROOTS:
+                        try:
+                            _resolved.relative_to(_fr)
+                            _blocked = True
+                            break
+                        except ValueError:
+                            pass
+                    if not _blocked:
                         dirs_to_query.append(d)
 
         # Deduplicate

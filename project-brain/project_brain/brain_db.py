@@ -1960,7 +1960,19 @@ class BrainDB:
         if ss.exists():
             try:
                 old = sqlite3.connect(str(ss)); old.row_factory = sqlite3.Row
+                # BUG-07 fix Step A: check table existence before SELECT to avoid
+                # false ERROR logs when session_store.db lacks legacy tables.
+                existing_tbls = {
+                    r[0] for r in old.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
                 for tbl in ("sessions", "memories"):
+                    if tbl not in existing_tbls:
+                        logger.debug(
+                            "session migration: table '%s' not found in legacy db, skipping", tbl
+                        )
+                        continue
                     try:
                         for row in old.execute(f"SELECT * FROM {tbl}").fetchall():
                             d = dict(row)
@@ -1972,7 +1984,10 @@ class BrainDB:
                                  str(d.get("value","")), str(d.get("category","general")))
                             )
                             imported["sessions"] += 1
-                    except Exception as _e: logger.error("session migration table failed: %s", _e)
+                    except Exception as _e:
+                        # BUG-07 fix Step B: downgrade from ERROR to debug — missing table
+                        # in old schema is expected, not an error condition.
+                        logger.debug("session migration table failed: %s", _e)
                 old.close()
             except Exception as e:
                 logger.warning("Legacy session migration: %s", e)
