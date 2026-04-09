@@ -4,6 +4,79 @@
 
 ---
 
+## v0.34.0（2026-04-09）— 可觀測性與可維護性（進行中）
+
+對應 `docs/ARCHITECTURE_REVIEW.md §8.4 v0.34` 路線圖。本版以 MEDIUM-04
+（Phase 2 殘餘項）開頭，後續逐步加入 MEDIUM-02 / MEDIUM-07 / metrics
+dashboard / `brain health` 命令。
+
+測試基準：**680 passed**（v0.33 baseline 665 + 15 新測試；3 個 pre-existing
+schema drift 不計，零 regression）
+
+### MEDIUM-04 — KRB staging 自動清理（15 tests）
+
+**問題**（ARCHITECTURE_REVIEW.md §3 MEDIUM-04）：
+`project_brain/engines/review_board.py` 原本沒有任何 staging 過期清理機制：
+
+- `rejected` 節點永久保留於 `staged_nodes` 表
+- 舊 `pending` 節點若無人審查，永遠累積
+- `brain.toml [review.staging_ttl_days]` 已定義（預設 30 天）但 KRB 從未讀取
+
+**修法**：在 `KnowledgeReviewBoard` 新增 `cleanup_expired_staging(ttl_days=None) → dict`：
+
+```python
+def cleanup_expired_staging(self, ttl_days: Optional[int] = None) -> dict:
+    """
+    - status='pending'  + created_at < cutoff → 'skipped_stale'
+    - status='rejected' + created_at < cutoff → 'archived'
+    - status='approved' / 'needs_changes' 不受影響
+
+    ttl_days=None 時讀取 brain.toml [review.staging_ttl_days]（預設 30）。
+    ttl_days <= 0 會被夾到 1（避免立即清空所有 staging）。
+
+    Returns:
+        {"pending_skipped": int, "rejected_archived": int, "ttl_days": int}
+    """
+```
+
+**設計重點**：
+1. **不刪除任何 row**，只改 status — 保留審計痕跡，未來想撈回也能查
+2. **approved 永不清理** — 已合進 L3，是事實記錄
+3. **needs_changes 永不清理** — 還在等待 reviewer 補資料
+4. **brain.toml 動態讀取** — 不需重啟 KRB 就能調整 ttl
+5. **冪等** — 重複呼叫不重複處理 `skipped_stale` / `archived` 節點
+
+**測試**（`tests/unit/test_krb_cleanup.py`，15 tests，4 群組）：
+
+| 群組 | Tests | 重點 |
+|---|---|---|
+| `TestCleanupBasic` | 4 | 空 DB / pending old → skipped_stale / rejected old → archived / fresh 不動 |
+| `TestStatusIsolation` | 4 | **approved 老的不動** / **needs_changes 老的不動** / 8 種狀態混合正確 partition / 二次呼叫冪等 |
+| `TestTTLBoundary` | 5 | 邊界 (29d 不清, 31d 清) / `ttl<=0` 夾到 1 / 預設值 30 / **brain.toml override** |
+| `TestReturnValue` | 2 | 回傳 dict 欄位 / 計數正確 |
+
+**關鍵驗收**：
+- `test_K05_approved_old_untouched` — 200 天前的 approved 節點不動
+- `test_K07_mixed_batch_correct_partition` — 8 種狀態各 1 個（4 種 status × old/fresh），cleanup 只動 `old pending` + `old rejected`
+- `test_K13_brain_toml_override_ttl` — 寫 `brain.toml [review] staging_ttl_days = 7`，cleanup 自動套用 7 天 cutoff
+
+**待做**：daemon 整合（搭配 `decay_daemon` 每日呼叫一次），列入 v0.34 後續工作。
+
+### Phase 2 進度
+
+✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 + HIGH-01 + HIGH-03 + MEDIUM-01 (v0.33) · ✅ MEDIUM-04 (v0.34)
+🎉 **Phase 2 全部 6 項完成**
+
+### v0.34 後續預計（§8.4）
+
+- ⏳ MEDIUM-02 KG/BrainDB 事件同步
+- ⏳ MEDIUM-07 CI benchmark baseline
+- ⏳ Pipeline metrics dashboard（Grafana）
+- ⏳ `brain health` 命令
+- ⏳ KRB cleanup daemon 整合
+
+---
+
 ## v0.33.0（2026-04-09）— 資料正確性強化 + v0.40 目錄重構提前實作
 
 **版本對齊**：本版整併原 v0.34 ~ v0.37 分批開發的 4 個 Phase 2 項目

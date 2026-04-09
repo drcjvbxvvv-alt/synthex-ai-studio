@@ -861,12 +861,28 @@ _decay_daemon_started = False
 
 ---
 
-### 🟡 MEDIUM-04 — KRB staging 缺自動清理機制
+### 🟡 MEDIUM-04 — KRB staging 缺自動清理機制 ✅ 完成於 v0.34.0（2026-04-09）
 
 > **🎯 開發 Model**：**Haiku 4.5** — 單函式 + 定時器整合；brain.toml 已定義 staging_ttl_days
 > **🎯 運行 Model**：—
 
-**位置**：`review_board.py` — 無 `auto_cleanup_expired_staging()` 方法
+**修復成果**（v0.34.0）：
+- ✅ 新增 `KnowledgeReviewBoard.cleanup_expired_staging(ttl_days=None) → dict`
+  - `pending` + `created_at < cutoff` → `skipped_stale`
+  - `rejected` + `created_at < cutoff` → `archived`
+  - `approved` / `needs_changes` 不受影響
+  - `ttl_days=None` 時讀 `brain.toml [review.staging_ttl_days]`（預設 30）
+  - `ttl_days <= 0` 自動夾到 1（避免立即清空 staging）
+  - 回傳 `{"pending_skipped": int, "rejected_archived": int, "ttl_days": int}`
+- ✅ `tests/unit/test_krb_cleanup.py` 新增 **15 tests**，4 群組：
+  - `TestCleanupBasic` (4) — 空 DB / pending old / rejected old / fresh 不動
+  - `TestStatusIsolation` (4) — approved/needs_changes 老的不動 / 8 種混合 partition / 二次 cleanup 冪等
+  - `TestTTLBoundary` (5) — 邊界 (29d 不清, 31d 清) / `ttl<=0` 夾到 1 / 預設值 / `brain.toml` override
+  - `TestReturnValue` (2) — 回傳 dict 欄位 / 計數正確
+
+**位置**：`project_brain/engines/review_board.py`（新增 method 於 `list_audit_log` 之後）
+
+**待做**：daemon 整合（搭配 decay daemon 每日呼叫一次），列入 v0.34 後續工作。
 
 **問題**：
 - `rejected` 節點永久保留於 `staged_nodes` 表
@@ -1090,7 +1106,7 @@ python -m pytest --collect-only -q | tail -1
 | 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ✅ v0.33.0 (17 tests) |
 | 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ✅ v0.33.0 (20 tests, 方案 A) |
 | 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ✅ v0.33.0 (18 tests) |
-| 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — | ⏳ |
+| 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — | ✅ v0.34.0 (15 tests) |
 
 **總工作量**：**38h**（約 1 週，1 人力）
 **模型成本分佈**：Haiku 3h / Sonnet 23h / Opus 12h ✓
@@ -1359,10 +1375,11 @@ def migrate_v30_to_v31(brain_dir: Path):
 > **🎯 主要開發 Model**：**Sonnet 4.6** + **Haiku 4.5** 混用
 > **🎯 運行 Model**：無
 
-- MEDIUM-02：KG/BrainDB 事件同步 `[Sonnet 4.6]`
-- MEDIUM-07：CI benchmark baseline `[Haiku 4.5]`
-- Pipeline metrics dashboard（Grafana 可讀）`[Sonnet 4.6]`
-- 新增 `brain health` 命令（自動 detect 常見不一致）`[Sonnet 4.6]`
+- ✅ MEDIUM-04：KRB staging 自動清理 `[Haiku 4.5]` — 15 tests（Phase 2 殘餘項，2026-04-09 完成）
+- ⏳ MEDIUM-02：KG/BrainDB 事件同步 `[Sonnet 4.6]`
+- ⏳ MEDIUM-07：CI benchmark baseline `[Haiku 4.5]`
+- ⏳ Pipeline metrics dashboard（Grafana 可讀）`[Sonnet 4.6]`
+- ⏳ 新增 `brain health` 命令（自動 detect 常見不一致）`[Sonnet 4.6]`
 
 ### 8.5 v0.40 — 架構重構（長期）
 

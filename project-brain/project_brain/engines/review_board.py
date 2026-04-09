@@ -63,7 +63,7 @@ import os
 import sqlite3
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -786,6 +786,66 @@ class KnowledgeReviewBoard:
             (limit,)
         ).fetchall()
         return [self._row_to_staged(r) for r in rows]
+
+    # ── MEDIUM-04: 過期 staging 自動清理 ─────────────────────────────────
+
+    def cleanup_expired_staging(self, ttl_days: Optional[int] = None) -> dict:
+        """
+        MEDIUM-04: 清理超過 ttl_days 的 staging 節點。
+
+        - status='pending'  + created_at < cutoff → 'skipped_stale'
+        - status='rejected' + created_at < cutoff → 'archived'
+        - status='approved' / 'needs_changes' 不受影響
+
+        Args:
+            ttl_days: 保留天數。None 時讀取 brain.toml [review.staging_ttl_days]
+                      （預設 30 天）。
+
+        Returns:
+            {"pending_skipped": int, "rejected_archived": int, "ttl_days": int}
+        """
+        if ttl_days is None:
+            try:
+                from project_brain.brain_config import load_config
+                cfg = load_config(self.brain_dir)
+                ttl_days = int(cfg.review.staging_ttl_days)
+            except Exception as _e:
+                logger.debug("cleanup_expired_staging: brain.toml 讀取失敗，"
+                             "使用預設 30 天：%s", _e)
+                ttl_days = 30
+
+        ttl_days = max(1, int(ttl_days))
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=ttl_days)
+        ).isoformat()
+
+        conn = self._conn_()
+        # pending → skipped_stale
+        cur1 = conn.execute(
+            "UPDATE staged_nodes SET status='skipped_stale' "
+            "WHERE status='pending' AND created_at < ?",
+            (cutoff,),
+        )
+        pending_skipped = cur1.rowcount
+        # rejected → archived
+        cur2 = conn.execute(
+            "UPDATE staged_nodes SET status='archived' "
+            "WHERE status='rejected' AND created_at < ?",
+            (cutoff,),
+        )
+        rejected_archived = cur2.rowcount
+        conn.commit()
+
+        if pending_skipped or rejected_archived:
+            logger.info(
+                "krb_cleanup: ttl=%dd pending_skipped=%d rejected_archived=%d",
+                ttl_days, pending_skipped, rejected_archived,
+            )
+        return {
+            "pending_skipped":   pending_skipped,
+            "rejected_archived": rejected_archived,
+            "ttl_days":          ttl_days,
+        }
 
     def close(self) -> None:
         if self._conn:
