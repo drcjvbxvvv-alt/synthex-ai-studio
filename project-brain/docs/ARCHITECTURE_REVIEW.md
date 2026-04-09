@@ -419,7 +419,7 @@ def approve(self, staged_id, reviewer="human", note=""):
 
 ---
 
-### 🔴 BLOCKER-03 — Federation 模組 849 行程式碼，零專用測試 ✅ 完成於 v0.34.0（2026-04-09）
+### 🔴 BLOCKER-03 — Federation 模組 849 行程式碼，零專用測試 ✅ 完成於 v0.33.0（2026-04-09）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 測試編寫是 Sonnet 的強項；PII 清理邊界需要安全意識但不需要架構設計
 > **🎯 運行 Model**：— （federation 本身是純資料序列化，不呼叫 LLM）
@@ -491,7 +491,7 @@ class TestConflictResolution:
 
 ---
 
-### 🟠 HIGH-01 — KnowledgeGraph.add_node() 存在 version 欄位但未執行 CAS ✅ 完成於 v0.35.0（2026-04-09）
+### 🟠 HIGH-01 — KnowledgeGraph.add_node() 存在 version 欄位但未執行 CAS ✅ 完成於 v0.33.0（2026-04-09）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 樂觀鎖的 CAS 邏輯有陷阱（e.g., SQLite UPDATE...WHERE version=? 的原子性），需要審慎推理但範圍小
 > **🎯 運行 Model**：—
@@ -501,7 +501,7 @@ class TestConflictResolution:
 - `graph.py:20-22`：`ConcurrentModificationError` 類別已定義
 - `graph.py:243-280`：`add_node()` 使用 `INSERT ... ON CONFLICT DO UPDATE`，**未檢查 version**
 
-**修復成果**（v0.35.0）：
+**修復成果**（v0.33.0）：
 - ✅ `add_node()` 新增 `expected_version: Optional[int] = None` kwarg
   - `None` → 維持舊行為（last-writer-wins），但 **UPDATE 分支現在遞增 version**（修復 `version` 死欄位）
   - `0` + 節點不存在 → 正常建立
@@ -600,14 +600,14 @@ ERROR project_brain.brain_db: session migration table failed: no such table: mem
 
 ---
 
-### 🟠 HIGH-03 — find_conflicts() O(n²) 字串比對，500 節點上限 ✅ 完成於 v0.36.0（2026-04-09，方案 A）
+### 🟠 HIGH-03 — find_conflicts() O(n²) 字串比對，500 節點上限 ✅ 完成於 v0.33.0（2026-04-09，方案 A）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 演算法改寫 + FTS5 查詢優化；若採方案 B 向量搜尋則需要 Opus 4.6 來設計索引策略
 > **🎯 運行 Model**：🟩 Embedder（若採方案 B，用 nomic-embed-text）
 
 **位置**：`project_brain/core/brain_db.py:1516` 起
 
-**修復成果**（v0.36.0，採方案 A — FTS5 候選者前置過濾）：
+**修復成果**（v0.33.0，採方案 A — FTS5 候選者前置過濾）：
 - ✅ 移除硬編碼 `LIMIT 500`（原本在大型知識庫會 skip 掉 90%+ 的衝突）
 - ✅ 新增 `_find_conflict_candidates(title, limit)` 私有 helper：用 FTS5 n-gram match 做 O(log n) 候選者查詢，**不寫 traces 表**（避免每次 find_conflicts 汙染 trace）
 - ✅ `find_conflicts()` 主迴圈改為「每個 anchor 只與 top-K FTS5 候選者比對」
@@ -719,12 +719,12 @@ def federation_sync(..., remote_bundle_path=""):
 
 ---
 
-### 🟡 MEDIUM-01 — brain_db.py 部分 commit() 在 _write_guard 外 ✅ 完成於 v0.37.0（2026-04-09）
+### 🟡 MEDIUM-01 — brain_db.py 部分 commit() 在 _write_guard 外 ✅ 完成於 v0.33.0（2026-04-09）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 16 個 commit 路徑的系統性重構，需要確認每個位置的事務語意
 > **🎯 運行 Model**：—
 
-**修復成果**（v0.37.0）：
+**修復成果**（v0.33.0）：
 - ✅ 新增 `BrainDB._execute_write(sql, params)` 單語句寫入統一入口
   - 透過 `_write_guard()` 取得 RLock 序列化保護
   - 成功 → `commit()`；失敗 → `rollback()` + re-raise
@@ -1086,10 +1086,10 @@ python -m pytest --collect-only -q | tail -1
 | 序 | ID | 描述 | 工作量 | 開發 Model | 運行 Model 影響 | 狀態 |
 |----|----|------|-------|-----------|----------------|------|
 | 5 | BLOCKER-01 | LLMJudgmentEngine + PipelineWorker 實作 | 12h | **Opus 4.6 (1M)** (新模組 + prompt engineering + 長 context 閱讀 pipeline.py 全文) | 🟨 `[pipeline.llm]` gemma4:27b（預設）；Dense 任務可升 gemma4:31b | ✅ v0.32.0 |
-| 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ✅ v0.34.0 (75 tests) |
-| 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ✅ v0.35.0 (17 tests) |
-| 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ✅ v0.36.0 (20 tests, 方案 A) |
-| 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ✅ v0.37.0 (18 tests) |
+| 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ✅ v0.33.0 (75 tests) |
+| 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ✅ v0.33.0 (17 tests) |
+| 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ✅ v0.33.0 (20 tests, 方案 A) |
+| 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ✅ v0.33.0 (18 tests) |
 | 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — | ⏳ |
 
 **總工作量**：**38h**（約 1 週，1 人力）
@@ -1159,7 +1159,7 @@ python -m pytest --collect-only -q | tail -1
 4. **非同步與可降級**：核心查詢不依賴 LLM 可用性
 5. **觀測友善**：所有失敗路徑有 log，所有慢路徑有 metric
 
-### 6.2 建議新檔案結構 ✅ 完成於 v0.33.0（2026-04-09）
+### 6.2 建議新檔案結構 ✅ 完成於 v0.33.0（2026-04-09，v0.40 目錄重構提前實作）
 
 ```
 project_brain/

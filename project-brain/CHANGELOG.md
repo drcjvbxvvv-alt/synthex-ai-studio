@@ -4,430 +4,147 @@
 
 ---
 
-## v0.37.0（2026-04-09）— MEDIUM-01 BrainDB._execute_write() 統一寫入入口
+## v0.33.0（2026-04-09）— 資料正確性強化 + v0.40 目錄重構提前實作
 
-測試基準：**665 passed**（v0.36 基線 646 + 新增 18 個 execute_write 測試 + 1 flake 恢復；3 個 pre-existing schema drift 不計）
+**版本對齊**：本版整併原 v0.34 ~ v0.37 分批開發的 4 個 Phase 2 項目
+（BLOCKER-03 / HIGH-01 / HIGH-03 / MEDIUM-01），並順便完成 v0.40 路線圖中的
+「目錄重構」項目，以對齊 `docs/ARCHITECTURE_REVIEW.md §8 未來路線圖`：
 
-### MEDIUM-01 — brain_db.py 部分 commit() 在 _write_guard 外
+- §8.3 v0.33 — 資料正確性強化：BLOCKER-03 / HIGH-01 / HIGH-03 / MEDIUM-01
+- §8.5 v0.40 — 架構重構：**目錄重構（core/pipeline/engines/interfaces）提前**
 
-**問題**（ARCHITECTURE_REVIEW.md §3 MEDIUM-01）：
-`project_brain/core/brain_db.py` 原本有 16+ 個 `self.conn.commit()` 路徑，
-其中部分在 `_write_guard()` 內（`add_node`、`update_node`、`add_episode`、
-`delete_node`、`deprecate_node` 等），部分在外：
-
-- `search_nodes` 內部 trace INSERT
-- `prune_episodes` DELETE
-- `pin_node` UPDATE
-- `record_federation_import` INSERT
-- `add_edge` INSERT
-- `add_temporal_edge` UPDATE + INSERT（multi-statement）
-- `emit` INSERT
-- `optimize` FTS5 rebuild INSERT
-
-三個問題：
-1. **不一致的錯誤處理** — 有的路徑有 try/except，有的直接讓例外往上竄
-2. **缺統一 rollback 語意** — 寫入失敗時部分路徑不會 rollback
-3. **審計困難** — 無法從單一入口統計、追蹤或 hook 所有寫操作
-
-### 修法
-
-**新增 `BrainDB._execute_write(sql, params) → Cursor`**：
-```python
-def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
-    """所有 runtime 單語句寫入統一入口。保證 lock + commit + rollback 一致。"""
-    with self._write_guard():
-        try:
-            cur = self.conn.execute(sql, params)
-            self.conn.commit()
-            return cur
-        except Exception:
-            try:
-                self.conn.rollback()
-            except Exception as _rb_err:
-                logger.error("_execute_write: rollback failed: %s", _rb_err)
-            raise
-```
-
-**新增 `BrainDB._execute_writescript(script)`**：
-多語句（DDL / batch cleanup）統一入口，同樣透過 `_write_guard` 序列化。
-
-**RLock 可重入設計**：
-由於 `_write_guard()` 使用 `threading.RLock`（REF-03），**呼叫者若已持有鎖**
-（例如在 `with self._write_guard():` 區塊內）可以**安全巢狀呼叫** `_execute_write`，
-不會死鎖。這讓增量遷移不需要一次改完所有路徑。
-
-### 重構 8 個 runtime 寫路徑
-
-| 方法 | 原位置 | 修法 |
-|---|---|---|
-| `search_nodes` trace INSERT | line 776 | → `_execute_write` |
-| `prune_episodes` DELETE | line 797 | → `_execute_write` |
-| `pin_node` UPDATE | line 819 | → `_execute_write` |
-| `record_federation_import` INSERT | line 1088 | → `_execute_write` |
-| `add_edge` INSERT | line 1117 | → `_execute_write` |
-| `add_temporal_edge` UPDATE+INSERT | line 1296 | → 顯式 `_write_guard` + try/rollback（multi-statement 無法用 `_execute_write`，因它每次 commit） |
-| `emit` INSERT | line 1357 | → `_execute_write` |
-| `optimize` FTS5 rebuild | line 1396 | → `_execute_write` |
-
-**刻意保留未保護**：
-- `_setup()` schema 建立（line 174）— 執行於 `BrainDB.__init__` 內
-- `_migrate_schema()`（line 377）— 同 init-time
-
-理由：BrainDB 建構完成前不存在並發呼叫者，額外的 lock 無意義且會阻礙測試。
-
-### 測試（tests/unit/test_execute_write.py，18 tests）
-
-| 群組 | Tests | 驗收 |
-|---|---|---|
-| `TestExecuteWriteCore` | 5 | 成功 commit / SQL 錯誤 rollback + re-raise / cursor.rowcount & lastrowid / **RLock 巢狀可重入** / **50 threads 序列化** |
-| `TestExecuteWriteScript` | 3 | 多語句執行 / 錯誤 rollback / 10 threads lock 保護 |
-| `TestRefactoredCallers` | 8 | 每個重構後的 caller 獨立行為驗證（pin_node / add_edge / emit / add_temporal_edge / record_federation_import / prune_episodes / search_nodes trace / optimize FTS rebuild） |
-| `TestRegressionGuards` | 2 | 40 threads 混合呼叫 pin_node + add_edge + emit + record_federation_import 無 corruption / `_write_guard` 阻塞語意驗證 |
-
-**關鍵驗收測試**：
-
-- `test_W04_rlock_reentrant_nested_calls` — 證明 `with self._write_guard():` 內
-  可以呼叫 `_execute_write()`，不會死鎖。這是增量遷移的關鍵保證。
-- `test_W05_concurrent_writes_serialized` — 50 threads 同時 `_execute_write`，
-  全部 N 筆 INSERT 成功寫入，無 corruption
-- `test_W12_add_temporal_edge_invalidates_previous` — 證明 multi-statement
-  (UPDATE + INSERT) 路徑在 `_write_guard` 保護下仍然原子地執行
-- `test_W17_concurrent_mixed_callers_no_corruption` — 40 threads 混合呼叫
-  pin_node / add_edge / emit / record_federation_import，所有 operation 都正確完成
-- `test_W18_execute_write_holds_lock_during_execution` — side-channel 證明
-  `_execute_write` 確實被 `_write_guard` 序列化，非平行執行
-
-### 測試結果
-
-| | passed | failed |
-|---|---|---|
-| `test_execute_write.py` | **18 / 18** | 0 |
-| `tests/unit/` 全量 | **665** | 3 pre-existing schema drift |
-| Regression | 0 | — |
-
-### 文件更新
-
-- `docs/ARCHITECTURE_REVIEW.md` §3 MEDIUM-01：標記 ✅ 完成於 v0.37.0 + 8 路徑對照表 + 4 測試群組對照
-- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：MEDIUM-01 ⏳ → ✅ v0.37.0 (18 tests)
-- `CHANGELOG.md` — 新增 v0.37.0 條目
-- `pyproject.toml` — version 0.36.0 → 0.37.0
-
-### Phase 2 進度
-
-✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 (v0.34) · ✅ HIGH-01 (v0.35) · ✅ HIGH-03 (v0.36) · ✅ MEDIUM-01 (v0.37)
-⏳ 剩餘 **MEDIUM-04**（KRB staging 自動清理，3h Haiku）— Phase 2 最後一項
+測試基準：**665 passed**（v0.32 baseline 534 + 131 新測試；3 個 pre-existing
+schema drift 不計，零 regression）
 
 ---
 
-## v0.36.0（2026-04-09）— HIGH-03 find_conflicts O(n²) → FTS5 候選者過濾
+### BLOCKER-03 — Federation 模組完整測試套件（75 tests）
 
-測試基準：**646 passed**（v0.35 基線 627 + 新增 20 個 find_conflicts 測試 − 1 flake 恢復；3 個 pre-existing schema drift 不計）
+**問題**（ARCHITECTURE_REVIEW.md §3 BLOCKER-03）：
+`project_brain/integrations/federation.py` 849 行完整實作但 `tests/` 下不存在
+任何 `test_federation*`。PII 清理漏網可能洩漏 email / 內部主機 / 私有 IP /
+Slack URL / Cloud URL；import 去重錯誤會污染本地 KB；`multi_brain_query` 的
+`_validate_workdir` 防線未被迴歸測試保護。
 
-### HIGH-03 — find_conflicts() O(n²) 字串比對，500 節點上限
+**修法**：新增 `tests/unit/test_federation.py`（952 行，75 tests，8 群組）：
 
-**問題**（ARCHITECTURE_REVIEW.md §3 HIGH-03）：
-`project_brain/core/brain_db.py:find_conflicts()` 原本使用：
-
-```python
-nodes = [dict(r) for r in self.conn.execute(
-    "SELECT id, type, title, content FROM nodes LIMIT 500"   # ← 硬編碼上限
-).fetchall()]
-for i, a in enumerate(nodes):
-    for b in nodes[i + 1:]:   # ← O(n²)
-        ...
-```
-
-三個級聯缺陷：
-1. **硬編碼 `LIMIT 500`** — 在 5000 節點的真實知識庫會 skip 掉 90%+ 的可能衝突，
-   但錯誤對使用者不可見（find_conflicts 從不回報「還有 4500 筆沒比對」）
-2. **O(n²) pairwise** — 500 節點 = 125,000 次迴圈 + 字串操作；移除 LIMIT
-   之後在 1000 節點上會退化到秒級
-3. **掩蓋性問題** — 500 的上限讓 O(n²) 問題「看起來還行」，但當 KB 成長後
-   靜默遺失衝突無警告
-
-### 修法（方案 A — FTS5 候選者前置過濾）
-
-**新增 `_find_conflict_candidates(title, limit)` 內部 helper**：
-```python
-def _find_conflict_candidates(self, title: str, limit: int = 10) -> list:
-    """HIGH-03 helper: 用 FTS5 n-gram match 找到 top-K 候選節點 id。
-
-    與 search_nodes() 的差別：
-      - 不寫 traces 表（find_conflicts 會對每個節點呼叫，避免噪音）
-      - 只回傳 id（呼叫端已持有全量 node 資料）
-      - 不做 decay re-ranking（本階段只是候選者粗篩）
-    """
-```
-
-使用既有的 `BrainDB._ngram()` + `BrainDB._sanitize_fts()` + `nodes_fts` 表，
-回傳 O(log n) 的 top-K 候選 id 列表。
-
-**重寫 `find_conflicts()` 主迴圈**：
-```python
-def find_conflicts(
-    self,
-    similarity_threshold: float = 0.7,
-    candidates_per_anchor: int = 10,    # 新參數
-) -> list:
-    # 載入所有節點（不再 LIMIT 500）
-    all_nodes = {r["id"]: dict(r) for r in self.conn.execute(
-        "SELECT id, type, title, content FROM nodes"
-    ).fetchall()}
-
-    conflicts, seen = [], set()
-    for anchor_id, anchor in all_nodes.items():
-        candidate_ids = self._find_conflict_candidates(
-            anchor["title"], limit=candidates_per_anchor,
-        )
-        for cand_id in candidate_ids:
-            if cand_id == anchor_id or pair_seen:
-                continue
-            # Jaccard + contradiction 檢查只對 top-K 做
-            ...
-```
-
-**複雜度**：**O(n²)** → **O(n · K · log n)**，K 預設 10。
-
-**附帶修正**：
-- CJK 純字元 title（無空白可 `split()`）fallback 用整個 title 當 token，
-  避免 `a_words` 為空導致 anchor 被略過
-- 保留既有 `seen` pair 去重 / 輸出 dict 格式 / contradiction 優先排序 / top-50 cap
-- 新增 `candidates_per_anchor` 參數讓呼叫端可調整候選池大小
-
-### 測試（tests/unit/test_find_conflicts.py，20 tests）
-
-| 群組 | Tests | 驗收 |
+| 群組 | Tests | 重點 |
 |---|---|---|
-| `TestFindConflictsBasic` | 4 | 空 DB / 單節點 / 無關節點 / 基本重複偵測 |
-| `TestContradictionDetection` | 4 | must/must-not、enable/disable、**CJK 必須/禁止**、contradiction 排序優先於 duplicate |
-| `TestOutputFormat` | 3 | dict 必填欄位 / similarity 降序 / top-50 cap |
-| `TestDeduplication` | 3 | (a,b) 與 (b,a) 同對只算一次 / 節點不與自己比對 / similarity_threshold 生效 |
-| `TestScaleBeyond500` | 3 | **核心驗收** |
-| `TestEdgeCases` | 3 | 空 title 安全略過 / `candidates_per_anchor` 參數生效 / 冪等無副作用 |
+| `TestPIIStripping` | 17 | 6 個 regex + CJK 保留 + 變數名 / 公網 IP 不誤傷 |
+| `TestFederationBundle` | 3 | JSON roundtrip / UTF-8 / 預設值 |
+| `TestFederationExporter` | 15 | scope/confidence/max_nodes 過濾 + PII 清理 + domain_tags / `_parse_tags` |
+| `TestFederationImporter` | 10 | exact + Jaccard 去重 / low_conf / subscription / dry_run / **FED-01 audit** |
+| `TestSubscriptionManager` | 10 | CRUD / 正規化 / 持久化 / 設定檔損毀容錯 |
+| `TestFederationAutoSync` | 10 | add/remove/sync_all / 停用 / 相對路徑 / dry_run |
+| `TestValidateWorkdir` | 8 | 空 / `..` 遍歷 / symlink resolve / `/etc` 禁區 |
+| `TestConflictResolution` | 3 | 同 title 去重 / **federation 絕不直接寫 L3** |
 
-**核心 HIGH-03 驗收（`TestScaleBeyond500`）**：
-
-- `test_F15_conflict_detected_beyond_500_nodes` — 建立 600 個無關節點 + 2 個衝突節點
-  （最後加入），原本的 `LIMIT 500` 會 skip 掉後面加入的衝突；HIGH-03 修法後能偵測到
-- `test_F16_runtime_reasonable_at_1000_nodes` — 1000 節點 find_conflicts 必須 < 30 秒
-  （實測 < 1.5s）
-- `test_F17_no_trace_pollution` — `_find_conflict_candidates` 內部絕不寫 `traces` 表，
-  防止每次 find_conflicts 留下數千筆無意義的 trace 記錄
-
-### 測試結果
-
-| | passed | failed |
-|---|---|---|
-| `test_find_conflicts.py` | **20 / 20** | 0 |
-| `tests/unit/` 全量 | **646** | 4 pre-existing (3 schema drift + 1 timing flake) |
-| Regression | 0 | — |
-
-### 文件更新
-
-- `docs/ARCHITECTURE_REVIEW.md` §3 HIGH-03：標記 ✅ 完成於 v0.36.0（方案 A）+ 6 個測試群組對照
-- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：HIGH-03 ⏳ → ✅ v0.36.0 (20 tests, 方案 A)
-- `pyproject.toml`：version 0.35.0 → 0.36.0
-
-### 方案 B 延後
-
-徹底重構為 vector similarity + FAISS/HNSW 的 O(log n) nearest neighbor 尚未實作
-（需要 embedder 索引策略設計，建議用 Opus 4.6）。方案 A 的 FTS5 候選者過濾已
-充分解決當前可擴展性問題，方案 B 列為未來優化項目。
-
-### Phase 2 進度
-
-✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 (v0.34) · ✅ HIGH-01 (v0.35) · ✅ HIGH-03 (v0.36)
-⏳ MEDIUM-01 `_execute_write` 統一入口 · MEDIUM-04 KRB staging 清理
+**關鍵安全驗證**：
+- `test_export_excludes_private_scope` — 私有 scope 節點絕不流出聯邦
+- `test_variable_name_not_stripped` / `test_cjk_content_preserved` — 程式碼識別字與中文不被 PII regex 誤傷
+- `test_imported_nodes_go_to_staging_not_l3` — federation import 全程只寫 KRB Staging
 
 ---
 
-## v0.35.0（2026-04-09）— HIGH-01 KnowledgeGraph 樂觀鎖 CAS
+### HIGH-01 — KnowledgeGraph.add_node() 樂觀鎖 CAS（17 tests）
 
-測試基準：**627 passed**（v0.34 基線 610 + 新增 17 個 CAS 測試；3 個 pre-existing schema drift 不計）
+**問題**（ARCHITECTURE_REVIEW.md §3 HIGH-01）：`graph.py` 的 `add_node()` 使用
+`INSERT ... ON CONFLICT DO UPDATE` 但從不檢查 `version`，造成三個級聯缺陷：
+(1) 並發寫入靜默覆蓋 (2) `version` 死欄位（UPDATE 永遠不遞增）
+(3) `ConcurrentModificationError` 是死代碼。
 
-### HIGH-01 — KnowledgeGraph.add_node() 存在 version 欄位但未執行 CAS
+**修法**（`project_brain/graph.py:add_node()`）：
+1. 新增 `expected_version: Optional[int] = None` kwarg 啟用 CAS
+2. UPDATE 分支遞增 version：`ON CONFLICT DO UPDATE SET ..., version = nodes.version + 1`
+3. 讀-檢-寫由 `self._lock` 序列化，消除 race window
 
-**問題**（ARCHITECTURE_REVIEW.md §3 HIGH-01）：
-`project_brain/graph.py` 的 `add_node()` 使用 `INSERT ... ON CONFLICT DO UPDATE`
-但從不檢查 `version` 欄位，導致三個級聯缺陷：
+**測試**（`tests/unit/test_graph_cas.py`，17 tests，5 群組）：
 
-1. **靜默遺失更新** — Thread A 讀 node (v=5)，Thread B 讀同 node (v=5)、先寫入並推進，
-   Thread A 的 UPSERT **直接覆蓋 Thread B 的成果**，無任何錯誤訊號
-2. **version 欄位是死欄位** — UPDATE 分支未遞增 version，即使 UPSERT 無數次，
-   version 永遠停在 0（schema 有宣告但從未使用）
-3. **`ConcurrentModificationError` 類別是死代碼** — 類別自 BUG-06 就定義好，
-   但 `add_node()` 從未 raise 過它
-
-### 修法
-
-**`project_brain/graph.py:add_node()`** 三點修改：
-
-1. **新增 `expected_version: Optional[int] = None` kwarg**
-   - `None`（預設）→ 保持既有 last-writer-wins 行為，向後相容
-   - 整數 → 啟用樂觀鎖 CAS：
-     * 節點不存在且 `expected_version != 0` → raise `ConcurrentModificationError`
-     * 節點存在且 `current.version != expected_version` → raise
-     * 否則正常執行 UPSERT
-
-2. **UPDATE 分支遞增 version**（修復死欄位）
-   ```sql
-   ON CONFLICT(id) DO UPDATE SET
-       ..., version = nodes.version + 1
-   ```
-   即使不啟用 CAS，這保證 version 會隨每次 UPSERT 正確推進，讓 `update_node()`
-   等其他路徑能依賴這個欄位做 BUG-06 式的樂觀鎖檢查。
-
-3. **讀-檢-寫由 `self._lock` 序列化**
-   原本 `add_node()` 完全不加鎖，現在整段 SELECT → CAS check → INSERT/UPDATE
-   都在 `with self._lock:` 內，消除 read-then-write 的 race window。
-
-### 測試（tests/unit/test_graph_cas.py，17 tests）
-
-| 群組 | Tests | 驗收 |
+| 群組 | Tests | 重點 |
 |---|---|---|
-| `TestBackwardCompat` | 4 | 舊 API 無痛升級：不傳 expected_version 不 raise；UPSERT 自動遞增 version；不同 id 彼此獨立 |
-| `TestCASHappyPath` | 3 | 新節點 `expected_version=0` 成功；既有節點匹配版本成功；content/title/tags 正確更新 |
-| `TestCASConflict` | 4 | 錯誤版本 / stale 版本 / 失敗不 mutate row / 新節點 `expected_version=0` 合法 |
-| `TestCASConcurrency` | 4 | **50 threads UPSERT 無遺失更新** / **30 threads CAS 恰一個 winner** / retry-loop 20 threads 全部成功 / 不同 id 不互擾 |
-| `TestUpdateNodeCASUnchanged` | 2 | BUG-06 的 `update_node` CAS 行為未退化 |
-
-**關鍵並發壓力測試**：
-- `test_C15_concurrent_add_same_id_no_lost_update` — 50 threads 同時對同一節點 UPSERT，
-  最終 `version == 50`，證明 `self._lock` 正確序列化、version+1 無遺失
-- `test_C16_concurrent_cas_only_one_winner` — 30 threads 用 `expected_version=0` 同時競爭，
-  恰好 1 個成功、29 個收到 `ConcurrentModificationError`，驗證樂觀鎖語意
-- `test_C17_concurrent_cas_chain_retries_eventually_all_succeed` — 20 threads 做
-  guess-and-retry（不依賴未加鎖的 `get_node` 讀取），最終 version == 20
-
-### 測試結果
-
-| | passed | failed |
-|---|---|---|
-| `test_graph_cas.py` | **17 / 17** | 0 |
-| `tests/unit/` 全量 | **627** | 3 pre-existing schema drift |
-| Regression | 0 | — |
-
-### 文件更新
-
-- `docs/ARCHITECTURE_REVIEW.md` §3 HIGH-01：標記 ✅ 完成於 v0.35.0，附修法細節與 5 個測試群組對照
-- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：HIGH-01 狀態 ⏳ → ✅ v0.35.0 (17 tests)
-- `pyproject.toml`：version 0.34.0 → 0.35.0
-
-### Phase 2 進度
-
-✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 (v0.34) · ✅ HIGH-01 (v0.35)
-⏳ HIGH-03 find_conflicts O(n²) · MEDIUM-01 `_execute_write` 統一入口 · MEDIUM-04 KRB staging 清理
+| `TestBackwardCompat` | 4 | 舊 API 無痛升級 + UPSERT 自動遞增 version |
+| `TestCASHappyPath` | 3 | 新節點 / 既有節點匹配版本 / content 更新 |
+| `TestCASConflict` | 4 | 錯誤版本 / stale 版本 / 失敗不 mutate row |
+| `TestCASConcurrency` | 4 | **50 threads UPSERT 無遺失更新** / **30 threads CAS 恰一個 winner** |
+| `TestUpdateNodeCASUnchanged` | 2 | BUG-06 update_node CAS 行為未退化 |
 
 ---
 
-## v0.34.0（2026-04-09）— BLOCKER-03 Federation 測試套件補齊
+### HIGH-03 — find_conflicts O(n²) → FTS5 候選者過濾（20 tests）
 
-測試基準：**610 passed**（v0.33 基線 535 + 新增 75 個 federation 測試；3 個 pre-existing schema drift 不計）
+**問題**（ARCHITECTURE_REVIEW.md §3 HIGH-03）：`brain_db.find_conflicts()` 原本
+使用硬編碼 `LIMIT 500` + 巢狀 for 迴圈做 pairwise Jaccard，在 5000 節點 KB 會
+skip 掉 90%+ 的衝突，移除 LIMIT 後 O(n²) 在 1000 節點退化到秒級。
 
-### BLOCKER-03 — Federation 模組 849 行程式碼，零專用測試
+**修法**（方案 A — FTS5 候選者前置過濾）：
+1. 新增 `_find_conflict_candidates(title, limit)` helper：用 FTS5 n-gram match
+   做 O(log n) 候選者查詢，**不寫 traces 表**
+2. 重寫 `find_conflicts()`：移除 `LIMIT 500`，每個 anchor 只與 FTS5 top-K 候選
+   者比對（K 預設 10）
+3. 新增 `candidates_per_anchor: int = 10` 參數
+4. CJK 純字元 title fallback（無空白可 split 時用整個 title 當 token）
+5. **複雜度**：**O(n²) → O(n · K · log n)**
 
-**問題**（ARCHITECTURE_REVIEW.md §3）：`project_brain/integrations/federation.py`
-849 行完整實作但 `tests/` 下不存在任何 `test_federation*`。PII 清理若有漏網之魚，
-export bundle 會攜帶 email / 內部主機 / 私有 IP / Slack URL / Cloud URL 流出
-企業邊界才被發現；import 去重邏輯若錯誤，跨專案知識會污染本地知識庫；
-`multi_brain_query` 的 `_validate_workdir` 防線未被迴歸測試保護。
+**測試**（`tests/unit/test_find_conflicts.py`，20 tests，6 群組）：
 
-**修法**：新增 `tests/unit/test_federation.py`（1469 行，75 個測試），分 8 個測試群組：
-
-#### `TestPIIStripping`（17 tests）
-驗證 `_strip_pii()` helper 的 6 個 regex 全部正確：
-- `_PII_EMAIL` — 單一 / 多 email 都被替換為 `[redacted-email]`
-- `_PII_INTERNAL` — `internal.*` / `corp.*` 主機被替換
-- `_PII_LOCAL` — `*.local` 主機被替換
-- `_PII_PRIVATE_IP` — 10.x / 172.16-31 / 192.168 私有網段替換；公網 IP (8.8.8.8, 172.15.x) **不誤傷**
-- `_PII_SLACK` — `*.slack.com` URL 替換
-- `_PII_CLOUD_URL` — S3 / Azure Blob / Google API 替換
-
-**關鍵 false-positive 保護**：
-- `test_variable_name_not_stripped` — 確認 `user_email`、`InternalAPI` 等程式碼識別字不被誤傷
-- `test_cjk_content_preserved` — 中文知識原樣保留
-- `test_public_ip_not_stripped` — 8.8.8.8 / 172.15.0.1 等公網 IP 留存
-
-#### `TestFederationBundle`（3 tests）
-`to_json` / `from_json` roundtrip、UTF-8 中文保留、缺欄位時套用預設值。
-
-#### `TestFederationExporter`（15 tests）
-- `export()` 主流程：空 DB / 基本節點 / `min_confidence` 過濾 / `max_nodes` 截取 / 按 confidence 降序 / `scope='global'` 過濾私有 scope
-- `_sanitise_node()` — 標題 + 內容都要套 PII 清理、domain_tags 收集（小寫、去重、排序）、空 title 略過、內容截斷 ≤ 600 字元
-- 檔案寫入驗證（自訂 `output_path` + roundtrip 驗證）
-- `_parse_tags()` — JSON array / CSV / empty / 破損 JSON 回退
-
-**關鍵設計測試**：
-- `test_export_excludes_private_scope` — 私有 scope 節點**絕不**流出聯邦
-- `test_export_strips_pii_from_title_and_content` — 標題和內容都必須清洗
-
-#### `TestFederationImporter`（10 tests）
-- 基本 import / low_confidence 過濾 / exact-title 去重 / Jaccard-similar title 去重
-- `dry_run` 不呼叫 `krb.submit()`
-- 訂閱過濾：空訂閱 = 接受所有；有訂閱 = 只接受 tag 相符的節點
-- 找不到 bundle 時靜默回傳零計數（不拋例外）
-- **FED-01 audit 整合測試**：`brain_db.record_federation_import()` 被正確呼叫，
-  dry_run 時**不**寫 audit
-
-#### `TestSubscriptionManager`（10 tests）
-CRUD 完整覆蓋 + 大小寫/空白正規化 + 多實例持久化 + `federation.json` 損毀時靜默回傳空清單。
-
-#### `TestFederationAutoSync`（10 tests，VISION-03）
-- `add_source` / `remove_source` / 重複 add 時冪等更新
-- `sync_all` 跳過 `enabled=false` / 跳過 `bundle_not_found`
-- **相對路徑解析**：相對 bundle_path 以 `brain_dir` 為基底（`brain_dir/sub/rel.json`）
-- `dry_run` 不實際寫入 KRB
-
-#### `TestValidateWorkdir`（8 tests）
-`project_brain/interfaces/mcp_server.py:_validate_workdir` 是 `multi_brain_query`
-的第一道防線，覆蓋：
-- 空字串 → `ValueError`
-- 含 `..` 的路徑遍歷 → `ValueError`（SEC-02）
-- 不存在的路徑 → `FileNotFoundError`
-- 缺 `.brain/` 的目錄 → `FileNotFoundError`
-- 檔案而非目錄 → `NotADirectoryError`
-- symlink 解析：指向合法 workdir 的 symlink 被 resolve 到真實路徑
-- `/etc` 禁區路徑（`(ValueError, FileNotFoundError)` 任一都是攻擊被擋）
-
-#### `TestConflictResolution`（3 tests）
-- 同 title 不同 content → exact-match 去重、本地內容**不**被覆蓋
-- 不同 title → 全部進 KRB Staging
-- **絕對不變量**：federation import 全程**零直接寫入 L3**；所有節點都進 `krb.submit()`
-
-### 測試輔助
-
-新增三個 helper 讓測試不依賴全量 `BrainDB` 初始化：
-
-- `_make_graph_with_scope(brain_dir)` — 建立真實 `KnowledgeGraph` 並 `ALTER TABLE ADD COLUMN scope`，
-  讓 `FederationExporter` 的主 SQL 路徑（而非 fallback）被覆蓋
-- `_FakeKRB` — 最小化 duck-type：僅暴露 `graph._conn`（去重查詢）+ `submit()`（記錄呼叫）
-- `_FakeBrainDB` — 僅暴露 `record_federation_import()` 用於 FED-01 audit 驗證
-
-### 測試結果
-
-| 群組 | Pass | Notes |
+| 群組 | Tests | 重點 |
 |---|---|---|
-| unit/test_federation.py | **75 / 75** | 全數通過 |
-| unit/（全量） | 610 / 613 | 3 個 pre-existing schema drift 與本次無關 |
-| 零 regression | ✓ | v0.33 基線維持 |
+| `TestFindConflictsBasic` | 4 | 空 DB / 單節點 / 無關 / 基本重複 |
+| `TestContradictionDetection` | 4 | must/must-not、enable/disable、**CJK 必須/禁止**、contradiction 排序優先 |
+| `TestOutputFormat` | 3 | dict 欄位完整 / similarity 降序 / top-50 cap |
+| `TestDeduplication` | 3 | (a,b)/(b,a) 同對只算一次 / 不與自己比 |
+| `TestScaleBeyond500` | 3 | **核心**：600+ 節點仍偵測到衝突 / 1000 節點 < 30s (實測 <1.5s) / traces 無汙染 |
+| `TestEdgeCases` | 3 | 空 title / `candidates_per_anchor` / 冪等 |
 
-### 文件更新
-
-- `docs/ARCHITECTURE_REVIEW.md` §3 BLOCKER-03：標記 ✅ 完成於 v0.34.0，附測試群組對照表
-- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：BLOCKER-03 狀態 ⏳ → ✅ v0.34.0 (75 tests)
-- `pyproject.toml`：version 0.33.0 → 0.34.0
+**方案 B 延後**：vector similarity + FAISS/HNSW 的 O(log n) nearest neighbor
+列為未來優化項目。
 
 ---
 
-## v0.33.0（2026-04-09）— REFACTOR-6.2 子套件化
+### MEDIUM-01 — BrainDB._execute_write() 統一寫入入口（18 tests）
 
-測試基準：535 passed（同 v0.32 基線，3 個 pre-existing schema drift 不計）
+**問題**（ARCHITECTURE_REVIEW.md §3 MEDIUM-01）：`brain_db.py` 原本有 16+ 個
+`self.conn.commit()` 路徑，部分在 `_write_guard()` 內、部分在外，造成不一致
+的錯誤處理、缺統一 rollback 語意、審計困難。
 
-### ARCHITECTURE_REVIEW.md §6.2 — 核心模組子套件化
+**修法**：
 
-**目標**：將原本 50+ 個扁平放在 `project_brain/` 根目錄的模組，依據
-ARCHITECTURE_REVIEW.md §6.2 建議結構拆分為 5 個職責子套件，為後續長期
-架構演進（單一真相源、事務邊界清晰、元件可替換）鋪路。
+1. **新增 `_execute_write(sql, params) → Cursor`** — 單語句統一入口：
+   `_write_guard` → execute → `commit()` / `rollback()` + re-raise。
+2. **新增 `_execute_writescript(script)`** — 多語句（DDL/batch）統一入口。
+3. **RLock 可重入設計** — `_write_guard` 用 `threading.RLock`（REF-03），
+   呼叫者已持有鎖時可安全巢狀呼叫 `_execute_write`，讓增量遷移無需一次改完。
+4. **重構 8 個 runtime 寫路徑** 改走統一入口：
+
+   | 方法 | 原位置 | 修法 |
+   |---|---|---|
+   | `search_nodes` trace INSERT | line 776 | `_execute_write` |
+   | `prune_episodes` DELETE | line 797 | `_execute_write` |
+   | `pin_node` UPDATE | line 819 | `_execute_write` |
+   | `record_federation_import` INSERT | line 1088 | `_execute_write` |
+   | `add_edge` INSERT | line 1117 | `_execute_write` |
+   | `add_temporal_edge` UPDATE+INSERT | line 1296 | 顯式 `_write_guard` + try/rollback |
+   | `emit` INSERT | line 1357 | `_execute_write` |
+   | `optimize` FTS5 rebuild | line 1396 | `_execute_write` |
+
+5. **刻意保留未保護**：`_setup()` / `_migrate_schema()`（init-time，無並發呼叫者）
+
+**測試**（`tests/unit/test_execute_write.py`，18 tests，4 群組）：
+
+| 群組 | Tests | 重點 |
+|---|---|---|
+| `TestExecuteWriteCore` | 5 | 成功 commit / 錯誤 rollback / cursor 欄位 / **RLock 巢狀** / **50 threads 序列化** |
+| `TestExecuteWriteScript` | 3 | 多語句 / rollback / 10 threads 序列化 |
+| `TestRefactoredCallers` | 8 | 每個重構後 caller 獨立行為驗證 |
+| `TestRegressionGuards` | 2 | 40 threads 混合並發無 corruption / lock 阻塞語意 |
+
+---
+
+### v0.40 提前實作 — ARCHITECTURE_REVIEW §6.2 目錄重構
+
+**背景**：`docs/ARCHITECTURE_REVIEW.md §8.5 v0.40` 規劃的「目錄重構
+（core/pipeline/engines/interfaces）」本版提前實作，為後續長期架構演進
+（單一真相源、事務邊界清晰、元件可替換）鋪路。
 
 **新目錄結構**：
 
@@ -436,69 +153,85 @@ project_brain/
 ├── core/                 # 核心不變數據層
 │   ├── brain_db.py       # 唯一真相源（+ SCHEMA_VERSION）
 │   ├── session_store.py  # L1a
-│   └── constants.py      # 全域常數（monkey-patch friendly）
+│   └── constants.py      # monkey-patch friendly
 │
 ├── pipeline/             # 自動知識管線
-│   ├── signal.py         # Layer 1/2 Signal / SignalKind / SignalQueue（從 pipeline.py 拆出）
-│   ├── executor.py       # Layer 4 NodeSpec / KnowledgeDecision / KnowledgeExecutor（從 pipeline.py 拆出）
-│   ├── llm_judgment.py   # Layer 3 LLMJudgmentEngine（搬自 project_brain/llm_judgment.py）
-│   └── worker.py         # Layer 3.5 PipelineWorker（搬自 project_brain/pipeline_worker.py）
+│   ├── signal.py         # Layer 1/2（從 pipeline.py 拆出）
+│   ├── executor.py       # Layer 4（從 pipeline.py 拆出）
+│   ├── llm_judgment.py   # Layer 3
+│   └── worker.py         # Layer 3.5（原 pipeline_worker.py）
 │
 ├── engines/              # 處理引擎
-│   ├── context.py            # ContextEngineer
-│   ├── nudge_engine.py       # NudgeEngine
-│   ├── decay_engine.py       # DecayEngine
-│   ├── review_board.py       # KnowledgeReviewBoard
-│   ├── memory_synthesizer.py # MemorySynthesizer
-│   ├── conflict_resolver.py  # ConflictResolver
-│   └── knowledge_validator.py
+│   └── context / nudge_engine / decay_engine / review_board /
+│       memory_synthesizer / conflict_resolver / knowledge_validator
 │
 ├── interfaces/           # 外部介面
-│   ├── cli.py / cli_*.py
-│   ├── mcp_server.py
-│   ├── api_server.py
-│   └── web_ui/
+│   └── cli / cli_* / mcp_server / api_server / web_ui/
 │
 └── integrations/         # 外部系統整合
-    ├── federation.py
-    └── graphiti_adapter.py
+    └── federation / graphiti_adapter
 ```
 
-**向後相容策略**：所有搬移的檔案在原位置保留 compat shim，使用
-`sys.modules[__name__] = _real` 別名技巧讓舊路徑與新路徑**指向同一個 module
-物件**，確保：
+**向後相容策略**：所有搬移檔在原位置保留 `sys.modules[__name__] = _real`
+別名式 compat shim，舊/新 import 路徑**指向同一個 module 物件**，確保：
 
-1. `from project_brain.brain_db import BrainDB` 等既有 import 繼續運作（~493 處無需修改）
-2. `monkeypatch.setattr(project_brain.constants, "BASE_DECAY_RATE", 0.01)` 仍會影響
-   `core/brain_db.py` 中 `from . import constants as _constants` 取得的引用（保留 REF-04 契約）
+1. `from project_brain.brain_db import BrainDB` 等既有 import 繼續運作（493+ 處無需修改）
+2. `monkeypatch.setattr(project_brain.constants, ...)` 仍會影響 `core/brain_db.py` 中
+   `from . import constants as _constants` 取得的引用（保留 REF-04 契約）
 3. `pyproject.toml [project.scripts] brain = "project_brain.cli:main"` 入口點無需改動
 4. `isinstance` / 單例 / 模組級 logger 全部如常運作
 
-**搬移規模**：
-- Phase 1: `pipeline/` — pipeline.py 拆分為 signal.py + executor.py，另搬入 llm_judgment.py + worker.py
-- Phase 2: `core/` — brain_db.py + session_store.py + constants.py
-- Phase 3: `engines/` — context + nudge + decay + review_board + memory_synthesizer + conflict_resolver + knowledge_validator
-- Phase 4: `interfaces/` — cli + 5×cli_* + mcp_server + api_server + web_ui/
-- Phase 5: `integrations/` — federation + graphiti_adapter
+**搬移規模**：20 檔案搬移 + 20 compat shim + 5 個 `__init__.py`
 
-共 20 個檔案搬移 + 20 個 compat shim + 5 個 `__init__.py`。
-
-**未納入本次重構**（6.2 提及但屬新功能非 refactor）：
-- `core/` 合併 graph.py 進 brain_db.py（DB schema 統一為 v31）— 需 migration 腳本
-- `integrations/llm_client.py`（統一 LLM 介面）— 需新實作
-
-**測試驗證**：
-- 538 unit tests：535 passed、3 pre-existing schema drift（與 baseline 相同）
-- 67 integration tests：63 passed、4 pre-existing web_ui `scope` column bug
-- 零 regression
-- 修正 2 個 test_arch_decisions_v05 路徑（核心模組搬移後 `_PKG / "cli.py"` 需指向 `interfaces/cli.py`）
+**未納入本次（屬新功能非 refactor，留待正式 v0.40）**：
+- `core/` 合併 `graph.py` 進 `brain_db.py`（需 DB schema v31 migration）
+- `integrations/llm_client.py`（統一 LLM 介面）
 
 **關鍵實作細節**：
-- `project_brain/core/brain_db.py` 內部 4 處 `from .X import Y` 改為 `from ..X import Y`（cross-boundary 跨出 core/ 回根目錄）
+- `project_brain/core/brain_db.py` 內部 4 處 `from .X` → `from ..X`（cross-boundary）
 - `project_brain/engines/context.py` 內部 7 處類似調整
-- `project_brain/web_ui/__init__.py` compat shim 需**同時** pre-register 子模組
-  `sys.modules[__name__ + ".server"]`，否則 Python 會從 aliased package 的 `__path__`
-  重新載入 `interfaces/web_ui/server.py` 建立獨立 module 物件，破壞 `is` 檢查
+- `project_brain/web_ui/__init__.py` compat shim 必須 pre-register
+  `sys.modules[__name__ + ".server"]`，否則 Python 會從 aliased package 的
+  `__path__` 重新載入 `interfaces/web_ui/server.py` 建立獨立 module 物件，
+  破壞 `is` 檢查
+
+---
+
+### 測試累計成果
+
+| | v0.32 baseline | v0.33 final | 增量 |
+|---|---|---|---|
+| passed | 534 | **665** | **+131** |
+| pre-existing drift | 4 | 3 | −1 flake 恢復 |
+| regression | — | **0** | — |
+
+**新增測試檔**（5 個）：
+- `tests/unit/test_federation.py` (75 tests, BLOCKER-03)
+- `tests/unit/test_graph_cas.py` (17 tests, HIGH-01)
+- `tests/unit/test_find_conflicts.py` (20 tests, HIGH-03)
+- `tests/unit/test_execute_write.py` (18 tests, MEDIUM-01)
+- `tests/unit/test_arch_decisions_v05.py` 更新（§6.2 目錄重構後的路徑修正）
+
+### 文件更新
+
+- `docs/ARCHITECTURE_REVIEW.md` §3 BLOCKER-03 / HIGH-01 / HIGH-03 / MEDIUM-01
+  / §6.2 — 全部標記 ✅ 完成於 v0.33.0
+- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格 — 4 個項目狀態 ⏳ → ✅
+- `pyproject.toml` — version 0.32.0 → 0.33.0
+
+### Phase 2 進度
+
+✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 + HIGH-01 + HIGH-03 + MEDIUM-01 (v0.33)
+⏳ 剩餘 **MEDIUM-04**（KRB staging 自動清理，3h Haiku）— Phase 2 最後一項，
+預計滾入 v0.34。
+
+### v0.34 預計（§8.4 可觀測性與可維護性）
+
+- MEDIUM-02 KG/BrainDB 事件同步
+- MEDIUM-04 KRB staging 自動清理
+- MEDIUM-07 CI benchmark baseline
+- Pipeline metrics dashboard
+- `brain health` 命令
 
 ---
 
