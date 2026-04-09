@@ -1341,15 +1341,18 @@ def migrate_v30_to_v31(brain_dir: Path):
 
 **實測**：一次 context 吞下 pipeline.py + brain_config.py + memory_synthesizer.py + conflict_resolver.py + krb_ai_assist.py + knowledge_validator.py + mcp_server.py 共 7 個核心檔案（~5500 行），發現現有 `OllamaClient` 和 `KnowledgeExecutor.validate()` 可直接複用，大幅減少實作量。
 
-### 8.3 v0.33 — 資料正確性強化（2 週）
+### 8.3 v0.33 — 資料正確性強化（2 週）✅ 完成於 2026-04-09
 
 > **🎯 主要開發 Model**：**Sonnet 4.6** (大部分是審慎的重構)
 > **🎯 運行 Model**：無直接影響（但 Federation 驗證涉及 PII，需小心）
 
-- BLOCKER-03：Federation 完整測試 `[Sonnet 4.6]`
-- HIGH-01：KnowledgeGraph CAS `[Sonnet 4.6]`
-- HIGH-03：find_conflicts 優化 `[Sonnet 4.6]`（或 **Opus 4.6** 若採向量方案）
-- MEDIUM-01：_execute_write 統一入口 `[Sonnet 4.6]`
+- ✅ BLOCKER-03：Federation 完整測試 `[Sonnet 4.6]` — 75 tests
+- ✅ HIGH-01：KnowledgeGraph CAS `[Sonnet 4.6]` — 17 tests
+- ✅ HIGH-03：find_conflicts 優化 `[Sonnet 4.6]`（方案 A：FTS5 候選者過濾） — 20 tests
+- ✅ MEDIUM-01：_execute_write 統一入口 `[Sonnet 4.6]` — 18 tests
+
+**累計**：v0.33.0 新增 **130 tests**，全量 unit suite 534 → 665（零 regression）。
+**附加**：v0.40 §6.2 目錄重構（core/pipeline/engines/interfaces/integrations）提前實作。
 
 ### 8.4 v0.34 — 可觀測性與可維護性（3 週）
 
