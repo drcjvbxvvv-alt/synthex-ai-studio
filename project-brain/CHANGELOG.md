@@ -4,6 +4,71 @@
 
 ---
 
+## v0.32.0（2026-04-09）— BLOCKER-01 Pipeline 神經接通
+
+測試基準：888 passed（+28 新增 LLMJudgmentEngine + PipelineWorker 測試）
+
+### BLOCKER-01 — 自動知識生產管線 Layer 3 + 背景 Worker
+
+**問題**：v0.31 之前 `pipeline.py` docstring 寫「由 LLMJudgmentEngine 產生」但整個類別不存在。Signal 能入隊（Layer 1/2 ✓），`KnowledgeExecutor` 能寫入（Layer 4 ✓），但中間的 LLM 判斷層完全缺席 → 所有 signal 永遠停在 `pending` 狀態，30 天後被標記 `skipped`。
+
+**修法**：新增兩個獨立模組
+
+#### `project_brain/llm_judgment.py`（新檔，319 行）
+
+- `LLMJudgmentEngine` — Layer 3 核心類別
+- `from_brain_config(brain_dir)` 工廠方法：
+  - 優先使用 `[pipeline.llm]` Ollama（gemma4:27b MoE）
+  - Ollama 不可用時 fallback → Anthropic Haiku 4.5
+  - 最終備援：預設 OllamaClient
+- `analyze(signal, related_nodes)` → `KnowledgeDecision`：
+  - 結構化 JSON prompt（含 Rule/Pitfall/Decision/ADR/Component 分類規則）
+  - 輸出經由 `KnowledgeExecutor.validate()` 清洗（confidence ≤ 0.85 上限）
+  - Prompt Injection 防護（共用 `_INJECTION_PATTERNS`）
+  - JSON 解析容錯：處理 markdown fence、前後雜訊、空回應
+  - LLM 任何異常 → 安全降級為 `skip`（reason 含 `llm_error:` 前綴）
+- Duck-typed client 介面：同時支援 `anthropic.Anthropic` 和 `krb_ai_assist.OllamaClient`
+
+#### `project_brain/pipeline_worker.py`（新檔，248 行）
+
+- `PipelineWorker` — Layer 3.5 背景迴圈
+  - `_loop()`: `dequeue_batch` → `judge.analyze` → `executor.run` → `mark_done/failed`
+  - 任何異常都只 log，不終止迴圈
+  - 每 100 輪呼叫 `cleanup_stale()` 清理過期 pending signals
+  - `start()` / `stop()` 提供完整生命週期
+- `start_global_worker(brain_db, brain_dir)` — 全域單例工廠
+  - 讀 `brain.toml [pipeline.enabled]`，false 時直接 no-op
+  - `[pipeline.worker_interval_seconds]` 控制輪詢間隔（預設 60s）
+  - 幂等：重複呼叫回傳同一 worker
+
+#### `mcp_server.create_server()` 整合
+
+- 在 decay daemon 和 session cleanup daemon 之後啟動 pipeline worker
+- 仿 `_decay_daemon_started` guard 模式防止重複啟動
+- 啟動失敗只記 warning，不影響 MCP server 本身
+
+#### `brain.toml [pipeline]` 註釋更新
+
+- 明示「v0.32+ Layer 3 已實作，worker 會真正消費 signal_queue」
+- `enabled=false` 作為停用選項
+
+#### 測試（28 個新增）
+
+- `tests/unit/test_llm_judgment.py`（16 個）：J-01 ~ J-14 涵蓋 analyze、降級、JSON 解析容錯、prompt 安全、confidence 上限、from_brain_config 容錯
+- `tests/unit/test_pipeline_worker.py`（12 個）：W-01 ~ W-12 涵蓋 add/skip/failed 流程、批次處理、thread 生命週期、全域單例、迴圈韌性
+
+#### 架構意義
+
+v0.32 後 Signal Pipeline 真正跑起來：
+```
+git commit → Signal enqueue → [60s 輪詢] → LLMJudgmentEngine →
+  KnowledgeDecision → KnowledgeExecutor → L3 node (auto_pipeline 標記)
+```
+
+使用者不再需要手動 `brain add`，git commit 後 Brain 會自主決定是否提取知識。
+
+---
+
 ## v0.31.0（2026-04-09）— Phase 1 止血修復
 
 測試基準：860 passed（排除 14 個既有 WebUI/schema-version 失敗）

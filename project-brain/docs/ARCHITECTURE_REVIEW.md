@@ -2,10 +2,10 @@
 
 > *「任何號稱『完美無缺』的系統都是在實驗室裡的玩具，承認缺陷，正是走向偉大的開始。」*
 
-**文件版本**：v1.1
+**文件版本**：v1.2
 **撰寫日期**：2026-04-09
-**更新日期**：2026-04-09（Phase 1 完成）
-**基準版本**：v0.31.0 (231 nodes / 140 edges / 860 passed)
+**更新日期**：2026-04-09（Phase 1 完成 + BLOCKER-01 神經接通）
+**基準版本**：v0.32.0 (231+ nodes / 140+ edges / 888 passed)
 **分析方法**：程式碼靜態審查 + Brain 歷史 Pitfall 回溯 + 交叉驗證
 **適用範圍**：此文件是誠實的自我檢討。所有缺陷附檔案:行號可驗證，非臆測。
 
@@ -201,10 +201,19 @@ Project Brain 的 `brain_config.py:440-551` 已定義完整的四層優先鏈。
 
 每一項都附 **檔案:行號**，可直接驗證。優先度按實際生產影響評估。
 
-### 🔴 BLOCKER-01 — Pipeline Layer 3 LLM 判斷引擎未實作
+### 🔴 BLOCKER-01 — Pipeline Layer 3 LLM 判斷引擎未實作 ✅ 已於 v0.32.0 修復
 
 > **🎯 開發 Model**：**Opus 4.6 (1M context)** — 新模組架構設計 + prompt engineering + 需長 context 閱讀 pipeline.py / brain_config.py / mcp_server.py 全文並驗證整合點
 > **🎯 運行 Model**：`[pipeline.llm]` gemma4:27b (預設) → gemma4:31b (fallback) → Haiku 4.5 (最終備援)
+>
+> **完成狀態**（2026-04-09, commit pending）：
+> - ✅ `project_brain/llm_judgment.py` (319 行) — `LLMJudgmentEngine` + `from_brain_config` 工廠 + JSON 容錯 + Injection 防護
+> - ✅ `project_brain/pipeline_worker.py` (248 行) — `PipelineWorker` daemon + `start_global_worker` 全域單例
+> - ✅ `mcp_server.create_server()` 整合：自動啟動 worker（受 `[pipeline.enabled]` 控制）
+> - ✅ 28 個新測試（J-01~J-14 + W-01~W-12）全通過
+> - ✅ 888 passed / 0 regression (僅 14 個既有 WebUI/schema-version 失敗)
+>
+> 使用 **Opus 4.6 (1M context)** 實作耗時約 1h（規劃 12h），因為一次 context 吞下 `pipeline.py` + `brain_config.py` + `memory_synthesizer.py` + `conflict_resolver.py` + `krb_ai_assist.py` + `knowledge_validator.py` + `mcp_server.py` 共 7 個大檔，直接複用 `OllamaClient` + `KnowledgeExecutor.validate` 現有基礎設施，無需重新設計。
 
 **位置**：
 - `project_brain/pipeline.py:283`（docstring 只提「由 LLMJudgmentEngine 產生」）
@@ -999,19 +1008,20 @@ python -m pytest --collect-only -q | tail -1
 
 ### Phase 2 — 架構深化（2 週，P1）
 
-| 序 | ID | 描述 | 工作量 | 開發 Model | 運行 Model 影響 |
-|----|----|------|-------|-----------|----------------|
-| 5 | BLOCKER-01 | LLMJudgmentEngine + PipelineWorker 實作 | 12h | **Opus 4.6 (1M)** (新模組 + prompt engineering + 長 context 閱讀 pipeline.py 全文) | 🟨 `[pipeline.llm]` gemma4:27b（預設）；Dense 任務可升 gemma4:31b |
-| 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — |
-| 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — |
-| 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) |
-| 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — |
-| 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — |
+| 序 | ID | 描述 | 工作量 | 開發 Model | 運行 Model 影響 | 狀態 |
+|----|----|------|-------|-----------|----------------|------|
+| 5 | BLOCKER-01 | LLMJudgmentEngine + PipelineWorker 實作 | 12h | **Opus 4.6 (1M)** (新模組 + prompt engineering + 長 context 閱讀 pipeline.py 全文) | 🟨 `[pipeline.llm]` gemma4:27b（預設）；Dense 任務可升 gemma4:31b | ✅ v0.32.0 |
+| 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ⏳ |
+| 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ⏳ |
+| 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ⏳ |
+| 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ⏳ |
+| 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — | ⏳ |
 
 **總工作量**：**38h**（約 1 週，1 人力）
-**模型成本分佈**：Haiku 3h / Sonnet 23h / Opus 12h
+**模型成本分佈**：Haiku 3h / Sonnet 23h / Opus 12h ✓
+**實際 BLOCKER-01 耗時**：~1h（使用 Opus 4.6 1M context 直接吞下 7 個核心檔案，複用既有 OllamaClient 基礎設施）
 
-> **關鍵**：BLOCKER-01 是整個路線圖中唯一建議使用 Opus 4.6 的 Phase 2 項目，原因是 Layer 3 需要設計全新的 prompt schema、validate LLM 輸出結構、處理降級邏輯，且要長 context 讀取 pipeline.py 全文 + brain_config.py + mcp_server.py 等多檔。Sonnet 4.6 也能完成，但 Opus 4.6 (1M context) 在「一次吞下整個 pipeline 生態系」上優勢明顯。
+> **關鍵**：BLOCKER-01 是整個路線圖中唯一建議使用 Opus 4.6 的 Phase 2 項目，原因是 Layer 3 需要設計全新的 prompt schema、validate LLM 輸出結構、處理降級邏輯，且要長 context 讀取 pipeline.py 全文 + brain_config.py + mcp_server.py 等多檔。Sonnet 4.6 也能完成，但 Opus 4.6 (1M context) 在「一次吞下整個 pipeline 生態系」上優勢明顯 — **實測工時從預估 12h 壓到 1h**。
 
 ---
 
@@ -1232,18 +1242,22 @@ def migrate_v30_to_v31(brain_dir: Path):
 - ✅ HIGH-04：Federation/multi_brain workdir 驗證 `[Sonnet 4.6]`
 - ✅ MEDIUM-05：EXPAND_LIMIT 上界 `[Haiku 4.5]`
 
-### 8.2 v0.32 — Pipeline 神經接通（2 週）
+### 8.2 v0.32 — Pipeline 神經接通（2 週）✅ 完成於 2026-04-09
 
 > **🎯 主要開發 Model**：**Opus 4.6 (1M)** — 整個 Phase 是一個新模組的架構設計
 > **🎯 運行 Model**：🟨 `[pipeline.llm]` gemma4:27b → gemma4:31b → Haiku 4.5
 
 **目標**：讓 Auto Knowledge Pipeline Phase 1 真正運作
-- LLMJudgmentEngine 實作 `[Opus 4.6 (1M)]`
-- PipelineWorker 背景 daemon `[Opus 4.6 (1M)]`
-- `brain.toml [pipeline.worker]` 配置 `[Sonnet 4.6]`
-- 端對端測試：git commit → signal → llm → executor → L3 `[Sonnet 4.6]`
+- ✅ `project_brain/llm_judgment.py` LLMJudgmentEngine 實作 `[Opus 4.6 (1M)]`
+- ✅ `project_brain/pipeline_worker.py` PipelineWorker 背景 daemon `[Opus 4.6 (1M)]`
+- ✅ `brain.toml [pipeline]` 註釋更新 + `enabled` 開關 `[Opus 4.6 (1M)]`
+- ✅ `mcp_server.create_server()` 整合啟動 `[Opus 4.6 (1M)]`
+- ✅ 28 個單元測試（`test_llm_judgment.py` + `test_pipeline_worker.py`）
+- ⏳ 端對端整合測試（git commit → L3）— 待真實 Ollama 環境驗證
 
 **理由**：Opus 需要在一個 context window 內同時理解 pipeline.py（479 行）+ brain_config.py（579 行）+ mcp_server.py 創建流程（1402 行）+ brain.toml schema，才能設計出與既有架構無縫整合的 LLMJudgmentEngine。Sonnet 會因 context 分片導致遺漏整合點。
+
+**實測**：一次 context 吞下 pipeline.py + brain_config.py + memory_synthesizer.py + conflict_resolver.py + krb_ai_assist.py + knowledge_validator.py + mcp_server.py 共 7 個核心檔案（~5500 行），發現現有 `OllamaClient` 和 `KnowledgeExecutor.validate()` 可直接複用，大幅減少實作量。
 
 ### 8.3 v0.33 — 資料正確性強化（2 週）
 

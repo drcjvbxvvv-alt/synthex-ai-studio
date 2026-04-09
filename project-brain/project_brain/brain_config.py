@@ -444,6 +444,8 @@ freshness_warn_days = 30         # 超過幾天的知識顯示過時警告
 dedup_threshold     = 0.85       # 語意去重 cosine 閾值
 
 # ── 自動知識生產管線 ───────────────────────────────────────────
+# v0.32+ Layer 3 (LLMJudgmentEngine) 已實作，worker 會真正消費 signal_queue。
+# 設 enabled=false 可完全停用自動管線（signal 仍會入隊，但不會被分析）。
 [pipeline]
 enabled                 = true
 worker_interval_seconds = 60     # worker 輪詢間隔（秒）

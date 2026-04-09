@@ -67,6 +67,10 @@ _DECAY_DAEMON_INTERVAL = int(os.environ.get("BRAIN_DECAY_INTERVAL", str(24 * 360
 _decay_daemon_started = False
 _decay_daemon_lock = threading.Lock()
 
+# BLOCKER-01: Auto Knowledge Pipeline 背景 worker
+_pipeline_worker_started = False
+_pipeline_worker_lock = threading.Lock()
+
 
 def _cleanup_expired_sessions() -> None:
     """MEM-03: 清除超過 TTL 的 session served sets，避免記憶體洩漏。"""
@@ -1386,6 +1390,19 @@ def create_server(workdir: str) -> Any:
             _t.start()
             _cleanup_daemon_started = True
             logger.debug("BUG-04: session cleanup daemon started (interval=%ds)", _CLEANUP_DAEMON_INTERVAL)
+
+    # BLOCKER-01: start Auto Knowledge Pipeline worker (once per process)
+    # Reads [pipeline.enabled] from brain.toml; no-op if disabled.
+    global _pipeline_worker_started
+    with _pipeline_worker_lock:
+        if not _pipeline_worker_started:
+            try:
+                from project_brain.pipeline_worker import start_global_worker
+                _pw = start_global_worker(brain.db, brain_dir=brain.brain_dir)
+                if _pw is not None:
+                    _pipeline_worker_started = True
+            except Exception as _e:
+                logger.debug("BLOCKER-01: pipeline worker bootstrap error: %s", _e)
 
     return mcp
 
