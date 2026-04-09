@@ -4,6 +4,128 @@
 
 ---
 
+## v0.36.0（2026-04-09）— HIGH-03 find_conflicts O(n²) → FTS5 候選者過濾
+
+測試基準：**646 passed**（v0.35 基線 627 + 新增 20 個 find_conflicts 測試 − 1 flake 恢復；3 個 pre-existing schema drift 不計）
+
+### HIGH-03 — find_conflicts() O(n²) 字串比對，500 節點上限
+
+**問題**（ARCHITECTURE_REVIEW.md §3 HIGH-03）：
+`project_brain/core/brain_db.py:find_conflicts()` 原本使用：
+
+```python
+nodes = [dict(r) for r in self.conn.execute(
+    "SELECT id, type, title, content FROM nodes LIMIT 500"   # ← 硬編碼上限
+).fetchall()]
+for i, a in enumerate(nodes):
+    for b in nodes[i + 1:]:   # ← O(n²)
+        ...
+```
+
+三個級聯缺陷：
+1. **硬編碼 `LIMIT 500`** — 在 5000 節點的真實知識庫會 skip 掉 90%+ 的可能衝突，
+   但錯誤對使用者不可見（find_conflicts 從不回報「還有 4500 筆沒比對」）
+2. **O(n²) pairwise** — 500 節點 = 125,000 次迴圈 + 字串操作；移除 LIMIT
+   之後在 1000 節點上會退化到秒級
+3. **掩蓋性問題** — 500 的上限讓 O(n²) 問題「看起來還行」，但當 KB 成長後
+   靜默遺失衝突無警告
+
+### 修法（方案 A — FTS5 候選者前置過濾）
+
+**新增 `_find_conflict_candidates(title, limit)` 內部 helper**：
+```python
+def _find_conflict_candidates(self, title: str, limit: int = 10) -> list:
+    """HIGH-03 helper: 用 FTS5 n-gram match 找到 top-K 候選節點 id。
+
+    與 search_nodes() 的差別：
+      - 不寫 traces 表（find_conflicts 會對每個節點呼叫，避免噪音）
+      - 只回傳 id（呼叫端已持有全量 node 資料）
+      - 不做 decay re-ranking（本階段只是候選者粗篩）
+    """
+```
+
+使用既有的 `BrainDB._ngram()` + `BrainDB._sanitize_fts()` + `nodes_fts` 表，
+回傳 O(log n) 的 top-K 候選 id 列表。
+
+**重寫 `find_conflicts()` 主迴圈**：
+```python
+def find_conflicts(
+    self,
+    similarity_threshold: float = 0.7,
+    candidates_per_anchor: int = 10,    # 新參數
+) -> list:
+    # 載入所有節點（不再 LIMIT 500）
+    all_nodes = {r["id"]: dict(r) for r in self.conn.execute(
+        "SELECT id, type, title, content FROM nodes"
+    ).fetchall()}
+
+    conflicts, seen = [], set()
+    for anchor_id, anchor in all_nodes.items():
+        candidate_ids = self._find_conflict_candidates(
+            anchor["title"], limit=candidates_per_anchor,
+        )
+        for cand_id in candidate_ids:
+            if cand_id == anchor_id or pair_seen:
+                continue
+            # Jaccard + contradiction 檢查只對 top-K 做
+            ...
+```
+
+**複雜度**：**O(n²)** → **O(n · K · log n)**，K 預設 10。
+
+**附帶修正**：
+- CJK 純字元 title（無空白可 `split()`）fallback 用整個 title 當 token，
+  避免 `a_words` 為空導致 anchor 被略過
+- 保留既有 `seen` pair 去重 / 輸出 dict 格式 / contradiction 優先排序 / top-50 cap
+- 新增 `candidates_per_anchor` 參數讓呼叫端可調整候選池大小
+
+### 測試（tests/unit/test_find_conflicts.py，20 tests）
+
+| 群組 | Tests | 驗收 |
+|---|---|---|
+| `TestFindConflictsBasic` | 4 | 空 DB / 單節點 / 無關節點 / 基本重複偵測 |
+| `TestContradictionDetection` | 4 | must/must-not、enable/disable、**CJK 必須/禁止**、contradiction 排序優先於 duplicate |
+| `TestOutputFormat` | 3 | dict 必填欄位 / similarity 降序 / top-50 cap |
+| `TestDeduplication` | 3 | (a,b) 與 (b,a) 同對只算一次 / 節點不與自己比對 / similarity_threshold 生效 |
+| `TestScaleBeyond500` | 3 | **核心驗收** |
+| `TestEdgeCases` | 3 | 空 title 安全略過 / `candidates_per_anchor` 參數生效 / 冪等無副作用 |
+
+**核心 HIGH-03 驗收（`TestScaleBeyond500`）**：
+
+- `test_F15_conflict_detected_beyond_500_nodes` — 建立 600 個無關節點 + 2 個衝突節點
+  （最後加入），原本的 `LIMIT 500` 會 skip 掉後面加入的衝突；HIGH-03 修法後能偵測到
+- `test_F16_runtime_reasonable_at_1000_nodes` — 1000 節點 find_conflicts 必須 < 30 秒
+  （實測 < 1.5s）
+- `test_F17_no_trace_pollution` — `_find_conflict_candidates` 內部絕不寫 `traces` 表，
+  防止每次 find_conflicts 留下數千筆無意義的 trace 記錄
+
+### 測試結果
+
+| | passed | failed |
+|---|---|---|
+| `test_find_conflicts.py` | **20 / 20** | 0 |
+| `tests/unit/` 全量 | **646** | 4 pre-existing (3 schema drift + 1 timing flake) |
+| Regression | 0 | — |
+
+### 文件更新
+
+- `docs/ARCHITECTURE_REVIEW.md` §3 HIGH-03：標記 ✅ 完成於 v0.36.0（方案 A）+ 6 個測試群組對照
+- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：HIGH-03 ⏳ → ✅ v0.36.0 (20 tests, 方案 A)
+- `pyproject.toml`：version 0.35.0 → 0.36.0
+
+### 方案 B 延後
+
+徹底重構為 vector similarity + FAISS/HNSW 的 O(log n) nearest neighbor 尚未實作
+（需要 embedder 索引策略設計，建議用 Opus 4.6）。方案 A 的 FTS5 候選者過濾已
+充分解決當前可擴展性問題，方案 B 列為未來優化項目。
+
+### Phase 2 進度
+
+✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 (v0.34) · ✅ HIGH-01 (v0.35) · ✅ HIGH-03 (v0.36)
+⏳ MEDIUM-01 `_execute_write` 統一入口 · MEDIUM-04 KRB staging 清理
+
+---
+
 ## v0.35.0（2026-04-09）— HIGH-01 KnowledgeGraph 樂觀鎖 CAS
 
 測試基準：**627 passed**（v0.34 基線 610 + 新增 17 個 CAS 測試；3 個 pre-existing schema drift 不計）

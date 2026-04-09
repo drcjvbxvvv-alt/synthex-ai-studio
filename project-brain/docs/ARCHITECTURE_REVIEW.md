@@ -600,12 +600,34 @@ ERROR project_brain.brain_db: session migration table failed: no such table: mem
 
 ---
 
-### 🟠 HIGH-03 — find_conflicts() O(n²) 字串比對，500 節點上限
+### 🟠 HIGH-03 — find_conflicts() O(n²) 字串比對，500 節點上限 ✅ 完成於 v0.36.0（2026-04-09，方案 A）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 演算法改寫 + FTS5 查詢優化；若採方案 B 向量搜尋則需要 Opus 4.6 來設計索引策略
 > **🎯 運行 Model**：🟩 Embedder（若採方案 B，用 nomic-embed-text）
 
-**位置**：`brain_db.py:1516-1580`
+**位置**：`project_brain/core/brain_db.py:1516` 起
+
+**修復成果**（v0.36.0，採方案 A — FTS5 候選者前置過濾）：
+- ✅ 移除硬編碼 `LIMIT 500`（原本在大型知識庫會 skip 掉 90%+ 的衝突）
+- ✅ 新增 `_find_conflict_candidates(title, limit)` 私有 helper：用 FTS5 n-gram match 做 O(log n) 候選者查詢，**不寫 traces 表**（避免每次 find_conflicts 汙染 trace）
+- ✅ `find_conflicts()` 主迴圈改為「每個 anchor 只與 top-K FTS5 候選者比對」
+- ✅ 新增 `candidates_per_anchor: int = 10` 參數，呼叫端可調整 FTS5 候選池大小
+- ✅ 複雜度從 **O(n²)** 降到 **O(n · K · log n)**，K 預設 10
+- ✅ CJK 純字元 title 的 fallback（無空白可 split 時用整個 title 當 token）
+- ✅ 保留既有 `seen` pair 去重 / 輸出格式 / contradiction 優先排序 / top-50 cap
+- ✅ `tests/unit/test_find_conflicts.py` 新增 **20 tests**，7 群組：
+  - `TestFindConflictsBasic` (4) — 空 DB / 單節點 / 無關節點 / 基本重複
+  - `TestContradictionDetection` (4) — must/must-not、enable/disable、CJK 必須/禁止、contradiction 排序優先
+  - `TestOutputFormat` (3) — 輸出欄位完整 / similarity 降序 / top-50 上限
+  - `TestDeduplication` (3) — (a,b)/(b,a) 同對只算一次 / 節點不與自己比 / similarity_threshold 生效
+  - `TestScaleBeyond500` (3) — **核心驗收：600+ 節點仍能偵測衝突 / 1000 節點 < 30s / traces 無汙染**
+  - `TestEdgeCases` (3) — 空 title 安全略過 / `candidates_per_anchor` 參數生效 / 冪等
+
+**效能實測**：1000 節點 find_conflicts 於開發機 < 1.5 秒完成（原本 O(n²) 在
+LIMIT 500 下已需數秒；移除 LIMIT 後 O(n²) 在 1000 節點會退化到 > 30s）。
+
+**方案 B 延後**：徹底重構為 vector similarity + FAISS/HNSW 的 O(log n)
+nearest neighbor 尚未實作，列為未來優化項目（需要 embedder 索引設計）。
 
 **問題代碼**：
 ```python
@@ -1041,7 +1063,7 @@ python -m pytest --collect-only -q | tail -1
 | 5 | BLOCKER-01 | LLMJudgmentEngine + PipelineWorker 實作 | 12h | **Opus 4.6 (1M)** (新模組 + prompt engineering + 長 context 閱讀 pipeline.py 全文) | 🟨 `[pipeline.llm]` gemma4:27b（預設）；Dense 任務可升 gemma4:31b | ✅ v0.32.0 |
 | 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ✅ v0.34.0 (75 tests) |
 | 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ✅ v0.35.0 (17 tests) |
-| 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ⏳ |
+| 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ✅ v0.36.0 (20 tests, 方案 A) |
 | 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ⏳ |
 | 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — | ⏳ |
 

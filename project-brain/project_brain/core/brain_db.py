@@ -1513,21 +1513,80 @@ class BrainDB:
 
     # ── FEAT-02: conflict detection ────────────────────────────
 
-    def find_conflicts(self, similarity_threshold: float = 0.7) -> list:
-        """FEAT-02: Detect potentially conflicting or duplicate knowledge nodes.
+    # ── HIGH-03: 內部 FTS5 候選者查詢（無 trace 汙染）────────────────
+
+    def _find_conflict_candidates(self, title: str, limit: int = 10) -> list:
+        """
+        HIGH-03 helper: 用 FTS5 n-gram match 找到 top-K 候選節點 id。
+
+        與 search_nodes() 的差別：
+          - 不寫 traces 表（find_conflicts 會對每個節點呼叫，避免噪音）
+          - 只回傳 id（呼叫端已持有全量 node 資料）
+          - 不做 decay re-ranking / confidence 排序（本階段只是候選者粗篩）
+        """
+        if not title:
+            return []
+        try:
+            ngram_tokens = BrainDB._ngram(title).split()
+            if not ngram_tokens:
+                return []
+            # 去重 + 過濾空字串 token
+            seen_tok: set = set()
+            unique_tokens: list[str] = []
+            for tok in ngram_tokens:
+                if tok and tok not in seen_tok:
+                    unique_tokens.append(tok)
+                    seen_tok.add(tok)
+            safe = [BrainDB._sanitize_fts(t) for t in unique_tokens]
+            safe = [t for t in safe if t and t != '""']
+            if not safe:
+                return []
+            fts_q = " OR ".join(f'"{t}"' for t in safe)
+            rows = self.conn.execute(
+                "SELECT id FROM nodes_fts WHERE nodes_fts MATCH ? LIMIT ?",
+                (fts_q, limit),
+            ).fetchall()
+            return [r["id"] for r in rows]
+        except Exception as _e:
+            logger.debug("_find_conflict_candidates failed for title=%.40s: %s",
+                         title, _e)
+            return []
+
+    def find_conflicts(
+        self,
+        similarity_threshold: float = 0.7,
+        candidates_per_anchor: int = 10,
+    ) -> list:
+        """FEAT-02 + HIGH-03: Detect potentially conflicting or duplicate knowledge.
 
         Returns up to 50 conflict dicts, each with:
           type ('duplicate' or 'contradiction'), node_a, node_b,
           title_a, title_b, similarity, reason.
 
         Contradictions are ranked before duplicates.
-        """
-        nodes = [dict(r) for r in self.conn.execute(
-            "SELECT id, type, title, content FROM nodes LIMIT 500"
-        ).fetchall()]
 
-        conflicts = []
-        seen: set  = set()
+        HIGH-03 optimization（ARCHITECTURE_REVIEW.md §3 HIGH-03）:
+          - 移除硬編碼 ``LIMIT 500``（原本掩蓋 90%+ 的衝突在大型知識庫中）
+          - O(n²) pairwise Jaccard → FTS5 候選者前置過濾
+          - 每個 anchor 節點只與 ``candidates_per_anchor`` 個 FTS5 相似候選比對
+          - 總複雜度從 O(n²) 降到 O(n · K · log n)，K 預設 10
+
+        Args:
+            similarity_threshold: Jaccard 重疊門檻（預設 0.7）
+            candidates_per_anchor: 每個 anchor 從 FTS5 取幾個候選者比對（預設 10）
+        """
+        # 載入所有節點（不再 LIMIT 500）
+        all_nodes = {
+            r["id"]: dict(r)
+            for r in self.conn.execute(
+                "SELECT id, type, title, content FROM nodes"
+            ).fetchall()
+        }
+        if not all_nodes:
+            return []
+
+        conflicts: list[dict] = []
+        seen: set = set()
         _contra = [
             ("must", "must not"), ("should", "should not"),
             ("use", "do not use"), ("enable", "disable"),
@@ -1535,25 +1594,51 @@ class BrainDB:
             ("需要", "不需要"), ("必須", "禁止"),
         ]
 
-        for i, a in enumerate(nodes):
-            a_words = set(a["title"].lower().split())
-            if not a_words:
+        # O(n · K · log n) — 每個 anchor 只與 FTS5 top-K 候選者比對
+        for anchor_id, anchor in all_nodes.items():
+            a_title = anchor.get("title") or ""
+            if not a_title:
                 continue
-            for b in nodes[i + 1:]:
-                pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
+            a_words = set(a_title.lower().split())
+            # HIGH-03 fallback: 如果 title 是純 CJK 沒有空白分隔，
+            # 直接用整個 title 當一個 token 確保 Jaccard 可算
+            if not a_words:
+                a_words = {a_title.lower()}
+
+            candidate_ids = self._find_conflict_candidates(
+                a_title, limit=candidates_per_anchor,
+            )
+
+            for cand_id in candidate_ids:
+                if cand_id == anchor_id:
+                    continue
+                pair_key = (
+                    anchor_id if anchor_id < cand_id else cand_id,
+                    cand_id   if anchor_id < cand_id else anchor_id,
+                )
                 if pair_key in seen:
                     continue
                 seen.add(pair_key)
 
-                b_words = set(b["title"].lower().split())
+                b = all_nodes.get(cand_id)
+                if not b:
+                    continue
+                b_title = b.get("title") or ""
+                b_words = set(b_title.lower().split())
+                if not b_words:
+                    b_words = {b_title.lower()} if b_title else set()
                 if not b_words:
                     continue
-                overlap = len(a_words & b_words) / len(a_words | b_words)
+
+                union = a_words | b_words
+                if not union:
+                    continue
+                overlap = len(a_words & b_words) / len(union)
                 if overlap < similarity_threshold:
                     continue
 
-                a_text = (a["title"] + " " + (a.get("content") or "")).lower()
-                b_text = (b["title"] + " " + (b.get("content") or "")).lower()
+                a_text = (a_title + " " + (anchor.get("content") or "")).lower()
+                b_text = (b_title + " " + (b.get("content") or "")).lower()
                 is_contra = any(
                     (ka in a_text and kb in b_text) or (kb in a_text and ka in b_text)
                     for ka, kb in _contra
@@ -1561,10 +1646,10 @@ class BrainDB:
                 ctype = "contradiction" if is_contra else "duplicate"
                 conflicts.append({
                     "type":       ctype,
-                    "node_a":     a["id"],
-                    "node_b":     b["id"],
-                    "title_a":    a["title"],
-                    "title_b":    b["title"],
+                    "node_a":     anchor_id,
+                    "node_b":     cand_id,
+                    "title_a":    a_title,
+                    "title_b":    b_title,
                     "similarity": round(overlap, 3),
                     "reason":     (
                         f"相似標題（{overlap:.0%} 重疊）且內容矛盾" if is_contra
