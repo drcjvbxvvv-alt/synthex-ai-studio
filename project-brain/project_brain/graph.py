@@ -251,46 +251,88 @@ class KnowledgeGraph:
         author:     str = "",
         meta:       dict = None,
         created_at: str = "",   # FEAT-07: preserve original git commit date
+        expected_version: Optional[int] = None,  # HIGH-01: optimistic lock
     ) -> str:
+        """
+        新增或更新節點。
+
+        HIGH-01 optimistic lock:
+            當 ``expected_version`` 為 None（預設）時維持舊行為：
+            `INSERT ... ON CONFLICT DO UPDATE`，但 UPDATE 分支會遞增 version。
+
+            當 ``expected_version`` 為整數時啟用 CAS：
+              - 節點不存在 → 必須 expected_version == 0，否則 raise
+              - 節點存在  → 必須 expected_version == current.version，否則 raise
+            讀-檢-寫由 ``self._lock`` 序列化保護。
+
+            不指定 ``expected_version`` 的呼叫者表示「last-writer-wins 可接受」
+            （批次 import、git scan 等場景），這些路徑不需要 CAS 檢查。
+
+        Raises:
+            ConcurrentModificationError: 啟用 CAS 且版本不符時。
+        """
         tags_json  = json.dumps(tags or [], ensure_ascii=False)
         meta_dict  = meta or {}
         meta_json  = json.dumps(meta_dict, ensure_ascii=False)
         # Fix: sync confidence from meta dict to the independent column
         # Ensures decay_engine and context.py see consistent values
         confidence = float(meta_dict.get("confidence", 0.8))
-        self._conn.execute("""
-            INSERT INTO nodes
-                (id, type, title, content, tags, source_url, author, meta, confidence,
-                 created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    COALESCE(NULLIF(?, ''), datetime('now')))
-            ON CONFLICT(id) DO UPDATE SET
-                type=excluded.type,
-                title=excluded.title,
-                content=excluded.content,
-                tags=excluded.tags,
-                source_url=excluded.source_url,
-                author=excluded.author,
-                meta=excluded.meta,
-                confidence=excluded.confidence
-                -- created_at is intentionally omitted: preserve original date
-        """, (node_id, node_type, title, content, tags_json,
-              source_url, author, meta_json, confidence,
-              created_at or None))
-        # A-8: 直接 INSERT N-gram 格式到 FTS5（單次寫入，無 double write）
-        try:
-            fts_title   = self._ngram_text(title)
-            fts_content = self._ngram_text(content or '')
-            self._conn.execute(
-                'INSERT INTO nodes_fts(rowid, id, title, content, tags) '
-                'VALUES ((SELECT rowid FROM nodes WHERE id=?), ?, ?, ?, ?)',
-                (node_id, node_id, fts_title, fts_content, tags_json)
-            )
-        except Exception as _fts_err:
-            # R-2: log instead of silently swallowing — node is saved but unsearchable
-            logger.warning("fts5_insert_failed node=%s: %s", node_id, _fts_err)
-        self._conn.commit()
-        return node_id
+
+        # HIGH-01: CAS 路徑 — 讀-檢-寫需要原子化
+        with self._lock:
+            if expected_version is not None:
+                row = self._conn.execute(
+                    "SELECT version FROM nodes WHERE id = ?", (node_id,)
+                ).fetchone()
+                actual_version = row[0] if row else None
+                # 不存在 → expected_version 必須為 0
+                if actual_version is None and expected_version != 0:
+                    raise ConcurrentModificationError(
+                        f"add_node CAS: node {node_id!r} does not exist "
+                        f"(expected version {expected_version}, actual=<missing>)"
+                    )
+                # 存在 → expected_version 必須等於當前 version
+                if actual_version is not None and actual_version != expected_version:
+                    raise ConcurrentModificationError(
+                        f"add_node CAS: node {node_id!r} version mismatch "
+                        f"(expected {expected_version}, actual {actual_version})"
+                    )
+
+            # HIGH-01: UPDATE 分支必須遞增 version（之前遺漏 → version 永遠是 0）
+            self._conn.execute("""
+                INSERT INTO nodes
+                    (id, type, title, content, tags, source_url, author, meta, confidence,
+                     created_at, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        COALESCE(NULLIF(?, ''), datetime('now')), 0)
+                ON CONFLICT(id) DO UPDATE SET
+                    type=excluded.type,
+                    title=excluded.title,
+                    content=excluded.content,
+                    tags=excluded.tags,
+                    source_url=excluded.source_url,
+                    author=excluded.author,
+                    meta=excluded.meta,
+                    confidence=excluded.confidence,
+                    version=nodes.version+1
+                    -- created_at is intentionally omitted: preserve original date
+            """, (node_id, node_type, title, content, tags_json,
+                  source_url, author, meta_json, confidence,
+                  created_at or None))
+            # A-8: 直接 INSERT N-gram 格式到 FTS5（單次寫入，無 double write）
+            try:
+                fts_title   = self._ngram_text(title)
+                fts_content = self._ngram_text(content or '')
+                self._conn.execute(
+                    'INSERT INTO nodes_fts(rowid, id, title, content, tags) '
+                    'VALUES ((SELECT rowid FROM nodes WHERE id=?), ?, ?, ?, ?)',
+                    (node_id, node_id, fts_title, fts_content, tags_json)
+                )
+            except Exception as _fts_err:
+                # R-2: log instead of silently swallowing — node is saved but unsearchable
+                logger.warning("fts5_insert_failed node=%s: %s", node_id, _fts_err)
+            self._conn.commit()
+            return node_id
 
     def update_node(
         self,

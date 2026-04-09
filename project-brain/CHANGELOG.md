@@ -4,6 +4,85 @@
 
 ---
 
+## v0.35.0（2026-04-09）— HIGH-01 KnowledgeGraph 樂觀鎖 CAS
+
+測試基準：**627 passed**（v0.34 基線 610 + 新增 17 個 CAS 測試；3 個 pre-existing schema drift 不計）
+
+### HIGH-01 — KnowledgeGraph.add_node() 存在 version 欄位但未執行 CAS
+
+**問題**（ARCHITECTURE_REVIEW.md §3 HIGH-01）：
+`project_brain/graph.py` 的 `add_node()` 使用 `INSERT ... ON CONFLICT DO UPDATE`
+但從不檢查 `version` 欄位，導致三個級聯缺陷：
+
+1. **靜默遺失更新** — Thread A 讀 node (v=5)，Thread B 讀同 node (v=5)、先寫入並推進，
+   Thread A 的 UPSERT **直接覆蓋 Thread B 的成果**，無任何錯誤訊號
+2. **version 欄位是死欄位** — UPDATE 分支未遞增 version，即使 UPSERT 無數次，
+   version 永遠停在 0（schema 有宣告但從未使用）
+3. **`ConcurrentModificationError` 類別是死代碼** — 類別自 BUG-06 就定義好，
+   但 `add_node()` 從未 raise 過它
+
+### 修法
+
+**`project_brain/graph.py:add_node()`** 三點修改：
+
+1. **新增 `expected_version: Optional[int] = None` kwarg**
+   - `None`（預設）→ 保持既有 last-writer-wins 行為，向後相容
+   - 整數 → 啟用樂觀鎖 CAS：
+     * 節點不存在且 `expected_version != 0` → raise `ConcurrentModificationError`
+     * 節點存在且 `current.version != expected_version` → raise
+     * 否則正常執行 UPSERT
+
+2. **UPDATE 分支遞增 version**（修復死欄位）
+   ```sql
+   ON CONFLICT(id) DO UPDATE SET
+       ..., version = nodes.version + 1
+   ```
+   即使不啟用 CAS，這保證 version 會隨每次 UPSERT 正確推進，讓 `update_node()`
+   等其他路徑能依賴這個欄位做 BUG-06 式的樂觀鎖檢查。
+
+3. **讀-檢-寫由 `self._lock` 序列化**
+   原本 `add_node()` 完全不加鎖，現在整段 SELECT → CAS check → INSERT/UPDATE
+   都在 `with self._lock:` 內，消除 read-then-write 的 race window。
+
+### 測試（tests/unit/test_graph_cas.py，17 tests）
+
+| 群組 | Tests | 驗收 |
+|---|---|---|
+| `TestBackwardCompat` | 4 | 舊 API 無痛升級：不傳 expected_version 不 raise；UPSERT 自動遞增 version；不同 id 彼此獨立 |
+| `TestCASHappyPath` | 3 | 新節點 `expected_version=0` 成功；既有節點匹配版本成功；content/title/tags 正確更新 |
+| `TestCASConflict` | 4 | 錯誤版本 / stale 版本 / 失敗不 mutate row / 新節點 `expected_version=0` 合法 |
+| `TestCASConcurrency` | 4 | **50 threads UPSERT 無遺失更新** / **30 threads CAS 恰一個 winner** / retry-loop 20 threads 全部成功 / 不同 id 不互擾 |
+| `TestUpdateNodeCASUnchanged` | 2 | BUG-06 的 `update_node` CAS 行為未退化 |
+
+**關鍵並發壓力測試**：
+- `test_C15_concurrent_add_same_id_no_lost_update` — 50 threads 同時對同一節點 UPSERT，
+  最終 `version == 50`，證明 `self._lock` 正確序列化、version+1 無遺失
+- `test_C16_concurrent_cas_only_one_winner` — 30 threads 用 `expected_version=0` 同時競爭，
+  恰好 1 個成功、29 個收到 `ConcurrentModificationError`，驗證樂觀鎖語意
+- `test_C17_concurrent_cas_chain_retries_eventually_all_succeed` — 20 threads 做
+  guess-and-retry（不依賴未加鎖的 `get_node` 讀取），最終 version == 20
+
+### 測試結果
+
+| | passed | failed |
+|---|---|---|
+| `test_graph_cas.py` | **17 / 17** | 0 |
+| `tests/unit/` 全量 | **627** | 3 pre-existing schema drift |
+| Regression | 0 | — |
+
+### 文件更新
+
+- `docs/ARCHITECTURE_REVIEW.md` §3 HIGH-01：標記 ✅ 完成於 v0.35.0，附修法細節與 5 個測試群組對照
+- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：HIGH-01 狀態 ⏳ → ✅ v0.35.0 (17 tests)
+- `pyproject.toml`：version 0.34.0 → 0.35.0
+
+### Phase 2 進度
+
+✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 (v0.34) · ✅ HIGH-01 (v0.35)
+⏳ HIGH-03 find_conflicts O(n²) · MEDIUM-01 `_execute_write` 統一入口 · MEDIUM-04 KRB staging 清理
+
+---
+
 ## v0.34.0（2026-04-09）— BLOCKER-03 Federation 測試套件補齊
 
 測試基準：**610 passed**（v0.33 基線 535 + 新增 75 個 federation 測試；3 個 pre-existing schema drift 不計）

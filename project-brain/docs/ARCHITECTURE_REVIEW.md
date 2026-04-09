@@ -491,7 +491,7 @@ class TestConflictResolution:
 
 ---
 
-### 🟠 HIGH-01 — KnowledgeGraph.add_node() 存在 version 欄位但未執行 CAS
+### 🟠 HIGH-01 — KnowledgeGraph.add_node() 存在 version 欄位但未執行 CAS ✅ 完成於 v0.35.0（2026-04-09）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 樂觀鎖的 CAS 邏輯有陷阱（e.g., SQLite UPDATE...WHERE version=? 的原子性），需要審慎推理但範圍小
 > **🎯 運行 Model**：—
@@ -500,6 +500,22 @@ class TestConflictResolution:
 - `graph.py:112`：`version INTEGER NOT NULL DEFAULT 0`（schema 已有）
 - `graph.py:20-22`：`ConcurrentModificationError` 類別已定義
 - `graph.py:243-280`：`add_node()` 使用 `INSERT ... ON CONFLICT DO UPDATE`，**未檢查 version**
+
+**修復成果**（v0.35.0）：
+- ✅ `add_node()` 新增 `expected_version: Optional[int] = None` kwarg
+  - `None` → 維持舊行為（last-writer-wins），但 **UPDATE 分支現在遞增 version**（修復 `version` 死欄位）
+  - `0` + 節點不存在 → 正常建立
+  - `0` + 節點已存在 → raise（符合「預期是新節點」的語意）
+  - `N` + 節點 version != N → raise（典型樂觀鎖衝突）
+- ✅ 讀-檢-寫由 `self._lock` 序列化（並發壓力測試驗證 50 threads 無遺失更新）
+- ✅ `tests/unit/test_graph_cas.py` 新增 **17 tests**，5 群組：
+  - `TestBackwardCompat` (4) — 不傳 expected_version 時 UPSERT 行為不變 + version 遞增
+  - `TestCASHappyPath` (3) — 新節點 / 既有節點匹配版本 / content 正確更新
+  - `TestCASConflict` (4) — 新節點錯誤版本 / 既有節點 stale 版本 / 失敗不 mutate row
+  - `TestCASConcurrency` (4) — 50 threads upsert 無遺失更新 / 30 threads CAS 只一個 winner / retry-loop 20 threads / 不同 id 不互相干擾
+  - `TestUpdateNodeCASUnchanged` (2) — BUG-06 的 update_node CAS 行為未退化
+
+**未改動**：`update_node()` 既有 CAS 邏輯（BUG-06 時已修）保持不變。
 
 **問題代碼**：
 ```python
@@ -1024,7 +1040,7 @@ python -m pytest --collect-only -q | tail -1
 |----|----|------|-------|-----------|----------------|------|
 | 5 | BLOCKER-01 | LLMJudgmentEngine + PipelineWorker 實作 | 12h | **Opus 4.6 (1M)** (新模組 + prompt engineering + 長 context 閱讀 pipeline.py 全文) | 🟨 `[pipeline.llm]` gemma4:27b（預設）；Dense 任務可升 gemma4:31b | ✅ v0.32.0 |
 | 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ✅ v0.34.0 (75 tests) |
-| 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ⏳ |
+| 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ✅ v0.35.0 (17 tests) |
 | 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ⏳ |
 | 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ⏳ |
 | 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — | ⏳ |
