@@ -1,19 +1,18 @@
 """
-project_brain/constants.py — REF-04: 全域共用常數
+project_brain/constants.py — backward-compat shim
 
-所有魔法數字的唯一來源。修改此檔案即可同步影響所有引用點。
+ARCHITECTURE_REVIEW.md §6.2 重構：實際模組已移至
+``project_brain/core/constants.py``。本檔案使用 ``sys.modules``
+別名確保 ``project_brain.constants`` 與 ``project_brain.core.constants``
+為**同一個 module 物件**，讓 ``monkeypatch.setattr(project_brain.constants, ...)``
+仍會影響 ``project_brain.core.brain_db`` 內透過
+``from . import constants as _constants`` 取得的引用（REF-04 契約）。
 """
+from __future__ import annotations
 
-# ── 衰減（Decay） ─────────────────────────────────────────────
-# 日衰減率：約 1 年後信心降至 0.33（Ebbinghaus 遺忘曲線）
-# 同步至：brain_db._effective_confidence(), decay_engine._factor_time()
-BASE_DECAY_RATE = 0.003
+import sys as _sys
 
-# ── Context 組裝（ContextEngineer） ──────────────────────────
-# _fmt_node() 中 content 顯示的最大字元數
-ADR_CONTENT_CAP  = 800   # ADR 類型節點（架構決策記錄，內容較長）
-NODE_CONTENT_CAP = 400   # 一般節點（Pitfall / Rule / Decision 等）
+from project_brain.core import constants as _real_constants  # noqa: F401
 
-# ── 搜尋（Search） ────────────────────────────────────────────
-# search_nodes / search_nodes_multi / graph.search_nodes 的預設回傳數量
-DEFAULT_SEARCH_LIMIT = 8
+# 讓本模組完全等同於真實模組（共用同一個 namespace object）
+_sys.modules[__name__] = _real_constants

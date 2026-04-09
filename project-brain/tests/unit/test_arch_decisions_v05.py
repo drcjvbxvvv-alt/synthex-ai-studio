@@ -30,9 +30,16 @@ class TestNoSilentFailures(unittest.TestCase):
     def _iter_py_files(self):
         return self._PKG.rglob("*.py")
 
+    def _cli_source(self) -> str:
+        """ARCHITECTURE_REVIEW.md §6.2 重構後 cli.py 移至 interfaces/。"""
+        path = self._PKG / "interfaces" / "cli.py"
+        if not path.exists():
+            path = self._PKG / "cli.py"  # pre-refactor fallback
+        return path.read_text(encoding="utf-8")
+
     def test_stb04_global_scope_warning_exists_in_cli(self):
         """STB-04：brain add 落為 global scope 時必須有警告提示（v0.5.0 STB 決策）。"""
-        cli_source = (self._PKG / "cli.py").read_text(encoding="utf-8")
+        cli_source = self._cli_source()
         # STB-04 的警告訊息應明確提及 global scope 和污染風險
         has_global_warning = (
             "global scope" in cli_source
@@ -45,7 +52,7 @@ class TestNoSilentFailures(unittest.TestCase):
 
     def test_stb04_global_warning_not_silently_swallowed(self):
         """STB-04 警告邏輯不應被 try/except 包住（不可靜默失效）。"""
-        cli_source = (self._PKG / "cli.py").read_text(encoding="utf-8")
+        cli_source = self._cli_source()
         # 確認 STB-04 警告碼存在
         self.assertIn(
             "跨所有專案可見",
@@ -55,22 +62,24 @@ class TestNoSilentFailures(unittest.TestCase):
 
     def test_project_brain_modules_import_logger(self):
         """核心模組應 import logging，表示有日誌能力。"""
+        # ARCHITECTURE_REVIEW.md §6.2 重構後，核心模組移入 core/engines/ 子套件。
+        # 本測試檢查實際實作檔（非 compat shim）。
         core_modules = [
-            "brain_db.py",
-            "context.py",
-            "graph.py",
-            "decay_engine.py",
-            "review_board.py",
+            ("core",    "brain_db.py"),
+            ("engines", "context.py"),
+            ("",        "graph.py"),
+            ("engines", "decay_engine.py"),
+            ("engines", "review_board.py"),
         ]
-        for name in core_modules:
-            path = self._PKG / name
+        for subdir, name in core_modules:
+            path = self._PKG / subdir / name if subdir else self._PKG / name
             if not path.exists():
                 continue
             source = path.read_text(encoding="utf-8")
             self.assertIn(
                 "import logging",
                 source,
-                f"{name} 應 import logging（支援靜默失效的可觀察性，v0.5.0 STB 決策）",
+                f"{subdir}/{name} 應 import logging（支援靜默失效的可觀察性，v0.5.0 STB 決策）",
             )
 
 
