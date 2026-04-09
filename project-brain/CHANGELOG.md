@@ -4,6 +4,121 @@
 
 ---
 
+## v0.37.0（2026-04-09）— MEDIUM-01 BrainDB._execute_write() 統一寫入入口
+
+測試基準：**665 passed**（v0.36 基線 646 + 新增 18 個 execute_write 測試 + 1 flake 恢復；3 個 pre-existing schema drift 不計）
+
+### MEDIUM-01 — brain_db.py 部分 commit() 在 _write_guard 外
+
+**問題**（ARCHITECTURE_REVIEW.md §3 MEDIUM-01）：
+`project_brain/core/brain_db.py` 原本有 16+ 個 `self.conn.commit()` 路徑，
+其中部分在 `_write_guard()` 內（`add_node`、`update_node`、`add_episode`、
+`delete_node`、`deprecate_node` 等），部分在外：
+
+- `search_nodes` 內部 trace INSERT
+- `prune_episodes` DELETE
+- `pin_node` UPDATE
+- `record_federation_import` INSERT
+- `add_edge` INSERT
+- `add_temporal_edge` UPDATE + INSERT（multi-statement）
+- `emit` INSERT
+- `optimize` FTS5 rebuild INSERT
+
+三個問題：
+1. **不一致的錯誤處理** — 有的路徑有 try/except，有的直接讓例外往上竄
+2. **缺統一 rollback 語意** — 寫入失敗時部分路徑不會 rollback
+3. **審計困難** — 無法從單一入口統計、追蹤或 hook 所有寫操作
+
+### 修法
+
+**新增 `BrainDB._execute_write(sql, params) → Cursor`**：
+```python
+def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    """所有 runtime 單語句寫入統一入口。保證 lock + commit + rollback 一致。"""
+    with self._write_guard():
+        try:
+            cur = self.conn.execute(sql, params)
+            self.conn.commit()
+            return cur
+        except Exception:
+            try:
+                self.conn.rollback()
+            except Exception as _rb_err:
+                logger.error("_execute_write: rollback failed: %s", _rb_err)
+            raise
+```
+
+**新增 `BrainDB._execute_writescript(script)`**：
+多語句（DDL / batch cleanup）統一入口，同樣透過 `_write_guard` 序列化。
+
+**RLock 可重入設計**：
+由於 `_write_guard()` 使用 `threading.RLock`（REF-03），**呼叫者若已持有鎖**
+（例如在 `with self._write_guard():` 區塊內）可以**安全巢狀呼叫** `_execute_write`，
+不會死鎖。這讓增量遷移不需要一次改完所有路徑。
+
+### 重構 8 個 runtime 寫路徑
+
+| 方法 | 原位置 | 修法 |
+|---|---|---|
+| `search_nodes` trace INSERT | line 776 | → `_execute_write` |
+| `prune_episodes` DELETE | line 797 | → `_execute_write` |
+| `pin_node` UPDATE | line 819 | → `_execute_write` |
+| `record_federation_import` INSERT | line 1088 | → `_execute_write` |
+| `add_edge` INSERT | line 1117 | → `_execute_write` |
+| `add_temporal_edge` UPDATE+INSERT | line 1296 | → 顯式 `_write_guard` + try/rollback（multi-statement 無法用 `_execute_write`，因它每次 commit） |
+| `emit` INSERT | line 1357 | → `_execute_write` |
+| `optimize` FTS5 rebuild | line 1396 | → `_execute_write` |
+
+**刻意保留未保護**：
+- `_setup()` schema 建立（line 174）— 執行於 `BrainDB.__init__` 內
+- `_migrate_schema()`（line 377）— 同 init-time
+
+理由：BrainDB 建構完成前不存在並發呼叫者，額外的 lock 無意義且會阻礙測試。
+
+### 測試（tests/unit/test_execute_write.py，18 tests）
+
+| 群組 | Tests | 驗收 |
+|---|---|---|
+| `TestExecuteWriteCore` | 5 | 成功 commit / SQL 錯誤 rollback + re-raise / cursor.rowcount & lastrowid / **RLock 巢狀可重入** / **50 threads 序列化** |
+| `TestExecuteWriteScript` | 3 | 多語句執行 / 錯誤 rollback / 10 threads lock 保護 |
+| `TestRefactoredCallers` | 8 | 每個重構後的 caller 獨立行為驗證（pin_node / add_edge / emit / add_temporal_edge / record_federation_import / prune_episodes / search_nodes trace / optimize FTS rebuild） |
+| `TestRegressionGuards` | 2 | 40 threads 混合呼叫 pin_node + add_edge + emit + record_federation_import 無 corruption / `_write_guard` 阻塞語意驗證 |
+
+**關鍵驗收測試**：
+
+- `test_W04_rlock_reentrant_nested_calls` — 證明 `with self._write_guard():` 內
+  可以呼叫 `_execute_write()`，不會死鎖。這是增量遷移的關鍵保證。
+- `test_W05_concurrent_writes_serialized` — 50 threads 同時 `_execute_write`，
+  全部 N 筆 INSERT 成功寫入，無 corruption
+- `test_W12_add_temporal_edge_invalidates_previous` — 證明 multi-statement
+  (UPDATE + INSERT) 路徑在 `_write_guard` 保護下仍然原子地執行
+- `test_W17_concurrent_mixed_callers_no_corruption` — 40 threads 混合呼叫
+  pin_node / add_edge / emit / record_federation_import，所有 operation 都正確完成
+- `test_W18_execute_write_holds_lock_during_execution` — side-channel 證明
+  `_execute_write` 確實被 `_write_guard` 序列化，非平行執行
+
+### 測試結果
+
+| | passed | failed |
+|---|---|---|
+| `test_execute_write.py` | **18 / 18** | 0 |
+| `tests/unit/` 全量 | **665** | 3 pre-existing schema drift |
+| Regression | 0 | — |
+
+### 文件更新
+
+- `docs/ARCHITECTURE_REVIEW.md` §3 MEDIUM-01：標記 ✅ 完成於 v0.37.0 + 8 路徑對照表 + 4 測試群組對照
+- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：MEDIUM-01 ⏳ → ✅ v0.37.0 (18 tests)
+- `CHANGELOG.md` — 新增 v0.37.0 條目
+- `pyproject.toml` — version 0.36.0 → 0.37.0
+
+### Phase 2 進度
+
+✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 (v0.34) · ✅ HIGH-01 (v0.35) · ✅ HIGH-03 (v0.36) · ✅ MEDIUM-01 (v0.37)
+⏳ 剩餘 **MEDIUM-04**（KRB staging 自動清理，3h Haiku）— Phase 2 最後一項
+
+---
+
 ## v0.36.0（2026-04-09）— HIGH-03 find_conflicts O(n²) → FTS5 候選者過濾
 
 測試基準：**646 passed**（v0.35 基線 627 + 新增 20 個 find_conflicts 測試 − 1 flake 恢復；3 個 pre-existing schema drift 不計）

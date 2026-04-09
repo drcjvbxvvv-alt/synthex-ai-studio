@@ -455,6 +455,63 @@ class BrainDB:
         with self._write_lock:
             yield
 
+    # ── MEDIUM-01: 寫入統一入口（ARCHITECTURE_REVIEW.md §3 MEDIUM-01）─────
+    #
+    # 所有 runtime 寫路徑應經 _execute_write() 或 _execute_writescript()，
+    # 保證 lock + commit + rollback 行為一致，便於除錯與審計。
+    # 唯一例外：__init__ 內的 _setup / _migrate_schema，因為在 BrainDB 建構
+    # 完成前不會有任何並發呼叫者，不需序列化。
+
+    def _execute_write(
+        self,
+        sql:    str,
+        params: tuple = (),
+    ) -> sqlite3.Cursor:
+        """
+        MEDIUM-01: 單一寫入語句統一入口。
+
+        保證：
+          - 透過 ``_write_guard()`` 取得 ``_write_lock`` （RLock，reentrant）
+          - 成功則 ``self.conn.commit()``
+          - 失敗則 ``self.conn.rollback()`` 後 re-raise
+          - 可安全巢狀呼叫（RLock）
+
+        Args:
+            sql:    單一 SQL 語句（INSERT / UPDATE / DELETE / etc.）
+            params: SQL 參數 tuple
+
+        Returns:
+            ``sqlite3.Cursor`` — 呼叫端可讀取 ``rowcount`` / ``lastrowid``
+        """
+        with self._write_guard():
+            try:
+                cur = self.conn.execute(sql, params)
+                self.conn.commit()
+                return cur
+            except Exception:
+                try:
+                    self.conn.rollback()
+                except Exception as _rb_err:
+                    logger.error("_execute_write: rollback failed: %s", _rb_err)
+                raise
+
+    def _execute_writescript(self, script: str) -> None:
+        """
+        MEDIUM-01: 多語句寫入統一入口（用於 schema DDL / batch cleanup）。
+
+        ``executescript()`` 會自動在腳本前隱式 COMMIT 任何 pending transaction，
+        因此不需要額外 commit。失敗時仍 rollback + re-raise。
+        """
+        with self._write_guard():
+            try:
+                self.conn.executescript(script)
+            except Exception:
+                try:
+                    self.conn.rollback()
+                except Exception as _rb_err:
+                    logger.error("_execute_writescript: rollback failed: %s", _rb_err)
+                raise
+
     def _load_search_config(self) -> dict:
         """OPT-05: Load hybrid search weight overrides from .brain/config.json."""
         try:
@@ -767,13 +824,13 @@ class BrainDB:
                 reverse=True,
             )
             # BUG-B fix: record trace with result_count so query_hit_rate() works
+            # MEDIUM-01: route through _execute_write for consistent locking
             try:
                 _ms = (_time.monotonic() - _t0) * 1000
-                self.conn.execute(
+                self._execute_write(
                     "INSERT INTO traces(query, result_count, latency_ms) VALUES(?,?,?)",
                     (query[:500], len(results), round(_ms, 2)),
                 )
-                self.conn.commit()
             except Exception as _e:
                 logger.error("trace insert failed in search_nodes: %s", _e)
             return results
@@ -791,10 +848,10 @@ class BrainDB:
         cutoff = (
             datetime.now(timezone.utc) - timedelta(days=older_than_days)
         ).isoformat()
-        result = self.conn.execute(
+        # MEDIUM-01: unified write entry
+        result = self._execute_write(
             "DELETE FROM episodes WHERE created_at < ?", (cutoff,)
         )
-        self.conn.commit()
         deleted = result.rowcount
         if deleted:
             logger.debug("prune_episodes: 刪除 %d 筆超過 %d 天的 episode", deleted, older_than_days)
@@ -813,10 +870,10 @@ class BrainDB:
         return self._feedback_tracker.record_outcome(node_id, was_useful)
 
     def pin_node(self, node_id: str, pinned: bool = True) -> bool:
-        r = self.conn.execute(
+        # MEDIUM-01: unified write entry
+        r = self._execute_write(
             "UPDATE nodes SET is_pinned=? WHERE id=?", (int(pinned), node_id)
         )
-        self.conn.commit()
         return r.rowcount > 0
 
     def delete_node(self, node_id: str) -> bool:
@@ -1079,13 +1136,12 @@ class BrainDB:
     # ── FED-01: Federation audit log ──────────────────────────────
 
     def record_federation_import(self, source: str, node_id: str, node_title: str, status: str = 'pending') -> int:
-        """FED-01: 記錄一次聯邦匯入事件"""
+        """FED-01: 記錄一次聯邦匯入事件（MEDIUM-01 統一入口）"""
         try:
-            cur = self.conn.execute(
+            cur = self._execute_write(
                 "INSERT INTO federation_imports(source, node_id, node_title, status) VALUES(?,?,?,?)",
                 (source, node_id, node_title, status)
             )
-            self.conn.commit()
             return cur.lastrowid or 0
         except Exception as e:
             logger.warning("record_federation_import failed: %s", e)
@@ -1110,11 +1166,11 @@ class BrainDB:
             return []
 
     def add_edge(self, source_id: str, relation: str, target_id: str, note: str = "") -> int:
-        cur = self.conn.execute(
+        # MEDIUM-01: unified write entry
+        cur = self._execute_write(
             "INSERT OR IGNORE INTO edges(source_id,relation,target_id,note) VALUES(?,?,?,?)",
             (source_id, relation, target_id, note)
         )
-        self.conn.commit()
         return cur.lastrowid or 0
 
     def stats(self) -> dict:
@@ -1283,18 +1339,29 @@ class BrainDB:
     def add_temporal_edge(self, source_id: str, relation: str, target_id: str,
                           content: str = "", valid_from=None) -> int:
         ts = valid_from or datetime.now(timezone.utc).isoformat()
-        # Invalidate previous edges with same source+relation (relationship changed)
-        self.conn.execute("""
-            UPDATE temporal_edges SET valid_until=?
-            WHERE source_id=? AND relation=? AND valid_until IS NULL
-        """, (ts, source_id, relation))
-        cur = self.conn.execute(
-            "INSERT INTO temporal_edges(source_id,relation,target_id,content,valid_from)"
-            " VALUES(?,?,?,?,?)",
-            (source_id, relation, target_id, content, ts)
-        )
-        self.conn.commit()
-        return cur.lastrowid or 0
+        # MEDIUM-01: multi-statement write — use _write_guard for atomicity,
+        # then a single commit at the end. Cannot use _execute_write directly
+        # because that commits after each statement.
+        with self._write_guard():
+            try:
+                # Invalidate previous edges with same source+relation (relationship changed)
+                self.conn.execute("""
+                    UPDATE temporal_edges SET valid_until=?
+                    WHERE source_id=? AND relation=? AND valid_until IS NULL
+                """, (ts, source_id, relation))
+                cur = self.conn.execute(
+                    "INSERT INTO temporal_edges(source_id,relation,target_id,content,valid_from)"
+                    " VALUES(?,?,?,?,?)",
+                    (source_id, relation, target_id, content, ts)
+                )
+                self.conn.commit()
+                return cur.lastrowid or 0
+            except Exception:
+                try:
+                    self.conn.rollback()
+                except Exception as _rb_err:
+                    logger.error("add_temporal_edge: rollback failed: %s", _rb_err)
+                raise
 
     def temporal_query(self, at_time=None, limit: int = 20) -> list:
         at   = at_time or datetime.now(timezone.utc).isoformat()
@@ -1350,11 +1417,11 @@ class BrainDB:
     # -- events --
 
     def emit(self, event_type: str, payload: dict) -> None:
-        self.conn.execute(
+        # MEDIUM-01: unified write entry
+        self._execute_write(
             "INSERT INTO events(event_type,payload) VALUES(?,?)",
             (event_type, json.dumps(payload, ensure_ascii=False))
         )
-        self.conn.commit()
 
     def recent_events(self, event_type=None, limit: int = 20) -> list:
         if event_type:
@@ -1391,9 +1458,9 @@ class BrainDB:
         logger.info("optimize: VACUUM + ANALYZE complete")
 
         # Step 3: FTS5 rebuild — removes orphaned entries (C-3)
+        # MEDIUM-01: unified write entry
         try:
-            self.conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
-            self.conn.commit()
+            self._execute_write("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
             fts5_status = "rebuilt"
             logger.info("optimize: FTS5 rebuild complete")
         except Exception as e:

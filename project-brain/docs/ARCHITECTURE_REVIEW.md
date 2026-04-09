@@ -719,12 +719,37 @@ def federation_sync(..., remote_bundle_path=""):
 
 ---
 
-### 🟡 MEDIUM-01 — brain_db.py 部分 commit() 在 _write_guard 外
+### 🟡 MEDIUM-01 — brain_db.py 部分 commit() 在 _write_guard 外 ✅ 完成於 v0.37.0（2026-04-09）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 16 個 commit 路徑的系統性重構，需要確認每個位置的事務語意
 > **🎯 運行 Model**：—
 
-**位置**：`brain_db.py`
+**修復成果**（v0.37.0）：
+- ✅ 新增 `BrainDB._execute_write(sql, params)` 單語句寫入統一入口
+  - 透過 `_write_guard()` 取得 RLock 序列化保護
+  - 成功 → `commit()`；失敗 → `rollback()` + re-raise
+  - RLock 可重入：呼叫者已持有 `_write_guard` 時可安全巢狀呼叫
+- ✅ 新增 `BrainDB._execute_writescript(script)` 多語句（DDL / batch）統一入口
+- ✅ 重構 **8 個** runtime unguarded commit 路徑改走統一入口：
+  | 方法 | 原位置 | 修法 |
+  |---|---|---|
+  | `search_nodes` trace INSERT | line 776 | `_execute_write` |
+  | `prune_episodes` DELETE | line 797 | `_execute_write` |
+  | `pin_node` UPDATE | line 819 | `_execute_write` |
+  | `record_federation_import` INSERT | line 1088 | `_execute_write` |
+  | `add_edge` INSERT | line 1117 | `_execute_write` |
+  | `add_temporal_edge` UPDATE+INSERT | line 1296 | 顯式 `_write_guard` + try/rollback（multi-statement） |
+  | `emit` INSERT | line 1357 | `_execute_write` |
+  | `optimize` FTS5 rebuild | line 1396 | `_execute_write` |
+- ✅ 刻意保留未保護：`_setup` schema 建立（line 174）與 `_migrate_schema`（line 377），
+  因為執行於 `__init__` 內，在 BrainDB 建構完成前不會有並發呼叫者
+- ✅ `tests/unit/test_execute_write.py` 新增 **18 tests**，5 群組：
+  - `TestExecuteWriteCore` (5) — commit / rollback / cursor 欄位 / RLock 可重入 / 50 threads 序列化
+  - `TestExecuteWriteScript` (3) — 多語句執行 / 錯誤 rollback / lock 保護
+  - `TestRefactoredCallers` (8) — 每個重構後的 caller 獨立行為驗證
+  - `TestRegressionGuards` (2) — 混合並發 40 threads 無 corruption / write_guard 阻塞語意
+
+**位置**：`project_brain/core/brain_db.py`（重構後 8 個新舊位置）
 - 已確認**在 _write_guard 內**：line 644 (add_node), 694 (update_node), 558 (build_synonym_index)
 - 確認**不在 _write_guard 內**的 commit：
   - `line 174`（`_setup` schema 建立）
@@ -1064,7 +1089,7 @@ python -m pytest --collect-only -q | tail -1
 | 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ✅ v0.34.0 (75 tests) |
 | 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ✅ v0.35.0 (17 tests) |
 | 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ✅ v0.36.0 (20 tests, 方案 A) |
-| 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ⏳ |
+| 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ✅ v0.37.0 (18 tests) |
 | 10 | MEDIUM-04 | KRB staging 自動清理 | 3h | **Haiku 4.5** (單函式 + 定時器) | — | ⏳ |
 
 **總工作量**：**38h**（約 1 週，1 人力）
