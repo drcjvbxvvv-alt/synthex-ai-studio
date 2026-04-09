@@ -6,12 +6,92 @@
 
 ## v0.34.0（2026-04-09）— 可觀測性與可維護性（進行中）
 
-對應 `docs/ARCHITECTURE_REVIEW.md §8.4 v0.34` 路線圖。本版以 MEDIUM-04
-（Phase 2 殘餘項）開頭，後續逐步加入 MEDIUM-02 / MEDIUM-07 / metrics
-dashboard / `brain health` 命令。
+對應 `docs/ARCHITECTURE_REVIEW.md §8.4 v0.34` 路線圖。本版逐步累積：
+MEDIUM-04（Phase 2 殘餘項）→ MEDIUM-07 → MEDIUM-02 → metrics dashboard
+→ `brain health` 命令。
 
-測試基準：**680 passed**（v0.33 baseline 665 + 15 新測試；3 個 pre-existing
+測試基準：**684 passed**（v0.33 baseline 665 + 19 新測試；3 個 pre-existing
 schema drift 不計，零 regression）
+
+### MEDIUM-07 — CI benchmark baseline（4 benchmark + 5 meta tests）
+
+**問題**（ARCHITECTURE_REVIEW.md §3 MEDIUM-07）：
+`tests/benchmarks/` 下已有 `benchmark_recall.py`（50 節點 × 20 查詢，
+測 get_context recall + latency），但無 baseline 對比，效能或召回率退化
+無法及時發現。
+
+**修法**：
+
+1. **`tests/benchmarks/benchmark_recall.py`** 新增 `compute_metrics() → dict`
+   helper，回傳結構化指標：
+   ```python
+   {
+       "recall_at_3":    float,  # hits / total
+       "avg_query_ms":   float,
+       "max_query_ms":   int,    # p100
+       "node_count":     int,
+       "query_count":    int,
+       "embedder_class": str,
+       "embedder_model": str,
+   }
+   ```
+
+2. **`tests/benchmarks/baseline.json`** 儲存門檻（含 fixture metadata + 詳細註解）：
+   - `recall_at_3.min_value` = 0.60（與腳本內建「good」目標一致）
+   - `avg_query_ms.max_value` = 500（≈5× 實測 91ms，吸收 CI jitter）
+   - `max_query_ms.max_value` = 2000
+
+3. **`tests/benchmarks/test_baseline_regression.py`** — 4 個 pytest 迴歸測試，
+   `@pytest.mark.benchmark` 標記：
+   - `test_recall_no_regression` — 召回率 ≥ baseline.min_value
+   - `test_avg_latency_no_regression` — 平均延遲 ≤ baseline.max_value
+   - `test_p100_latency_no_regression` — p100 ≤ baseline.max_value
+   - `test_metric_envelope_sanity` — `compute_metrics()` 結構檢查
+
+   embedder 不可用時 skip 而非 fail，避免乾淨 CI 環境誤觸警報。
+
+4. **`tests/benchmarks/update_baseline.py`** — CLI tool 重新跑 benchmark 並
+   更新 `last_observed` 區段；`--tighten` 模式同時收緊 min/max 門檻
+   （留 30% 緩衝）。
+
+5. **`tests/unit/test_benchmark_baseline_meta.py`** — **5 個 cheap meta tests
+   在每次 unit run 都會跑**，驗證 `baseline.json` 的 schema/類型/門檻合理性
+   （無需 embedder 即可執行，不會拖慢 CI）：
+   - top-level keys + schema_version
+   - recall_at_3 門檻結構
+   - 兩個 latency 門檻結構
+   - avg ≤ p100 合理性
+   - fixture metadata 存在
+
+6. **`pytest.ini` + `pyproject.toml`** 註冊 `benchmark` marker，對齊既有
+   `chaos` marker 的命名慣例。
+
+**為什麼不直接用已存在的 benchmark_recall 主程式**：
+- 主程式 `__main__` 入口印 ASCII 報告給人看，不適合 CI assertion
+- `compute_metrics()` 是純函式，可以直接測試與比對
+- meta tests 與 benchmark tests 拆開：meta 永遠 cheap、benchmark 才需要 embedder
+
+**測試結果**：
+- `test_baseline_regression.py`：**4 / 4 passed**（embedder 可用時跑 ~12s）
+- `test_benchmark_baseline_meta.py`：**5 / 5 passed**（< 0.01s）
+- `tests/unit/` 全量：**684 passed**（zero regression）
+
+**未做**：CI workflow 整合（GitHub Actions 等）— 因專案目前無 CI 設定檔，
+留待 CI 平台選定後加上 `pytest -m benchmark` 步驟即可。
+
+### Phase 2 進度
+
+✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 + HIGH-01 + HIGH-03 + MEDIUM-01 (v0.33)
+· ✅ MEDIUM-04 (v0.34) — 🎉 **Phase 2 全部 6 項完成**
+
+### v0.34 路線圖進度（§8.4）
+
+- ✅ MEDIUM-04 KRB staging 自動清理（Phase 2 殘餘項）
+- ✅ MEDIUM-07 CI benchmark baseline
+- ⏳ MEDIUM-02 KG/BrainDB 事件同步
+- ⏳ Pipeline metrics dashboard（Grafana 可讀）
+- ⏳ `brain health` 命令（自動 detect 常見不一致）
+- ⏳ KRB cleanup daemon 整合
 
 ### MEDIUM-04 — KRB staging 自動清理（15 tests）
 
@@ -61,19 +141,6 @@ def cleanup_expired_staging(self, ttl_days: Optional[int] = None) -> dict:
 - `test_K13_brain_toml_override_ttl` — 寫 `brain.toml [review] staging_ttl_days = 7`，cleanup 自動套用 7 天 cutoff
 
 **待做**：daemon 整合（搭配 `decay_daemon` 每日呼叫一次），列入 v0.34 後續工作。
-
-### Phase 2 進度
-
-✅ BLOCKER-01 (v0.32) · ✅ BLOCKER-03 + HIGH-01 + HIGH-03 + MEDIUM-01 (v0.33) · ✅ MEDIUM-04 (v0.34)
-🎉 **Phase 2 全部 6 項完成**
-
-### v0.34 後續預計（§8.4）
-
-- ⏳ MEDIUM-02 KG/BrainDB 事件同步
-- ⏳ MEDIUM-07 CI benchmark baseline
-- ⏳ Pipeline metrics dashboard（Grafana）
-- ⏳ `brain health` 命令
-- ⏳ KRB cleanup daemon 整合
 
 ---
 

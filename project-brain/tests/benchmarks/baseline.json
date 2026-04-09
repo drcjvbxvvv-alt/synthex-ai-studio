@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-04-09T00:00:00+00:00",
+  "comment": "MEDIUM-07: benchmark baseline for regression detection. See ARCHITECTURE_REVIEW.md §3 MEDIUM-07.",
+  "benchmark": "tests/benchmarks/benchmark_recall.py — 50 nodes, 20 queries, get_context recall + latency",
+  "fixture": {
+    "node_count":  50,
+    "query_count": 20
+  },
+  "metrics": {
+    "recall_at_3": {
+      "min_value":   0.60,
+      "comment":     "Minimum acceptable recall@3. With sentence-transformers (multilingual-e5-small) we observed 100%; we set the floor to 60% which matches the script's 'good' target — anything below indicates a real regression in retrieval quality."
+    },
+    "avg_query_ms": {
+      "max_value":   500.0,
+      "comment":     "Maximum average single-query latency in ms. Observed ~91ms on dev machine with multilingual-e5-small. Set to 500ms (≈5×) to absorb CI jitter while still flagging genuine regressions."
+    },
+    "max_query_ms": {
+      "max_value":   2000.0,
+      "comment":     "Maximum p100 single-query latency in ms. Catches outlier slowdowns even if average looks fine."
+    }
+  },
+  "how_to_update": "Run `python tests/benchmarks/update_baseline.py` to refresh observed values, then commit baseline.json. Tighten min_value / max_value thresholds when warranted."
+}

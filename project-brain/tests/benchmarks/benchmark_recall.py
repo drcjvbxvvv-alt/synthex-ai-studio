@@ -378,6 +378,36 @@ def run_benchmark() -> list[QueryResult]:
     return results
 
 
+def compute_metrics() -> dict:
+    """
+    MEDIUM-07: 結構化基準指標，供 baseline 對比使用。
+
+    Returns:
+        {
+            "recall_at_3":    float,  # 命中率（hit / total）
+            "avg_query_ms":   float,  # 平均單次查詢延遲（毫秒）
+            "max_query_ms":   int,    # 最慢查詢延遲
+            "node_count":     int,    # 知識庫節點數
+            "query_count":    int,    # 查詢數
+            "embedder_class": str,    # 使用的 embedder 類別名稱
+            "embedder_model": str,    # embedder 模型名稱（若有）
+        }
+    """
+    results = run_benchmark()
+    total = len(results) or 1
+    hits  = sum(1 for r in results if r.hit)
+    emb_cls, emb_model = detect_embedder()
+    return {
+        "recall_at_3":    hits / total,
+        "avg_query_ms":   sum(r.elapsed_ms for r in results) / total,
+        "max_query_ms":   max((r.elapsed_ms for r in results), default=0),
+        "node_count":     len(NODES),
+        "query_count":    total,
+        "embedder_class": emb_cls,
+        "embedder_model": emb_model,
+    }
+
+
 def detect_embedder() -> tuple[str, str]:
     """偵測 ContextEngineer 實際使用的 embedder。
 

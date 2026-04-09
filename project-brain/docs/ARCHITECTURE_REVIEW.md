@@ -963,23 +963,45 @@ def _count_tokens(text: str) -> int:
 
 ---
 
-### 🟡 MEDIUM-07 — 測試有 benchmark 但無 CI baseline
+### 🟡 MEDIUM-07 — 測試有 benchmark 但無 CI baseline ✅ 完成於 v0.34.0（2026-04-09）
 
 > **🎯 開發 Model**：**Haiku 4.5** — CI 設定檔 + baseline JSON 建立
 > **🎯 運行 Model**：—
 
-**位置**：`tests/benchmarks/`
+**修復成果**（v0.34.0）：
+- ✅ `tests/benchmarks/benchmark_recall.py` 新增 `compute_metrics() → dict`
+  helper，回傳 `{recall_at_3, avg_query_ms, max_query_ms, node_count,
+  query_count, embedder_class, embedder_model}`
+- ✅ `tests/benchmarks/baseline.json` 儲存門檻（含 fixture metadata + 詳細註解）
+- ✅ `tests/benchmarks/test_baseline_regression.py` — 4 個 pytest 迴歸測試
+  （`@pytest.mark.benchmark` 標記，可用 `pytest -m benchmark` 單獨執行；
+  embedder 不可用時 skip 而非 fail）：
+  - `test_recall_no_regression` — 召回率不低於 baseline.min_value
+  - `test_avg_latency_no_regression` — 平均延遲不超過 baseline.max_value
+  - `test_p100_latency_no_regression` — p100 延遲不超過 baseline.max_value
+  - `test_metric_envelope_sanity` — `compute_metrics()` 結構檢查
+- ✅ `tests/benchmarks/update_baseline.py` — CLI tool 重新跑 benchmark 並更新
+  `last_observed`；`--tighten` 模式同時收緊 min/max 門檻（留 30% 緩衝）
+- ✅ `tests/unit/test_benchmark_baseline_meta.py` — 5 個 cheap meta tests
+  在每次 unit run 都會跑，驗證 `baseline.json` 的 schema/類型/門檻合理性，
+  無需 embedder 即可執行（不會被 CI 環境拖慢）
+- ✅ `pytest.ini` + `pyproject.toml` 註冊 `benchmark` marker
 
-**問題**：
-- 已有 benchmark 檔案（效能測試）
-- 但無 CI 集成，無 baseline 對比
-- 效能回歸無法及時發現
+**baseline.json 初始門檻**（dev machine 實測 recall=100% / avg=91ms 為基準）：
+- `recall_at_3.min_value` = 0.60（與 benchmark 腳本內建「good」目標一致）
+- `avg_query_ms.max_value` = 500（≈5× 實測，吸收 CI jitter）
+- `max_query_ms.max_value` = 2000
 
-**修法**：
-- 建立 `tests/benchmarks/baseline.json` 儲存歷史基準
-- 在 CI 執行 benchmark 並與 baseline 比對（退化 > 20% 則 fail）
+**位置**：
+- `tests/benchmarks/benchmark_recall.py`（新增 `compute_metrics`）
+- `tests/benchmarks/baseline.json`（新檔）
+- `tests/benchmarks/test_baseline_regression.py`（新檔）
+- `tests/benchmarks/update_baseline.py`（新檔）
+- `tests/unit/test_benchmark_baseline_meta.py`（新檔，每次 unit run 都跑）
+- `pytest.ini` + `pyproject.toml`（註冊 `benchmark` marker）
 
-**修復工作量**：4h
+**未做**：CI workflow 整合（GitHub Actions 等）— 因專案目前無 CI 設定檔，
+留待 CI 平台選定後加上 `pytest -m benchmark` 步驟即可。
 
 ---
 
@@ -1123,7 +1145,7 @@ python -m pytest --collect-only -q | tail -1
 | 11 | MEDIUM-02 | KG / BrainDB 雙源同步（方案 C：事件） | 4h | **Sonnet 4.6** (事件匯流排設計) | — |
 | 12 | MEDIUM-03 | MCP Server singleton → 實例化 | 6h | **Sonnet 4.6** (跨檔重構) | — |
 | 13 | MEDIUM-06 | _count_tokens 停用快取 | 2h | **Haiku 4.5** (單函式) | — |
-| 14 | MEDIUM-07 | CI benchmark baseline | 4h | **Haiku 4.5** (CI 設定檔) | — |
+| 14 | MEDIUM-07 | CI benchmark baseline | 4h | **Haiku 4.5** (CI 設定檔) | — | ✅ v0.34.0 (4+5 tests) |
 | 15 | LOW-01~05 | 錯誤處理統一 + 小優化 | 4h | **Haiku 4.5** (瑣碎改動批次處理) | — |
 
 **總工作量**：**20h**
@@ -1376,8 +1398,8 @@ def migrate_v30_to_v31(brain_dir: Path):
 > **🎯 運行 Model**：無
 
 - ✅ MEDIUM-04：KRB staging 自動清理 `[Haiku 4.5]` — 15 tests（Phase 2 殘餘項，2026-04-09 完成）
+- ✅ MEDIUM-07：CI benchmark baseline `[Haiku 4.5]` — 4 benchmark tests + 5 meta tests（2026-04-09 完成）
 - ⏳ MEDIUM-02：KG/BrainDB 事件同步 `[Sonnet 4.6]`
-- ⏳ MEDIUM-07：CI benchmark baseline `[Haiku 4.5]`
 - ⏳ Pipeline metrics dashboard（Grafana 可讀）`[Sonnet 4.6]`
 - ⏳ 新增 `brain health` 命令（自動 detect 常見不一致）`[Sonnet 4.6]`
 
