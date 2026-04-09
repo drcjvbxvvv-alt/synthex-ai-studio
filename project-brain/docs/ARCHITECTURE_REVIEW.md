@@ -419,15 +419,27 @@ def approve(self, staged_id, reviewer="human", note=""):
 
 ---
 
-### 🔴 BLOCKER-03 — Federation 模組 849 行程式碼，零專用測試
+### 🔴 BLOCKER-03 — Federation 模組 849 行程式碼，零專用測試 ✅ 完成於 v0.34.0（2026-04-09）
 
 > **🎯 開發 Model**：**Sonnet 4.6** — 測試編寫是 Sonnet 的強項；PII 清理邊界需要安全意識但不需要架構設計
 > **🎯 運行 Model**：— （federation 本身是純資料序列化，不呼叫 LLM）
 
 **位置**：
-- `project_brain/federation.py`（849 行，完整實作）
-- `tests/test_federation*` **不存在**
-- 僅在 `tests/unit/test_core.py` 等幾處出現 `federation` 字串引用（非驗證）
+- `project_brain/integrations/federation.py`（849 行，完整實作）
+- `tests/unit/test_federation.py`（🆕 **75 個測試**，1469 行）
+
+**修復成果**：補齊 `tests/unit/test_federation.py` 75 tests，全部通過。涵蓋：
+| 測試群組 | Tests | 對應 spec |
+|---|---|---|
+| `TestPIIStripping` | 17 | email / 內部主機 / 私有 IP / Slack / Cloud URL / CJK / 變數名不誤判 |
+| `TestFederationBundle` | 3 | JSON roundtrip + UTF-8 + 預設值 |
+| `TestFederationExporter` | 15 | scope filter / min_confidence / max_nodes / PII 清理 / domain_tags 收集 / 檔案寫入 / 內容截斷 / `_parse_tags` |
+| `TestFederationImporter` | 10 | dedup (exact + Jaccard) / low_conf / subscription / dry_run / FED-01 audit / 找不到 bundle |
+| `TestSubscriptionManager` | 10 | CRUD / 大小寫正規化 / 持久化 / 設定檔損毀容錯 |
+| `TestFederationAutoSync` | 10 | add/remove/sync_all / 停用 / 相對路徑 / 找不到 bundle / dry_run |
+| `TestValidateWorkdir` | 8 | 空字串 / `..` 遍歷 / 不存在 / 非目錄 / 缺 `.brain` / symlink resolve / `/etc` 禁區 |
+| `TestConflictResolution` | 3 | 同 title 去重 / 異 title 全入 Staging / 絕不跳過 KRB 寫 L3 |
+| **總計** | **75** | — |
 
 **驗證方法**：
 ```bash
@@ -1011,7 +1023,7 @@ python -m pytest --collect-only -q | tail -1
 | 序 | ID | 描述 | 工作量 | 開發 Model | 運行 Model 影響 | 狀態 |
 |----|----|------|-------|-----------|----------------|------|
 | 5 | BLOCKER-01 | LLMJudgmentEngine + PipelineWorker 實作 | 12h | **Opus 4.6 (1M)** (新模組 + prompt engineering + 長 context 閱讀 pipeline.py 全文) | 🟨 `[pipeline.llm]` gemma4:27b（預設）；Dense 任務可升 gemma4:31b | ✅ v0.32.0 |
-| 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ⏳ |
+| 6 | BLOCKER-03 | Federation 完整測試套件 | 10h | **Sonnet 4.6** (測試編寫 + PII 邊界驗證) | — | ✅ v0.34.0 (75 tests) |
 | 7 | HIGH-01 | KnowledgeGraph CAS 實施 | 3h | **Sonnet 4.6** (並發 + 樂觀鎖邏輯) | — | ⏳ |
 | 8 | HIGH-03 | find_conflicts O(n²) 優化 | 4h | **Sonnet 4.6** (演算法改寫) | 🟩 Embedder (若用 VectorStore 方案 B) | ⏳ |
 | 9 | MEDIUM-01 | brain_db._execute_write() 統一入口 | 6h | **Sonnet 4.6** (跨 16 個 commit 路徑重構) | — | ⏳ |
@@ -1084,45 +1096,52 @@ python -m pytest --collect-only -q | tail -1
 4. **非同步與可降級**：核心查詢不依賴 LLM 可用性
 5. **觀測友善**：所有失敗路徑有 log，所有慢路徑有 metric
 
-### 6.2 建議新檔案結構
+### 6.2 建議新檔案結構 ✅ 完成於 v0.33.0（2026-04-09）
 
 ```
 project_brain/
-├── core/                    # 新目錄 — 核心不變數據層
-│   ├── brain_db.py          # 唯一真相源（合併 graph.py 進來）
-│   ├── session_store.py     # L1a
-│   └── constants.py
+├── core/                    # ✅ 核心不變數據層
+│   ├── brain_db.py          # 唯一真相源（✅ 搬入；合併 graph.py 延後至 v0.34+）
+│   ├── session_store.py     # ✅ L1a
+│   └── constants.py         # ✅（使用 sys.modules 別名保留 monkey-patch 契約）
 │
-├── pipeline/                # 新目錄 — 自動管線
-│   ├── __init__.py
-│   ├── signal.py            # 從 pipeline.py 拆出 Signal/SignalQueue
-│   ├── executor.py          # KnowledgeExecutor
-│   ├── llm_judgment.py      # 🆕 Layer 3 LLM 判斷引擎
-│   ├── worker.py            # 🆕 背景 worker 迴圈
-│   └── README.md            # Layer 1-5 架構說明
+├── pipeline/                # ✅ 自動管線
+│   ├── __init__.py          # ✅ re-export Layer 1/2/4 核心符號
+│   ├── signal.py            # ✅ 從 pipeline.py 拆出 Signal / SignalKind / SignalQueue
+│   ├── executor.py          # ✅ 從 pipeline.py 拆出 KnowledgeExecutor + NodeSpec / KnowledgeDecision
+│   ├── llm_judgment.py      # ✅ Layer 3 LLMJudgmentEngine（v0.32 先置於根目錄，本次搬入）
+│   └── worker.py            # ✅ 背景 worker 迴圈（v0.32 先置於根目錄，本次搬入）
 │
-├── engines/                 # 新目錄 — 處理引擎
-│   ├── context_engineer.py
-│   ├── nudge_engine.py
-│   ├── decay_engine.py
-│   ├── review_board.py
-│   ├── memory_synthesizer.py
-│   ├── conflict_resolver.py
-│   └── knowledge_validator.py
+├── engines/                 # ✅ 處理引擎
+│   ├── context.py           # ✅（原 context.py，6.2 原寫 context_engineer.py，實際檔名為 context.py）
+│   ├── nudge_engine.py      # ✅
+│   ├── decay_engine.py      # ✅
+│   ├── review_board.py      # ✅
+│   ├── memory_synthesizer.py # ✅
+│   ├── conflict_resolver.py # ✅
+│   └── knowledge_validator.py # ✅
 │
-├── interfaces/              # 新目錄 — 外部介面
-│   ├── cli.py
-│   ├── mcp_server.py
-│   ├── api_server.py
-│   └── web_ui/
+├── interfaces/              # ✅ 外部介面
+│   ├── cli.py + cli_*.py    # ✅（cli, cli_admin, cli_fed, cli_knowledge, cli_serve, cli_utils）
+│   ├── mcp_server.py        # ✅
+│   ├── api_server.py        # ✅
+│   └── web_ui/              # ✅
 │
-└── integrations/
-    ├── federation.py
-    ├── graphiti_adapter.py
-    └── llm_client.py        # 🆕 統一 LLM 介面
+└── integrations/            # ✅ 外部系統整合
+    ├── federation.py        # ✅
+    ├── graphiti_adapter.py  # ✅
+    └── llm_client.py        # ❌ 延後（新功能非 refactor；待 v0.34+ 實作統一 LLM 介面）
 ```
 
-**備註**：這是**建議方向**，實際是否拆分需視團隊容量。短期優先修 BLOCKER，長期才考慮目錄重組。
+**向後相容**：所有搬移檔在原位置保留 `sys.modules` 別名式 compat shim，
+舊 import 路徑與新路徑**指向同一個 module 物件**。`monkeypatch.setattr(project_brain.constants, ...)`
+仍會影響 `core/brain_db.py` 中 `from . import constants as _constants` 取得的引用（REF-04 契約保留）。
+
+**測試結果**：535 unit passed（零 regression，同 v0.32 baseline）、3 pre-existing schema drift 不計。
+
+**延後項目**（v0.34+）：
+- 合併 `graph.py` 進 `core/brain_db.py`（需 DB schema v31 migration）
+- `integrations/llm_client.py` 統一 LLM 介面（新功能，非 refactor）
 
 ### 6.3 DB Schema 統一路徑（方案 A）
 

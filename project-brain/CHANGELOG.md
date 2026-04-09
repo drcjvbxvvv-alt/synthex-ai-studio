@@ -4,6 +4,188 @@
 
 ---
 
+## v0.34.0（2026-04-09）— BLOCKER-03 Federation 測試套件補齊
+
+測試基準：**610 passed**（v0.33 基線 535 + 新增 75 個 federation 測試；3 個 pre-existing schema drift 不計）
+
+### BLOCKER-03 — Federation 模組 849 行程式碼，零專用測試
+
+**問題**（ARCHITECTURE_REVIEW.md §3）：`project_brain/integrations/federation.py`
+849 行完整實作但 `tests/` 下不存在任何 `test_federation*`。PII 清理若有漏網之魚，
+export bundle 會攜帶 email / 內部主機 / 私有 IP / Slack URL / Cloud URL 流出
+企業邊界才被發現；import 去重邏輯若錯誤，跨專案知識會污染本地知識庫；
+`multi_brain_query` 的 `_validate_workdir` 防線未被迴歸測試保護。
+
+**修法**：新增 `tests/unit/test_federation.py`（1469 行，75 個測試），分 8 個測試群組：
+
+#### `TestPIIStripping`（17 tests）
+驗證 `_strip_pii()` helper 的 6 個 regex 全部正確：
+- `_PII_EMAIL` — 單一 / 多 email 都被替換為 `[redacted-email]`
+- `_PII_INTERNAL` — `internal.*` / `corp.*` 主機被替換
+- `_PII_LOCAL` — `*.local` 主機被替換
+- `_PII_PRIVATE_IP` — 10.x / 172.16-31 / 192.168 私有網段替換；公網 IP (8.8.8.8, 172.15.x) **不誤傷**
+- `_PII_SLACK` — `*.slack.com` URL 替換
+- `_PII_CLOUD_URL` — S3 / Azure Blob / Google API 替換
+
+**關鍵 false-positive 保護**：
+- `test_variable_name_not_stripped` — 確認 `user_email`、`InternalAPI` 等程式碼識別字不被誤傷
+- `test_cjk_content_preserved` — 中文知識原樣保留
+- `test_public_ip_not_stripped` — 8.8.8.8 / 172.15.0.1 等公網 IP 留存
+
+#### `TestFederationBundle`（3 tests）
+`to_json` / `from_json` roundtrip、UTF-8 中文保留、缺欄位時套用預設值。
+
+#### `TestFederationExporter`（15 tests）
+- `export()` 主流程：空 DB / 基本節點 / `min_confidence` 過濾 / `max_nodes` 截取 / 按 confidence 降序 / `scope='global'` 過濾私有 scope
+- `_sanitise_node()` — 標題 + 內容都要套 PII 清理、domain_tags 收集（小寫、去重、排序）、空 title 略過、內容截斷 ≤ 600 字元
+- 檔案寫入驗證（自訂 `output_path` + roundtrip 驗證）
+- `_parse_tags()` — JSON array / CSV / empty / 破損 JSON 回退
+
+**關鍵設計測試**：
+- `test_export_excludes_private_scope` — 私有 scope 節點**絕不**流出聯邦
+- `test_export_strips_pii_from_title_and_content` — 標題和內容都必須清洗
+
+#### `TestFederationImporter`（10 tests）
+- 基本 import / low_confidence 過濾 / exact-title 去重 / Jaccard-similar title 去重
+- `dry_run` 不呼叫 `krb.submit()`
+- 訂閱過濾：空訂閱 = 接受所有；有訂閱 = 只接受 tag 相符的節點
+- 找不到 bundle 時靜默回傳零計數（不拋例外）
+- **FED-01 audit 整合測試**：`brain_db.record_federation_import()` 被正確呼叫，
+  dry_run 時**不**寫 audit
+
+#### `TestSubscriptionManager`（10 tests）
+CRUD 完整覆蓋 + 大小寫/空白正規化 + 多實例持久化 + `federation.json` 損毀時靜默回傳空清單。
+
+#### `TestFederationAutoSync`（10 tests，VISION-03）
+- `add_source` / `remove_source` / 重複 add 時冪等更新
+- `sync_all` 跳過 `enabled=false` / 跳過 `bundle_not_found`
+- **相對路徑解析**：相對 bundle_path 以 `brain_dir` 為基底（`brain_dir/sub/rel.json`）
+- `dry_run` 不實際寫入 KRB
+
+#### `TestValidateWorkdir`（8 tests）
+`project_brain/interfaces/mcp_server.py:_validate_workdir` 是 `multi_brain_query`
+的第一道防線，覆蓋：
+- 空字串 → `ValueError`
+- 含 `..` 的路徑遍歷 → `ValueError`（SEC-02）
+- 不存在的路徑 → `FileNotFoundError`
+- 缺 `.brain/` 的目錄 → `FileNotFoundError`
+- 檔案而非目錄 → `NotADirectoryError`
+- symlink 解析：指向合法 workdir 的 symlink 被 resolve 到真實路徑
+- `/etc` 禁區路徑（`(ValueError, FileNotFoundError)` 任一都是攻擊被擋）
+
+#### `TestConflictResolution`（3 tests）
+- 同 title 不同 content → exact-match 去重、本地內容**不**被覆蓋
+- 不同 title → 全部進 KRB Staging
+- **絕對不變量**：federation import 全程**零直接寫入 L3**；所有節點都進 `krb.submit()`
+
+### 測試輔助
+
+新增三個 helper 讓測試不依賴全量 `BrainDB` 初始化：
+
+- `_make_graph_with_scope(brain_dir)` — 建立真實 `KnowledgeGraph` 並 `ALTER TABLE ADD COLUMN scope`，
+  讓 `FederationExporter` 的主 SQL 路徑（而非 fallback）被覆蓋
+- `_FakeKRB` — 最小化 duck-type：僅暴露 `graph._conn`（去重查詢）+ `submit()`（記錄呼叫）
+- `_FakeBrainDB` — 僅暴露 `record_federation_import()` 用於 FED-01 audit 驗證
+
+### 測試結果
+
+| 群組 | Pass | Notes |
+|---|---|---|
+| unit/test_federation.py | **75 / 75** | 全數通過 |
+| unit/（全量） | 610 / 613 | 3 個 pre-existing schema drift 與本次無關 |
+| 零 regression | ✓ | v0.33 基線維持 |
+
+### 文件更新
+
+- `docs/ARCHITECTURE_REVIEW.md` §3 BLOCKER-03：標記 ✅ 完成於 v0.34.0，附測試群組對照表
+- `docs/ARCHITECTURE_REVIEW.md` §5.2 Phase 2 表格：BLOCKER-03 狀態 ⏳ → ✅ v0.34.0 (75 tests)
+- `pyproject.toml`：version 0.33.0 → 0.34.0
+
+---
+
+## v0.33.0（2026-04-09）— REFACTOR-6.2 子套件化
+
+測試基準：535 passed（同 v0.32 基線，3 個 pre-existing schema drift 不計）
+
+### ARCHITECTURE_REVIEW.md §6.2 — 核心模組子套件化
+
+**目標**：將原本 50+ 個扁平放在 `project_brain/` 根目錄的模組，依據
+ARCHITECTURE_REVIEW.md §6.2 建議結構拆分為 5 個職責子套件，為後續長期
+架構演進（單一真相源、事務邊界清晰、元件可替換）鋪路。
+
+**新目錄結構**：
+
+```
+project_brain/
+├── core/                 # 核心不變數據層
+│   ├── brain_db.py       # 唯一真相源（+ SCHEMA_VERSION）
+│   ├── session_store.py  # L1a
+│   └── constants.py      # 全域常數（monkey-patch friendly）
+│
+├── pipeline/             # 自動知識管線
+│   ├── signal.py         # Layer 1/2 Signal / SignalKind / SignalQueue（從 pipeline.py 拆出）
+│   ├── executor.py       # Layer 4 NodeSpec / KnowledgeDecision / KnowledgeExecutor（從 pipeline.py 拆出）
+│   ├── llm_judgment.py   # Layer 3 LLMJudgmentEngine（搬自 project_brain/llm_judgment.py）
+│   └── worker.py         # Layer 3.5 PipelineWorker（搬自 project_brain/pipeline_worker.py）
+│
+├── engines/              # 處理引擎
+│   ├── context.py            # ContextEngineer
+│   ├── nudge_engine.py       # NudgeEngine
+│   ├── decay_engine.py       # DecayEngine
+│   ├── review_board.py       # KnowledgeReviewBoard
+│   ├── memory_synthesizer.py # MemorySynthesizer
+│   ├── conflict_resolver.py  # ConflictResolver
+│   └── knowledge_validator.py
+│
+├── interfaces/           # 外部介面
+│   ├── cli.py / cli_*.py
+│   ├── mcp_server.py
+│   ├── api_server.py
+│   └── web_ui/
+│
+└── integrations/         # 外部系統整合
+    ├── federation.py
+    └── graphiti_adapter.py
+```
+
+**向後相容策略**：所有搬移的檔案在原位置保留 compat shim，使用
+`sys.modules[__name__] = _real` 別名技巧讓舊路徑與新路徑**指向同一個 module
+物件**，確保：
+
+1. `from project_brain.brain_db import BrainDB` 等既有 import 繼續運作（~493 處無需修改）
+2. `monkeypatch.setattr(project_brain.constants, "BASE_DECAY_RATE", 0.01)` 仍會影響
+   `core/brain_db.py` 中 `from . import constants as _constants` 取得的引用（保留 REF-04 契約）
+3. `pyproject.toml [project.scripts] brain = "project_brain.cli:main"` 入口點無需改動
+4. `isinstance` / 單例 / 模組級 logger 全部如常運作
+
+**搬移規模**：
+- Phase 1: `pipeline/` — pipeline.py 拆分為 signal.py + executor.py，另搬入 llm_judgment.py + worker.py
+- Phase 2: `core/` — brain_db.py + session_store.py + constants.py
+- Phase 3: `engines/` — context + nudge + decay + review_board + memory_synthesizer + conflict_resolver + knowledge_validator
+- Phase 4: `interfaces/` — cli + 5×cli_* + mcp_server + api_server + web_ui/
+- Phase 5: `integrations/` — federation + graphiti_adapter
+
+共 20 個檔案搬移 + 20 個 compat shim + 5 個 `__init__.py`。
+
+**未納入本次重構**（6.2 提及但屬新功能非 refactor）：
+- `core/` 合併 graph.py 進 brain_db.py（DB schema 統一為 v31）— 需 migration 腳本
+- `integrations/llm_client.py`（統一 LLM 介面）— 需新實作
+
+**測試驗證**：
+- 538 unit tests：535 passed、3 pre-existing schema drift（與 baseline 相同）
+- 67 integration tests：63 passed、4 pre-existing web_ui `scope` column bug
+- 零 regression
+- 修正 2 個 test_arch_decisions_v05 路徑（核心模組搬移後 `_PKG / "cli.py"` 需指向 `interfaces/cli.py`）
+
+**關鍵實作細節**：
+- `project_brain/core/brain_db.py` 內部 4 處 `from .X import Y` 改為 `from ..X import Y`（cross-boundary 跨出 core/ 回根目錄）
+- `project_brain/engines/context.py` 內部 7 處類似調整
+- `project_brain/web_ui/__init__.py` compat shim 需**同時** pre-register 子模組
+  `sys.modules[__name__ + ".server"]`，否則 Python 會從 aliased package 的 `__path__`
+  重新載入 `interfaces/web_ui/server.py` 建立獨立 module 物件，破壞 `is` 檢查
+
+---
+
 ## v0.32.0（2026-04-09）— BLOCKER-01 Pipeline 神經接通
 
 測試基準：888 passed（+28 新增 LLMJudgmentEngine + PipelineWorker 測試）
