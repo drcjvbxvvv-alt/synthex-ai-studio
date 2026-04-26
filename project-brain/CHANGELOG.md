@@ -4,6 +4,54 @@
 
 ---
 
+## v0.35.0（2026-04-26）— 可觀測性與維護性 Phase B
+
+測試基準：**713 passed**（v0.34 baseline 684 + 29 新測試；零 regression）
+
+### B-02 MEDIUM-02 — KG/BrainDB 事件驅動同步（29 tests）
+
+**問題**（ARCHITECTURE_REVIEW.md §3 MEDIUM-02）：
+`knowledge_graph.db` 與 `brain.db` 是兩個獨立 SQLite 檔案，除了
+`review_board.approve()` 的手動雙寫之外，沒有任何自動同步機制。
+`graph.add_node()` / `update_node()` 寫入後，BrainDB FTS5 索引不更新，
+導致「KG 有節點，`brain ask` / `get_context` 找不到」的長期不一致。
+
+**修法（Observer pattern，最小侵入，方案 C）**：
+
+1. **`project_brain/graph.py`** — 新增 Observer API：
+   - `KnowledgeGraph._listeners: list` — 已登記的 listener callable 清單
+   - `add_listener(fn)` / `remove_listener(fn)` — 登記 / 取消登記
+   - `_emit(event, data)` — 通知所有 listener（失敗 → WARNING log，不 raise）
+   - `add_node()` — commit 後、`with self._lock:` 外 emit `"node_upserted"`
+   - `update_node()` — commit 後 emit `"node_upserted"`（含合併後的 title/content/confidence）
+
+2. **`project_brain/core/brain_db.py`** — 新增 sync 方法：
+   - `sync_from_graph_node(event, data)` — `"node_upserted"` 事件時呼叫 `add_node()`（upsert 冪等），未知 event 靜默忽略
+
+3. **`project_brain/engine.py`** — ProjectBrain 接線：
+   - `graph` lazy property：初始化後呼叫 `g.add_listener(self._on_graph_node_upserted)`
+   - `_on_graph_node_upserted(event, data)`：轉發到 `self.db.sync_from_graph_node()`；失敗記 WARNING，不 raise
+
+**設計決策**：
+- emit 在 `with self._lock:` 外 → 防止 listener 回呼 graph 方法時死鎖
+- listener 失敗不回滾 graph 寫入（最終一致性）→ `brain health` 可偵測殘餘不一致
+- `review_board.approve()` 的手動雙寫保留為安全網（Phase C 統一 DB 後移除）
+- upsert 冪等 → `approve()` 的手動寫 + listener 自動寫 = double write，無副作用
+
+**新增測試**（`tests/unit/test_kg_braindb_sync.py`，29 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestObserverAPI` | 6 | add/remove listener 冪等性、_emit 呼叫所有 listener、失敗後繼續 |
+| `TestAddNodeSync` | 6 | add_node 同步後可搜尋、type/content/confidence 正確、upsert 更新、commit 後才 emit |
+| `TestUpdateNodeSync` | 5 | title/content/confidence 更新同步、不存在節點不 emit、無更新不 emit |
+| `TestListenerResilience` | 3 | 失敗不回滾 graph、記 WARNING log、鏈式第二個 listener 仍呼叫 |
+| `TestEngineIntegration` | 5 | engine.graph 有 listener、add/update 透過 engine 同步、失敗不 raise、兩實例獨立 |
+| `TestIdempotency` | 3 | 雙重 add 只有一筆、sync 兩次無重複、未知 event 忽略 |
+| `TestConcurrency` | 1 | 50 threads 並發 add_node，BrainDB 最終節點數與 graph 一致 |
+
+---
+
 ## v0.34.0（2026-04-09）— 可觀測性與可維護性（進行中）
 
 對應 `docs/ARCHITECTURE_REVIEW.md §8.4 v0.34` 路線圖。本版逐步累積：

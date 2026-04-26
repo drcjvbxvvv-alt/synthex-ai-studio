@@ -58,6 +58,8 @@ class KnowledgeGraph:
     def __init__(self, brain_dir: Path):
         self.db_path = brain_dir / "knowledge_graph.db"
         self._lock = threading.Lock()  # serialise concurrent SQLite access
+        # B-02: Observer pattern — callables notified after successful node writes
+        self._listeners: list = []
         # ARCH-02: single shared connection — no per-thread fd leak
         self._conn_obj: sqlite3.Connection = self._make_connection()
         self._setup_schema()
@@ -83,6 +85,39 @@ class KnowledgeGraph:
             self._conn_obj.close()
         except Exception:
             pass
+
+    # ── B-02: Observer pattern ────────────────────────────────────────────────
+
+    def add_listener(self, fn) -> None:
+        """Register a callable to be notified after node writes.
+
+        Signature: fn(event: str, data: dict) -> None
+          event is currently always "node_upserted".
+          data keys: node_id, node_type, title, content, tags, source_url,
+                     author, confidence, created_at.
+        """
+        if fn not in self._listeners:
+            self._listeners.append(fn)
+
+    def remove_listener(self, fn) -> None:
+        """Unregister a previously-added listener (no-op if not found)."""
+        try:
+            self._listeners.remove(fn)
+        except ValueError:
+            pass
+
+    def _emit(self, event: str, data: dict) -> None:
+        """Notify all listeners. Individual listener failures are logged, not raised."""
+        for fn in list(self._listeners):  # snapshot to allow safe removal during iteration
+            try:
+                fn(event, data)
+            except Exception as _e:
+                logger.warning(
+                    "graph_listener_failed event=%s node=%s: %s",
+                    event, data.get("node_id"), _e,
+                )
+
+    # ── end Observer ──────────────────────────────────────────────────────────
 
     def _setup_schema(self):
         # P1-1：WAL 模式（多進程並發安全）
@@ -332,7 +367,21 @@ class KnowledgeGraph:
                 # R-2: log instead of silently swallowing — node is saved but unsearchable
                 logger.warning("fts5_insert_failed node=%s: %s", node_id, _fts_err)
             self._conn.commit()
-            return node_id
+            # B-02: capture emit payload inside lock so data is consistent with commit
+            _emit_data = {
+                "node_id":    node_id,
+                "node_type":  node_type,
+                "title":      title,
+                "content":    content or "",
+                "tags":       tags or [],
+                "source_url": source_url or "",
+                "author":     author or "",
+                "confidence": confidence,
+                "created_at": created_at or "",
+            }
+        # B-02: emit OUTSIDE lock — prevents deadlock if a listener calls back into graph
+        self._emit("node_upserted", _emit_data)
+        return node_id
 
     def update_node(
         self,
@@ -402,6 +451,18 @@ class KnowledgeGraph:
                 logger.error("FTS5 sync failed in update_node: %s", _e)  # FTS5 同步失敗不影響主流程
 
         self._conn.commit()
+        # B-02: notify listeners with merged node data
+        self._emit("node_upserted", {
+            "node_id":    node_id,
+            "node_type":  existing.get("type", ""),
+            "title":      title   if title   is not None else existing.get("title", ""),
+            "content":    content if content is not None else existing.get("content", ""),
+            "tags":       existing.get("tags", []) if isinstance(existing.get("tags"), list) else [],
+            "source_url": existing.get("source_url", ""),
+            "author":     existing.get("author", ""),
+            "confidence": confidence if confidence is not None else float(existing.get("confidence", 0.8) or 0.8),
+            "created_at": existing.get("created_at", ""),
+        })
         return True
 
     def get_node(self, node_id: str) -> Optional[dict]:

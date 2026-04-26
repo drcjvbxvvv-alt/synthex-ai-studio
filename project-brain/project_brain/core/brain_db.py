@@ -705,6 +705,28 @@ class BrainDB:
                 raise
         return node_id
 
+    def sync_from_graph_node(self, event: str, data: dict) -> None:
+        """B-02: Observer callback — sync a KnowledgeGraph node write to brain.db.
+
+        Called by KnowledgeGraph._emit() after add_node() or update_node() commits.
+        Uses upsert semantics (INSERT ... ON CONFLICT DO UPDATE), so calling this
+        multiple times with the same data is idempotent.
+
+        Only "node_upserted" events are handled; unknown events are silently ignored
+        so future event types can be added to graph.py without breaking this method.
+        """
+        if event != "node_upserted":
+            return
+        self.add_node(
+            node_id   = data["node_id"],
+            node_type = data.get("node_type", ""),
+            title     = data.get("title", ""),
+            content   = data.get("content", ""),
+            tags      = data.get("tags") or [],
+            confidence= float(data.get("confidence") or 0.8),
+            created_at= data.get("created_at", ""),
+        )
+
     def update_node(self, node_id: str, title=None, content=None,
                     confidence=None, importance=None,
                     changed_by: str = "", change_note: str = "",

@@ -251,7 +251,7 @@ class TestCleanupDaemonIntegration:
 
 ---
 
-### B-02 MEDIUM-02：KG/BrainDB 事件驅動同步
+### B-02 MEDIUM-02：KG/BrainDB 事件驅動同步 [DONE v0.35.0]
 
 **ID**：MEDIUM-02
 **優先**：P1（Phase B 最重要項目）— 解決雙 DB 不一致根因
