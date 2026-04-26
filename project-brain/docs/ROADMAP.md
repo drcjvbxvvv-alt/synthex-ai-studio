@@ -209,7 +209,7 @@ project_brain/
 >
 > **總估計工作量**：~20h（Haiku 4h / Sonnet 12h / Opus 0h）
 
-### B-01 KRB Cleanup Daemon 整合
+### B-01 KRB Cleanup Daemon 整合 [DONE v0.35.0]
 
 **ID**：來自 MEDIUM-04「待做」項目
 **優先**：P2 — 搭配既有 decay daemon，低成本完成 MEDIUM-04 後半
@@ -242,9 +242,9 @@ class TestCleanupDaemonIntegration:
 
 #### 驗收條件
 
-- [ ] decay daemon 每輪執行後，過期 staging 被自動清理
-- [ ] cleanup 失敗不中斷 decay（有 try/except + log）
-- [ ] `pytest tests/unit/test_krb_daemon_integration.py` 全通過
+- [x] decay daemon 每輪執行後，過期 staging 被自動清理
+- [x] cleanup 失敗不中斷 decay（有 try/except + log）
+- [x] `pytest tests/unit/test_krb_daemon_integration.py` 全通過（16/16）
 
 **推薦模型**：Haiku 4.5（單檔小改 + 3 個測試）
 **估計工作量**：1h
@@ -328,7 +328,7 @@ class TestSyncConsistency:
 
 ---
 
-### B-03 `brain health` 診斷命令
+### B-03 `brain health` 診斷命令 [DONE v0.35.0]
 
 **ID**：新功能（§8.4 列出）
 **優先**：P2（依賴 B-02 讓 health check 有意義）
@@ -392,17 +392,18 @@ class TestHealthCommand:
 
 #### 驗收條件
 
-- [ ] `brain health` 命令可執行，輸出各項狀態
-- [ ] KG/BrainDB 不一致時顯示 WARN（依賴 B-02）
-- [ ] `--json` 輸出格式穩定（供 CI 解析）
-- [ ] DB 不存在時優雅降級（不 crash）
+- [x] `brain health` 命令可執行，輸出各項狀態
+- [x] KG/BrainDB 不一致時顯示 WARN（依賴 B-02）
+- [x] `--json` 輸出格式穩定（供 CI 解析）
+- [x] DB 不存在時優雅降級（不 crash）
+- [x] `pytest tests/unit/test_health.py` 全通過（21/21）
 
 **推薦模型**：Sonnet 4.6（跨多模組資訊收集 + CLI 設計）
 **估計工作量**：3h
 
 ---
 
-### B-04 Pipeline Metrics Dashboard
+### B-04 Pipeline Metrics Dashboard [DONE v0.35.0]
 
 **ID**：新功能（§8.4 列出）
 **優先**：P2
@@ -453,9 +454,11 @@ class TestPipelineStats:
 
 #### 驗收條件
 
-- [ ] `brain pipeline-stats` 輸出人可讀統計
-- [ ] `--prometheus` 輸出可被 Prometheus text format 解析器讀取
-- [ ] 空 DB 不 crash（回傳全 0）
+- [x] `brain pipeline-stats` 輸出人可讀統計
+- [x] `--prometheus` 輸出可被 Prometheus text format 解析器讀取
+- [x] `--json` 輸出 JSON 格式
+- [x] 空 DB 不 crash（回傳全 0）
+- [x] `pytest tests/unit/test_pipeline_stats.py` 全通過（19/19）
 
 **推薦模型**：Sonnet 4.6（跨 CLI + DB 聚合查詢）
 **估計工作量**：3h

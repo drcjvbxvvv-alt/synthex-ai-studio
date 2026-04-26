@@ -68,41 +68,149 @@ def cmd_status(args):
 
 
 def cmd_health(args):
-    """REFACTOR-01: 已整合至 doctor --mcp-port，保留供向後相容。"""
-    mcp_port = getattr(args, 'mcp_port', None)
-    port_hint = f" --mcp-port {mcp_port}" if mcp_port else " --mcp-port 3000"
-    print(f"  \033[33m⚠ brain health 已整合至 brain doctor\033[0m")
-    print(f"  \033[90m  請改用：brain doctor{port_hint}\033[0m")
-    import socket, time as _time
-    G = "\033[32m"; Y = "\033[33m"; R = "\033[31m"; RE = "\033[0m"
-
-    # ── MCP TCP 連接 ──────────────────────────────
-    port = getattr(args, "mcp_port", None) or int(os.environ.get("BRAIN_MCP_PORT", "3000"))
-    t0 = _time.monotonic()
-    try:
-        s = socket.create_connection(("127.0.0.1", port), timeout=2)
-        s.close()
-        ms = int((_time.monotonic() - t0) * 1000)
-        print(f"  {G}✅ MCP server 回應{RE}  port={port}  latency={ms}ms")
-    except OSError as e:
-        print(f"  {R}❌ MCP server 無回應{RE}  port={port}  ({e})")
-        print(f"  {Y}提示：執行 brain serve --mcp 啟動 MCP server{RE}")
-
-    # ── .brain 目錄 ───────────────────────────────
+    """B-03: brain health — 一鍵診斷 DB/KG 一致性、KRB、schema、signal queue。"""
     wd = _workdir(args)
     brain_dir = Path(wd) / ".brain"
-    if brain_dir.exists():
-        db_path = brain_dir / "brain.db"
-        kb_path = brain_dir / "knowledge_graph.db"
-        print(f"  {G}✅ .brain 目錄存在{RE}  {brain_dir}")
-        for p, label in [(db_path, "brain.db"), (kb_path, "knowledge_graph.db")]:
-            if p.exists():
-                size_kb = p.stat().st_size // 1024
-                print(f"     {G}✓{RE} {label:<24} {size_kb} KB")
-            else:
-                print(f"     {Y}⚠{RE} {label:<24} 不存在")
-    else:
-        print(f"  {R}❌ .brain 目錄不存在{RE}  執行 brain init 初始化")
+
+    from project_brain.health import HealthChecker
+    hc = HealthChecker(brain_dir)
+    report = hc.run()
+
+    # --json: raw JSON output for CI
+    if getattr(args, "json_output", False):
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+
+    # Coloured human-readable output
+    _LEVEL_FMT = {
+        "ok":    f"{G}[OK]{R}",
+        "warn":  f"{Y}[WARN]{R}",
+        "error": f"{RE}[ERR]{R}",
+    }
+
+    ver = report["version"]
+    print(f"\n  {B}{C}Project Brain Health Check{R}  {D}v{ver}{R}")
+    sep = "=" * 48
+    print(f"  {D}{sep}{R}")
+
+    for check in report["checks"]:
+        tag = _LEVEL_FMT.get(check["level"], check["level"])
+        lbl = check["label"]
+        msg = check["message"]
+        print(f"  {tag}  {lbl:<24} {msg}")
+        det = check.get("detail")
+        if det:
+            print(f"        {D}{det}{R}")
+
+    s = report["summary"]
+    print(f"  {D}{sep}{R}")
+    overall_color = G if s["overall"] == "ok" else (Y if s["overall"] == "warn" else RE)
+    overall_upper = s["overall"].upper()
+    ok_n, warn_n, err_n = s["ok"], s["warn"], s["error"]
+    print(f"  Overall: {overall_color}{overall_upper}{R}"
+          f"  ({ok_n} ok, {warn_n} warn, {err_n} error)")
+    print()
+
+
+def _format_prometheus(stats: dict) -> str:
+    """B-04: Format pipeline stats as Prometheus text exposition."""
+    lines: list[str] = []
+
+    def _counter(name: str, help_text: str, labels_values: list[tuple[str, int]]):
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} counter")
+        for labels, value in labels_values:
+            lines.append(f"{name}{{{labels}}} {value}")
+
+    def _gauge(name: str, help_text: str, value: int):
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} gauge")
+        lines.append(f"{name} {value}")
+
+    sig = stats["signals"]
+    _counter("brain_signals_total", "Total signals received",
+             [(f'status="{s}"', n) for s, n in sig["by_status"].items()])
+    _counter("brain_signals_by_kind", "Signals by kind",
+             [(f'kind="{k}"', n) for k, n in sig["by_kind"].items()])
+
+    pipe = stats["pipeline"]
+    _counter("brain_pipeline_processed_total", "Pipeline processed signals",
+             [(f'action="{a}"', n) for a, n in pipe["by_action"].items()])
+    _counter("brain_pipeline_by_model", "Pipeline signals by LLM model",
+             [(f'model="{m}"', n) for m, n in pipe["by_model"].items()])
+
+    fb = pipe["feedback"]
+    _counter("brain_pipeline_feedback", "Pipeline feedback counts",
+             [('result="useful"', fb["useful"]),
+              ('result="not_useful"', fb["not_useful"]),
+              ('result="no_feedback"', fb["no_feedback"])])
+
+    _gauge("brain_signal_queue_depth", "Current pending signal count",
+           stats["queue_depth"])
+
+    return "\n".join(lines) + "\n"
+
+
+def cmd_pipeline_stats(args):
+    """B-04: brain pipeline-stats — pipeline 運行統計。"""
+    wd = _workdir(args)
+    brain_dir = Path(wd) / ".brain"
+
+    if not brain_dir.exists():
+        _err("Brain 尚未初始化，請執行：brain init")
+        return
+
+    from project_brain.core.brain_db import BrainDB
+    db = BrainDB(brain_dir)
+    days = getattr(args, "days", 7) or 7
+    stats = db.get_pipeline_stats(days=days)
+
+    # --json
+    if getattr(args, "json_output", False):
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
+        return
+
+    # --prometheus
+    if getattr(args, "prometheus", False):
+        print(_format_prometheus(stats))
+        return
+
+    # Human-readable
+    sig = stats["signals"]
+    pipe = stats["pipeline"]
+    done    = sig["by_status"].get("done", 0)
+    failed  = sig["by_status"].get("failed", 0)
+    skipped = sig["by_status"].get("skipped", 0)
+    pct     = f" ({done * 100 // sig['total']}%)" if sig["total"] else ""
+
+    print(f"\n  {B}{C}Pipeline Statistics{R}  {D}(last {days} days){R}")
+    sep = "=" * 40
+    print(f"  {D}{sep}{R}")
+    print(f"  Signals received:    {W}{sig['total']}{R}")
+    print(f"  Signals done:        {G}{done}{R}{pct}")
+    if failed:
+        print(f"  Signals failed:      {RE}{failed}{R}")
+    if skipped:
+        print(f"  Signals skipped:     {Y}{skipped}{R}")
+    print(f"  Queue depth (now):   {W}{stats['queue_depth']}{R}")
+
+    if pipe["processed"]:
+        print(f"\n  {B}Pipeline processed:  {W}{pipe['processed']}{R}")
+        for action, cnt in sorted(pipe["by_action"].items()):
+            print(f"    - {action:<20} {cnt}")
+        if pipe["by_model"]:
+            print(f"  {D}Models used:{R}")
+            for model, cnt in sorted(pipe["by_model"].items()):
+                print(f"    - {model:<32} {cnt}")
+
+        fb = pipe["feedback"]
+        total_fb = fb["useful"] + fb["not_useful"]
+        if total_fb:
+            rate = fb["useful"] * 100 // total_fb
+            print(f"  Feedback: {fb['useful']} useful / {total_fb} rated ({rate}%)")
+
+    print(f"  {D}{sep}{R}")
+    print()
 
 
 def cmd_setup(args):

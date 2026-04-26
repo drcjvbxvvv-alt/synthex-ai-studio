@@ -83,6 +83,63 @@ def _cleanup_expired_sessions() -> None:
             _session_served_ts.pop(k, None)
 
 
+def _run_maintenance_cycle(brain) -> dict:
+    """B-01: 單次維護週期 — decay pass + KRB staging 清理。
+
+    從 _decay_daemon_fn 提取出來以便單元測試直接呼叫，不需要等待 sleep interval。
+
+    設計原則：
+      - decay 與 KRB cleanup 各自有獨立 try/except，一個失敗不影響另一個
+      - 兩個步驟都記 structured log（decay: INFO/DEBUG，cleanup: INFO/WARNING）
+      - 回傳 dict 便於測試斷言，daemon fn 可忽略回傳值
+
+    Returns:
+        {
+            "decay_ok":      bool,        # decay pass 是否成功
+            "decay_error":   str | None,  # decay 失敗時的錯誤訊息
+            "cleanup":       dict | None, # cleanup_expired_staging 回傳值
+            "cleanup_error": str | None,  # cleanup 失敗時的錯誤訊息
+        }
+    """
+    result: dict = {
+        "decay_ok":      False,
+        "decay_error":   None,
+        "cleanup":       None,
+        "cleanup_error": None,
+    }
+
+    # ── Step 1: Decay pass ────────────────────────────────────────
+    try:
+        from project_brain.decay_engine import DecayEngine as _DE
+        _de = _DE(brain.graph, workdir=str(brain.workdir), db=brain.db)
+        _de.run()
+        result["decay_ok"] = True
+        logger.info("FEAT-01: decay pass completed")
+    except Exception as _e:
+        result["decay_error"] = str(_e)
+        logger.debug("FEAT-01: decay daemon error: %s", _e)
+
+    # ── Step 2: KRB staging cleanup (B-01) ───────────────────────
+    # Runs in the same cycle as decay so both maintenance tasks share one
+    # 24-hour interval.  A cleanup failure is non-critical (nodes stay as-is)
+    # and must never prevent the next decay pass from running.
+    try:
+        _cleanup_result = brain.review_board.cleanup_expired_staging()
+        result["cleanup"] = _cleanup_result
+        logger.info(
+            "B-01: KRB staging cleanup completed "
+            "pending_skipped=%d rejected_archived=%d ttl_days=%d",
+            _cleanup_result.get("pending_skipped", 0),
+            _cleanup_result.get("rejected_archived", 0),
+            _cleanup_result.get("ttl_days", 30),
+        )
+    except Exception as _ke:
+        result["cleanup_error"] = str(_ke)
+        logger.warning("B-01: KRB staging cleanup error: %s", _ke)
+
+    return result
+
+
 def _rate_check() -> None:
     """
     滑動視窗 Rate Limiting（BUG-04 fix: thread-safe）。
@@ -1347,19 +1404,14 @@ def create_server(workdir: str) -> Any:
             return {"error": str(e), "synced": 0, "skipped": 0, "errors": 1, "details": []}
 
     # FEAT-01: start daily decay daemon (once per process)
+    # B-01: daemon now also runs KRB staging cleanup via _run_maintenance_cycle()
     global _decay_daemon_started
     with _decay_daemon_lock:
         if not _decay_daemon_started:
             def _decay_daemon_fn():
                 while True:
                     time.sleep(_DECAY_DAEMON_INTERVAL)
-                    try:
-                        from project_brain.decay_engine import DecayEngine as _DE
-                        _de = _DE(brain.graph, workdir=str(brain.workdir), db=brain.db)
-                        _de.run()
-                        logger.info("FEAT-01: decay pass completed")
-                    except Exception as _e:
-                        logger.debug("FEAT-01: decay daemon error: %s", _e)
+                    _run_maintenance_cycle(brain)
 
             _dt = threading.Thread(
                 target=_decay_daemon_fn,

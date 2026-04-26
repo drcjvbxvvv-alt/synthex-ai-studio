@@ -566,9 +566,19 @@ def _build_parser():
     p.add_argument('--mcp-port', dest='mcp_port', type=int, default=None,
                    help='同時檢查 MCP server 連線（整合自 health）')
 
-    # REFACTOR-01: health 已整合至 doctor --mcp-port，保留 parser 供向後相容
-    p = mkp('health', argparse.SUPPRESS, advanced=True)
-    p.add_argument('--mcp-port', dest='mcp_port', type=int, default=None)
+    # B-03: brain health — 一鍵診斷
+    p = mkp('health', '一鍵診斷：DB/KG 一致性、KRB staging、schema、signal queue')
+    p.add_argument('--json', dest='json_output', action='store_true',
+                   help='輸出 JSON 格式（供 CI 解析）')
+
+    # B-04: pipeline-stats
+    p = mkp('pipeline-stats', 'Pipeline 運行統計（signal queue + metrics）')
+    p.add_argument('--days', type=int, default=7,
+                   help='統計時間窗口（天，預設 7）')
+    p.add_argument('--json', dest='json_output', action='store_true',
+                   help='輸出 JSON 格式')
+    p.add_argument('--prometheus', action='store_true',
+                   help='輸出 Prometheus text exposition 格式')
 
     p = mkp('config', '顯示並驗證所有設定來源')
     p.add_argument('config_subcmd', nargs='?', default=None,
@@ -793,8 +803,7 @@ def _apply_aliases():
         'causal-chain':    ('add-causal', 'brain add-causal --list（causal-chain 已整合）'),
         # REFACTOR-01: CLI 精簡 — 已移除命令的向後相容導向
         'context':         ('ask',        'brain ask <query>（context 已整合為 ask 的別名）'),
-        'health':          ('doctor',     'brain doctor（health 已整合，可用 --mcp-port 檢查 MCP）'),
-        'health-report':   ('report',     'brain report（health-report 已整合為 report）'),
+        'health-report':   ('report',     'brain report（health-report ���整合為 report）'),
         'timeline':        ('history',    'brain history <id>（timeline 已整合，支援 --diff）'),
         'restore':         ('rollback',   'brain rollback <id> --to <N> 或 --version <N>'),
         'analytics':       ('report',     'brain report --analytics（analytics 已整合為 report 子功能）'),

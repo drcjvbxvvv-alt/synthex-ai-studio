@@ -1600,6 +1600,141 @@ class BrainDB:
         score += min(vec_count / total, 1.0) * 0.1
         return round(min(1.0, max(0.0, score)), 3)
 
+    # ── B-04: Pipeline metrics dashboard ────────────────────────
+
+    def get_pipeline_stats(self, days: int = 7) -> dict:
+        """B-04: Aggregate pipeline statistics over a time window.
+
+        Queries both ``signal_queue`` and ``pipeline_metrics`` tables.
+        All queries are individually guarded — if a table does not exist
+        (pre-v23 schema), the corresponding section returns zeros.
+
+        Args:
+            days: Look-back window in days (default 7). Clamped to >= 1.
+
+        Returns::
+
+            {
+                "days": int,
+                "signals": {
+                    "total": int,
+                    "by_status": {"pending": N, "done": N, "failed": N, ...},
+                    "by_kind": {"git_commit": N, ...},
+                },
+                "pipeline": {
+                    "processed": int,
+                    "by_action": {"added": N, "skipped": N, ...},
+                    "by_model": {"claude-haiku-...": N, ...},
+                    "feedback": {"useful": N, "not_useful": N, "no_feedback": N},
+                },
+                "queue_depth": int,        # current pending count
+            }
+        """
+        days = max(1, days)
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat()
+
+        result: dict = {
+            "days": days,
+            "signals": {"total": 0, "by_status": {}, "by_kind": {}},
+            "pipeline": {
+                "processed": 0,
+                "by_action": {},
+                "by_model": {},
+                "feedback": {"useful": 0, "not_useful": 0, "no_feedback": 0},
+            },
+            "queue_depth": 0,
+        }
+
+        tables = set()
+        try:
+            tables = {
+                r[0] for r in self.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+        except Exception:
+            return result
+
+        # ── signal_queue aggregation ──────────────────────────
+        if "signal_queue" in tables:
+            try:
+                # Total signals in window
+                result["signals"]["total"] = self.conn.execute(
+                    "SELECT COUNT(*) FROM signal_queue WHERE created_at >= ?",
+                    (cutoff,)
+                ).fetchone()[0]
+
+                # By status
+                for row in self.conn.execute(
+                    "SELECT status, COUNT(*) as cnt FROM signal_queue "
+                    "WHERE created_at >= ? GROUP BY status",
+                    (cutoff,)
+                ).fetchall():
+                    result["signals"]["by_status"][row[0]] = row[1]
+
+                # By kind
+                for row in self.conn.execute(
+                    "SELECT kind, COUNT(*) as cnt FROM signal_queue "
+                    "WHERE created_at >= ? GROUP BY kind",
+                    (cutoff,)
+                ).fetchall():
+                    result["signals"]["by_kind"][row[0]] = row[1]
+
+                # Current queue depth (pending, regardless of window)
+                result["queue_depth"] = self.conn.execute(
+                    "SELECT COUNT(*) FROM signal_queue WHERE status='pending'"
+                ).fetchone()[0]
+            except Exception as _e:
+                logger.debug("B-04: signal_queue stats query failed: %s", _e)
+
+        # ── pipeline_metrics aggregation ──────────────────────
+        if "pipeline_metrics" in tables:
+            try:
+                result["pipeline"]["processed"] = self.conn.execute(
+                    "SELECT COUNT(*) FROM pipeline_metrics WHERE created_at >= ?",
+                    (cutoff,)
+                ).fetchone()[0]
+
+                # By action
+                for row in self.conn.execute(
+                    "SELECT action, COUNT(*) as cnt FROM pipeline_metrics "
+                    "WHERE created_at >= ? GROUP BY action",
+                    (cutoff,)
+                ).fetchall():
+                    result["pipeline"]["by_action"][row[0]] = row[1]
+
+                # By model
+                for row in self.conn.execute(
+                    "SELECT llm_model, COUNT(*) as cnt FROM pipeline_metrics "
+                    "WHERE created_at >= ? AND llm_model != '' GROUP BY llm_model",
+                    (cutoff,)
+                ).fetchall():
+                    result["pipeline"]["by_model"][row[0]] = row[1]
+
+                # Feedback breakdown
+                fb = result["pipeline"]["feedback"]
+                fb["useful"] = self.conn.execute(
+                    "SELECT COUNT(*) FROM pipeline_metrics "
+                    "WHERE created_at >= ? AND was_useful = 1",
+                    (cutoff,)
+                ).fetchone()[0]
+                fb["not_useful"] = self.conn.execute(
+                    "SELECT COUNT(*) FROM pipeline_metrics "
+                    "WHERE created_at >= ? AND was_useful = 0",
+                    (cutoff,)
+                ).fetchone()[0]
+                fb["no_feedback"] = self.conn.execute(
+                    "SELECT COUNT(*) FROM pipeline_metrics "
+                    "WHERE created_at >= ? AND was_useful IS NULL",
+                    (cutoff,)
+                ).fetchone()[0]
+            except Exception as _e:
+                logger.debug("B-04: pipeline_metrics stats query failed: %s", _e)
+
+        return result
+
     # ── FEAT-02: conflict detection ────────────────────────────
 
     # ── HIGH-03: 內部 FTS5 候選者查詢（無 trace 汙染）────────────────

@@ -42,7 +42,7 @@ from project_brain.cli_admin import (
     cmd_init, cmd_status, cmd_setup, cmd_doctor, cmd_config,
     cmd_optimize, cmd_clear, cmd_scan, cmd_health_report, cmd_report,
     cmd_analytics, cmd_export, cmd_import, cmd_index,
-    cmd_health,
+    cmd_health, cmd_pipeline_stats,
     _cmd_backfill_git,
 )
 
@@ -205,6 +205,7 @@ def main():
         # meta: REFACTOR-01 已移除，由 _apply_aliases 攔截並 exit
         'doctor':        cmd_doctor,
         'health':        cmd_health,
+        'pipeline-stats': cmd_pipeline_stats,
         'config':        cmd_config,
         'optimize':      cmd_optimize,
         'clear':         cmd_clear,

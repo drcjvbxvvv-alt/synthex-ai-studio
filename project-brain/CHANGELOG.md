@@ -6,7 +6,115 @@
 
 ## v0.35.0（2026-04-26）— 可觀測性與維護性 Phase B
 
-測試基準：**713 passed**（v0.34 baseline 684 + 29 新測試；零 regression）
+測試基準：**769 passed**（v0.34 baseline 684 + 29 B-02 + 16 B-01 + 21 B-03 + 19 B-04；零 regression）
+
+### B-04 — Pipeline Metrics Dashboard（19 tests）
+
+**問題**：pipeline 運行狀態不可見 — 不知道有多少 signal 被處理、
+失敗率多少、哪些 LLM model 在用。
+
+**修法**：
+
+1. **`project_brain/core/brain_db.py`** — 新增 `get_pipeline_stats(days=7) -> dict`：
+   - 聚合 `signal_queue`：total / by_status / by_kind / queue_depth
+   - 聚合 `pipeline_metrics`：processed / by_action / by_model / feedback(useful/not_useful/no_feedback)
+   - 表不存在時（pre-v23 schema）回傳全 0，不 crash
+   - `days` 參數 clamp to >= 1
+
+2. **`project_brain/interfaces/cli_admin.py`** — 新增 `cmd_pipeline_stats()` + `_format_prometheus()`：
+   - 人可讀彩色表格輸出
+   - `--json` → `json.dumps(stats)`
+   - `--prometheus` → Prometheus text exposition format（counter + gauge）
+   - `--days N` → 統計時間窗口
+
+3. **CLI 整合**：
+   - `cli_utils.py`：新增 `pipeline-stats` parser（--days, --json, --prometheus）
+   - `cli.py`：dispatch `'pipeline-stats': cmd_pipeline_stats`
+
+**新增測試**（`tests/unit/test_pipeline_stats.py`，19 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestEmptyDB` | 3 | 空 DB 全 0、必要 keys、JSON serializable |
+| `TestAggregation` | 5 | total/by_status/by_kind/by_action/by_model 正確 |
+| `TestFeedback` | 3 | useful/not_useful/no_feedback 分別正確 |
+| `TestDaysFilter` | 3 | window 過濾、days clamp、queue_depth 不受 window 限制 |
+| `TestPrometheus` | 5 | 非空、HELP/TYPE 行、gauge 類型、label 正確、空 DB 仍有效 |
+
+---
+
+### B-03 — `brain health` 一鍵診斷命令（21 tests）
+
+**問題**：系統缺乏統一的健康狀態診斷入口。`brain doctor` 偏重修復，
+無法快速回答「現在系統是否正常」。B-02 Observer 完成後，
+KG/BrainDB 一致性可被可靠偵測，需要一個命令來暴露此資訊。
+
+**修法**：
+
+1. **`project_brain/health.py`** — 新增 `HealthChecker` class：
+   - 純資料收集，回傳結構化 `dict`（CLI 和 MCP 共用）
+   - 6 項獨立檢查，每項各自 `try/except`（一個失敗不影響其他）：
+     - DB accessibility（brain.db + knowledge_graph.db 節點/邊數）
+     - KG/BrainDB sync（節點 ID 集合比對，偵測 drift）
+     - KRB staging（pending 數、stale 偵測 30d）
+     - Schema version（與 `SCHEMA_VERSION` 常數比較）
+     - Signal queue（pending/failed 計數）
+     - Benchmark age（baseline.json 修改時間 > 14d → WARN）
+   - 回傳 `{version, brain_dir, checks: [{level, label, message, detail?}], summary: {overall, ok, warn, error}}`
+
+2. **`project_brain/interfaces/cli_admin.py`** — ��寫 `cmd_health()`：
+   - 呼叫 `HealthChecker` → 彩色 `[OK]/[WARN]/[ERR]` 表格輸出
+   - `--json` flag → `json.dumps(report)` 原始 JSON（供 CI 解析）
+
+3. **`project_brain/interfaces/cli_utils.py`**：
+   - `health` 從 `argparse.SUPPRESS` 恢復為正式命令
+   - 移除 `health` → `doctor` 的 alias redirect
+
+**新增測試**（`tests/unit/test_health.py`，21 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestFreshDB` | 4 | 新 DB overall=ok、brain.db/KG/sync 各自 OK |
+| `TestWarnScenarios` | 3 | KG/BrainDB 不一致 WARN、stale staging WARN、fresh pending OK |
+| `TestErrorScenarios` | 3 | DB 不存在 ERROR、不 crash、corrupt DB ERROR |
+| `TestJSONOutput` | 3 | JSON serializable、必要 keys、每個 check 有 level/label/message |
+| `TestCheckIsolation` | 3 | KG missing 不影響 BrainDB check、反之亦然、summary 計數一致 |
+| `TestSchemaAndExtras` | 5 | schema OK、signal queue OK、benchmark missing OK、old benchmark WARN、failed signals WARN |
+
+---
+
+### B-01 — KRB Cleanup Daemon 整合（16 tests）
+
+**問題**（ARCHITECTURE_REVIEW.md §3 MEDIUM-04 後半）：
+`cleanup_expired_staging()` 已實作（A-10），但沒有任何地方自動呼叫它。
+過期的 `pending` / `rejected` staging 節點永久累積，永不清理。
+
+**修法**：將 `mcp_server.py` 的 decay daemon 重構為統一維護週期：
+
+1. **`project_brain/interfaces/mcp_server.py`** — 新增 `_run_maintenance_cycle(brain) -> dict`：
+   - **Step 1（FEAT-01）**：decay pass — `DecayEngine(brain.graph, ...).run()`
+   - **Step 2（B-01）**：KRB staging 清理 — `brain.review_board.cleanup_expired_staging()`
+   - 兩步各自有獨立 `try/except`；decay 失敗不阻止 cleanup，cleanup 失敗不阻止 decay
+   - 回傳 `{"decay_ok", "decay_error", "cleanup", "cleanup_error"}` dict（可測試）
+   - Structured log：cleanup 成功記 INFO 含 `pending_skipped/rejected_archived/ttl_days`；失敗記 WARNING
+   - `_decay_daemon_fn` 簡化為呼叫 `_run_maintenance_cycle(brain)`
+
+**設計決策**：
+- `_run_maintenance_cycle()` 從 daemon 提取為獨立函式 → 單元測試直接呼叫，不需等 24h sleep
+- `cleanup_expired_staging()` 不傳 `ttl_days` → KRB 自行從 `brain.toml` 讀取（遵守設定層次）
+- decay 失敗時記 DEBUG（非 ERROR）→ 不中斷 MCP server，符合 FEAT-01 原始設計
+
+**新增測試**（`tests/unit/test_krb_daemon_integration.py`，16 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestReturnDict` | 4 | 四個鍵永遠存在、成功/decay失敗/cleanup失敗各自的值 |
+| `TestStepIsolation` | 4 | decay失敗仍呼叫cleanup、cleanup失敗decay_ok=True、兩者都失敗不raise、每cycle呼叫一次 |
+| `TestLogging` | 4 | cleanup成功記INFO含計數、失敗記WARNING、decay失敗不記ERROR、decay成功記INFO |
+| `TestCleanupCallSemantics` | 2 | 不傳ttl_days參數、回傳值存入result['cleanup'] |
+| `TestThreadSafety` | 2 | 20 threads並發呼叫無exception、每個回傳dict有正確鍵 |
+
+---
 
 ### B-02 MEDIUM-02 — KG/BrainDB 事件驅動同步（29 tests）
 
