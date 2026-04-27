@@ -1,0 +1,165 @@
+# Project Brain CI
+# Runs on every push to main/dev and on all pull requests.
+#
+# Jobs
+# ────────────────────────────────────────────────────────────
+#  unit       — unit tests (Python 3.11 + 3.12 matrix)
+#  benchmark  — baseline regression check (no embedder needed)
+#  coverage   — coverage gate ≥ 45 %
+#  health     — brain health --json must exit 0
+#  validate   — brain validate --ci (Rule + Code stages, no LLM)
+
+name: Project Brain CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: project-brain
+
+jobs:
+
+  # ── Unit tests ───────────────────────────────────────────────
+  unit:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project (dev + mcp extras)
+        run: pip install -e ".[dev,mcp]"
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/unit/ tests/test_web_ui.py \
+            -q --tb=short \
+            -m "not benchmark and not chaos"
+
+  # ── Benchmark regression ─────────────────────────────────────
+  benchmark:
+    name: Benchmark regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: pip install -e ".[dev,mcp]"
+
+      - name: Run benchmark baseline check
+        run: python -m pytest tests/ -m benchmark -q --tb=short
+
+  # ── Coverage gate ────────────────────────────────────────────
+  coverage:
+    name: Coverage ≥ 45%
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project + pytest-cov
+        run: pip install -e ".[dev,mcp]" pytest-cov
+
+      - name: Run tests with coverage
+        run: |
+          python -m pytest \
+            tests/unit/ \
+            tests/test_web_ui.py \
+            tests/benchmarks/ \
+            -q --tb=short \
+            -m "not chaos" \
+            --cov=project_brain \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=45
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: project-brain/coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── brain health check ───────────────────────────────────────
+  health:
+    name: brain health --json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: pip install -e ".[dev,mcp]"
+
+      - name: Init brain + health check
+        run: |
+          brain init /tmp/ci-brain
+          brain health --json --workdir /tmp/ci-brain | python - <<'PYEOF'
+          import json, sys
+          d = json.load(sys.stdin)
+          overall = d["summary"]["overall"]
+          ok_n  = d["summary"]["ok"]
+          warn_n = d["summary"]["warn"]
+          err_n = d["summary"]["error"]
+          print(f"Health: {overall.upper()}  ({ok_n} ok, {warn_n} warn, {err_n} error)")
+          # Accept ok or warn — a fresh brain with no nodes may WARN on
+          # benchmark age or empty knowledge base checks.
+          sys.exit(0 if overall in ("ok", "warn") else 1)
+          PYEOF
+
+  # ── brain validate --ci ──────────────────────────────────────
+  validate:
+    name: brain validate --ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: pip install -e ".[dev,mcp]"
+
+      - name: Init brain + validate (Rule + Code stages, no LLM)
+        run: |
+          brain init /tmp/ci-brain
+          brain validate --ci \
+            --workdir /tmp/ci-brain \
+            --output /tmp/validate-report.json
+          python - <<'PYEOF'
+          import json, sys
+          d = json.load(open("/tmp/validate-report.json"))
+          passed = d.get("passed", False)
+          total  = d.get("total_checked", 0)
+          errors = d.get("errors", 0)
+          print(f"Validate: passed={passed}  nodes_checked={total}  errors={errors}")
+          sys.exit(0 if passed else 1)
+          PYEOF

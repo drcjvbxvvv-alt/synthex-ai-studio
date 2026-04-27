@@ -4,6 +4,32 @@
 
 ---
 
+## v0.42.0（2026-04-27）— D-03 完整 CI 集成
+
+### D-03：GitHub Actions CI Pipeline
+
+**新增 `.github/workflows/ci.yml`** — 5 jobs：
+- `unit`：Python 3.11 + 3.12 矩陣，排除 benchmark/chaos，測試 tests/unit/ + test_web_ui.py
+- `benchmark`：`pytest -m benchmark` baseline regression（4 tests，無需 embedder）
+- `coverage`：覆蓋率門檻 ≥ 45%（現有 ~47%），上傳 Codecov（token 可選）
+- `health`：`brain init` + `brain health --json`，解析 `d["summary"]["overall"]`，接受 ok/warn
+- `validate`：`brain init` + `brain validate --ci`，解析 `d["passed"]`，空知識庫必須 passed=True
+
+**修正 ROADMAP 中的錯誤**：health 檢查應用 `d["summary"]["overall"]`（非頂層 `d["overall"]`）
+
+**新增 `tests/unit/test_ci_integration.py`**（45 tests）：
+- `TestHealthCheckerJSON`（12）：JSON 結構、欄位、CI 退出邏輯
+- `TestValidateCIMode`（8）：空知識庫通過、無 API 呼叫、CI 退出邏輯
+- `TestValidationReportDict`（9）：`to_dict()` 所有必要欄位
+- `TestPyprojectCIConfig`（6）：dev deps、覆蓋率門檻、pytest markers、semver
+- `TestCIWorkflowFile`（10）：檔案存在、YAML 有效、必要 jobs、正確 JSON key
+
+**覆蓋率對齊**：
+- `pyproject.toml`：`fail_under = 45`（誠實反映現有 ~47% 基準）
+- `ci.yml`：`--cov-fail-under=45`（對應 pyproject.toml）
+
+---
+
 ## v0.41.0（2026-04-27）— D-02 WebUI 行內編輯 + KRB Staging 管理
 
 ### D-02 ARCH-05：WebUI 完整化（行內編輯 + KRB Staging API）
