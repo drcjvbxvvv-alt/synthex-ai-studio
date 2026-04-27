@@ -39,13 +39,16 @@ class _HealthFixture(unittest.TestCase):
         self._tmp.cleanup()
 
     def _init_brain(self):
-        """初始化完整的 .brain — BrainDB + KnowledgeGraph + KRB。"""
+        """初始化完整的 .brain — BrainDB + KnowledgeGraph + KRB.
+
+        C-01: KnowledgeGraph shares BrainDB connection (single unified brain.db).
+        """
         from project_brain.core.brain_db import BrainDB
         from project_brain.graph import KnowledgeGraph
         from project_brain.engines.review_board import KnowledgeReviewBoard
 
         self.db = BrainDB(self.brain_dir)
-        self.graph = KnowledgeGraph(self.brain_dir)
+        self.graph = KnowledgeGraph(self.brain_dir, conn=self.db.conn)
         self.krb = KnowledgeReviewBoard(self.brain_dir, self.graph)
         return self.db, self.graph, self.krb
 
@@ -85,22 +88,23 @@ class TestFreshDB(_HealthFixture):
         self.assertEqual(c["level"], OK)
         self.assertIn("accessible", c["message"])
 
-    def test_H03_fresh_db_has_kg_check(self):
+    def test_H03_fresh_db_single_db_mode(self):
+        """C-01: unified DB — brain.db check should mention single DB mode"""
         self._init_brain()
         self._close_all()
         report = HealthChecker(self.brain_dir).run()
-        c = self._find_check(report, "knowledge_graph.db")
+        c = self._find_check(report, "brain.db")
         self.assertIsNotNone(c)
         self.assertEqual(c["level"], OK)
+        self.assertIn("single DB mode", c["message"])
 
-    def test_H04_fresh_db_sync_ok(self):
-        """空 DB 時 KG/BrainDB sync 應為 ok（都是 0 nodes）"""
+    def test_H04_no_sync_check_in_unified_db(self):
+        """C-01: KG/BrainDB sync check no longer exists (single unified DB)"""
         self._init_brain()
         self._close_all()
         report = HealthChecker(self.brain_dir).run()
         c = self._find_check(report, "KG/BrainDB sync")
-        self.assertIsNotNone(c)
-        self.assertEqual(c["level"], OK)
+        self.assertIsNone(c, "C-01: sync check should not exist in single-DB mode")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -109,26 +113,17 @@ class TestFreshDB(_HealthFixture):
 
 class TestWarnScenarios(_HealthFixture):
 
-    def test_W01_kg_braindb_mismatch_warns(self):
-        """KG 有節點但 BrainDB 沒有 → sync WARN"""
+    def test_W01_legacy_kg_file_warns(self):
+        """C-01: legacy knowledge_graph.db still present → WARN about migration"""
         self._init_brain()
-        # Add node to KG only (bypass listener)
-        self.graph._conn.execute(
-            "INSERT INTO nodes (id, type, title, content, tags, confidence, "
-            "created_at, updated_at, emotional_weight) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("orphan-001", "Rule", "orphan", "", "[]", 0.9,
-             datetime.now(timezone.utc).isoformat(),
-             datetime.now(timezone.utc).isoformat(), 0.5)
-        )
-        self.graph._conn.commit()
         self._close_all()
-
+        # Simulate legacy file still existing
+        (self.brain_dir / "knowledge_graph.db").write_bytes(b"")
         report = HealthChecker(self.brain_dir).run()
-        c = self._find_check(report, "KG/BrainDB sync")
+        c = self._find_check(report, "knowledge_graph.db")
         self.assertIsNotNone(c)
         self.assertEqual(c["level"], WARN)
-        self.assertIn("KG only", c["message"])
+        self.assertIn("legacy", c["message"])
 
     def test_W02_stale_staging_warns(self):
         """KRB 有 35 天前的 pending → WARN"""
@@ -251,15 +246,13 @@ class TestCheckIsolation(_HealthFixture):
         self.assertIsNotNone(brain_check)
         self.assertEqual(brain_check["level"], OK)
 
-    def test_I02_braindb_missing_does_not_prevent_kg_check(self):
-        """brain.db 不存在時，knowledge_graph.db check 仍可正常運作"""
-        from project_brain.graph import KnowledgeGraph
-        self.graph = KnowledgeGraph(self.brain_dir)
-        self.graph.close()
+    def test_I02_missing_brain_db_reports_error(self):
+        """C-01: brain.db 不存在 → ERROR (single unified DB)"""
+        # brain_dir exists (temp dir) but no brain.db
         report = HealthChecker(self.brain_dir).run()
-        kg_check = self._find_check(report, "knowledge_graph.db")
-        self.assertIsNotNone(kg_check)
-        self.assertEqual(kg_check["level"], OK)
+        brain_check = self._find_check(report, "brain.db")
+        self.assertIsNotNone(brain_check)
+        self.assertEqual(brain_check["level"], ERROR)
 
     def test_I03_summary_counts_match_checks(self):
         """summary 的 ok/warn/error 計數與 checks 一致"""

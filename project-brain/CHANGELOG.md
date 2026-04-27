@@ -6,7 +6,309 @@
 
 ## v0.35.0（2026-04-26）— 可觀測性與維護性 Phase B
 
-測試基準：**769 passed**（v0.34 baseline 684 + 29 B-02 + 16 B-01 + 21 B-03 + 19 B-04；零 regression）
+測試基準：**919 unit passed**（v0.34 baseline 684 → v0.40.0 919；零 regression）
+
+## v0.40.0（2026-04-27）— 架構演進 Phase C
+
+### C-05 — Pipeline Layer 5：Feedback Loop（19 tests）
+
+**問題**：`report_knowledge_outcome` 的回饋資料沒有被追蹤到信號類型層級，
+無法判斷哪些信號類型產生的知識品質較差，也無法自動調整信賴度。
+
+**修法**：
+
+1. **`project_brain/core/brain_db.py`** — Schema v28：新增 `feedback_log` 表
+   - 記錄 `node_id`、`signal_kind`、`was_useful`、`notes`、`conf_before`、`conf_after`
+
+2. **`project_brain/feedback_tracker.py`** — 新增兩個方法：
+   - `log_feedback(node_id, was_useful, signal_kind, ...)` — 寫入 feedback_log
+   - `get_negative_rate(signal_kind, days=30)` — 計算特定信號類型的負面回饋率
+
+3. **`project_brain/interfaces/mcp_server.py`** — 兩項整合：
+   - `report_knowledge_outcome` tool：成功後寫入 feedback_log（含 signal_kind 追蹤）
+   - `_adjust_signal_confidence(brain)` — 在 decay daemon 維護週期中觸發：
+     * 30 天內 >30% 負面回饋 → 自動下調該信號類型的 auto_confidence（-0.1，floor 0.3）
+     * 寫入 `brain_meta` 的 `signal_confidence:{kind}` key
+     * 需至少 5 個樣本才觸發（避免統計雜訊）
+
+**新增測試**（`tests/unit/test_feedback_loop.py`，19 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestFeedbackLogMigration` | 3 | 表存在、欄位正確、schema v28 |
+| `TestLogFeedback` | 3 | 正/負回饋寫入、批量寫入 |
+| `TestGetNegativeRate` | 5 | 無/全正/全負/混合/跨 kind 獨立 |
+| `TestAdjustSignalConfidence` | 6 | 無回饋/低於閾值/觸發/樣本不足/floor/持久化 |
+| `TestMaintenanceCycleIntegration` | 2 | 函式可 import、result schema 含 feedback keys |
+
+---
+
+### C-04 — Pipeline Phase 2：MCP_TOOL_CALL / TEST_FAILURE / KNOWLEDGE_CONFLICT 信號（20 tests）
+
+**問題**：Pipeline 只捕捉 `GIT_COMMIT`、`TASK_COMPLETE` 信號，
+MCP tool 呼叫、測試失敗、知識矛盾等高價值事件完全沒被追蹤。
+
+**修法**：
+
+1. **`project_brain/pipeline/signal.py`** — 新增 `KNOWLEDGE_CONFLICT` SignalKind
+   （`MCP_TOOL_CALL` 和 `TEST_FAILURE` 已在 Phase 1 定義）
+
+2. **`project_brain/pipeline/llm_judgment.py`** — 新增 `_SIGNAL_HINTS` dict：
+   - 3 組 signal-specific prompt context（MCP_TOOL_CALL / TEST_FAILURE / KNOWLEDGE_CONFLICT）
+   - 附加在通用 prompt 後，引導 LLM 做信號類型特定的判斷
+
+3. **`project_brain/interfaces/mcp_server.py`** — 信號發射：
+   - `BrainServer.emit_signal()` — 非阻塞信號發射 helper
+   - `add_knowledge` tool：成功後 emit `MCP_TOOL_CALL` + 背景 `KNOWLEDGE_CONFLICT` 偵測
+   - `complete_task` tool：pitfalls 含 error/test 關鍵字時 emit `TEST_FAILURE`
+
+**新增測試**（`tests/unit/test_pipeline_phase2_signals.py`，20 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestPhase2SignalKinds` | 5 | enum 值存在、str 型別、Phase 1 向後相容 |
+| `TestPhase2SignalCreation` | 4 | 建立+to_row+from_row round-trip |
+| `TestPromptHints` | 5 | 各 kind hint 注入、Phase 1 無 hint、JSON schema |
+| `TestSignalQueueAcceptance` | 3 | enqueue + dedup |
+| `TestBrainServerEmitSignal` | 3 | enqueue 成功、invalid kind 不 crash、priority |
+
+---
+
+### C-03 — KnowledgeValidator CI 集成（11 tests）
+
+**問題**：`KnowledgeValidator` 三階段驗證（Rule → Code → LLM）已實作，但：
+1. 沒有 CLI 觸發機制（只能手動呼叫）
+2. LLM 階段在 CI 環境中 Ollama 不可用時會 skip，無 fallback 報告
+
+**修法**：
+
+1. **`project_brain/engines/knowledge_validator.py`** — 新增 `ValidationReport.to_dict()`：
+   - JSON-serializable dict，含 `passed` boolean + 所有結果
+   - `passed = (invalidated_count == 0)`
+
+2. **`project_brain/interfaces/cli_admin.py`** — 新增 `cmd_validate()`：
+   - `brain validate` — 完整三階段驗證
+   - `--ci` — CI-safe 模式：跳過 LLM，只跑 Rule + Code，輸出 JSON，`exit 1` if `passed=false`
+   - `--json` — JSON 輸出
+   - `--output report.json` — 寫入檔案
+   - `--max-api-calls N` — 限制 API 呼叫數
+   - `_ValidatorLLMAdapter` — 橋接 unified LLMClient → duck-typed interface
+
+3. **CLI 整合**：
+   - `cli_utils.py`：新增 `validate` parser（--ci, --json, --output, --max-api-calls）
+   - `cli.py`：dispatch `'validate': cmd_validate`
+
+**新增測試**（`tests/unit/test_knowledge_validator_ci.py`，11 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestValidationReportToDict` | 4 | empty/serializable/passed-false/required-keys |
+| `TestValidatorCIMode` | 5 | empty DB/with nodes/zero API/JSON parseable/file output |
+| `TestValidatorLLMAdapter` | 2 | adapter wraps LLMClient / empty messages |
+
+---
+
+### C-02 — 統一 LLM 介面（28 tests）
+
+**問題**：LLM 呼叫散落在 9 個模組，各自實作重試、fallback、client 建構：
+- `llm_judgment.py` / `krb_ai_assist.py` / `conflict_resolver.py` 用 `.messages.create()`
+- `nudge_engine.py` / `memory_synthesizer.py` 用 `.chat.completions.create()`
+- 兩種不相容的介面（Anthropic SDK vs OpenAI SDK）
+
+**修法**：
+
+1. **`project_brain/integrations/llm_client.py`** — 全新統一介面模組：
+   - `LLMClient` Protocol — 單一方法 `complete(prompt, *, max_tokens, temperature, timeout) → str`
+   - `OllamaLLMClient` — 零外部依賴（urllib），呼叫 `/api/chat`
+   - `AnthropicLLMClient` — 使用 anthropic SDK，內建指數退避重試
+   - `FallbackLLMClient` — 嘗試 primary，失敗則 fallback
+   - `NoopLLMClient` — 無 LLM 環境使用
+   - `from_brain_config(section, brain_dir)` — 從 brain.toml 工廠建立
+
+2. **`project_brain/pipeline/llm_judgment.py`** — 第一個遷移消費者：
+   - `_call_llm()` 優先使用 `LLMClient.complete()`，fallback 到 legacy
+   - `from_brain_config()` 改用統一工廠
+
+**新增測試**（`tests/unit/test_llm_client.py`，28 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestProtocol` | 4 | 所有實作滿足 LLMClient Protocol |
+| `TestNoopClient` | 3 | empty return、model、repr |
+| `TestOllamaClient` | 4 | model、payload 正確、failure raise |
+| `TestAnthropicClient` | 4 | model、no-key raise、mock SDK、repr |
+| `TestFallbackClient` | 5 | primary ok、fallback on fail、both fail、model、repr |
+| `TestFromBrainConfig` | 6 | no-config→noop、ollama→Ollama、key→Anthropic、toml configs |
+| `TestLLMJudgmentIntegration` | 2 | unified path + legacy fallback |
+
+---
+
+### C-01 — 統一 DB：knowledge_graph.db 合併進 brain.db（25 tests）
+
+**問題**：雙 DB 架構（knowledge_graph.db + brain.db）導致資料不一致風險、
+B-02 Observer 同步複雜度、review_board.approve() 雙寫 + 回滾邏輯。
+edges 從未被同步到 brain.db。
+
+**修法**：
+
+1. **`project_brain/graph.py`** — KnowledgeGraph 改為操作 brain.db：
+   - `db_path` 從 `knowledge_graph.db` → `brain.db`
+   - 新增 `conn` 參數支援連線共享（`_owns_conn` flag 控制 close 行為）
+   - FTS5 改為 `DELETE+INSERT by id`（相容 standalone FTS5 模式）
+   - 移除 `nodes_fts.rowid` JOIN → 改用 `nodes_fts.id` JOIN
+   - 移除重複的 `close()` 方法
+
+2. **`project_brain/core/brain_db.py`** — Schema v27 + KG 遷移：
+   - Migration v27：edges 表新增 `weight`、`created_at`、`trigger_condition`、
+     `confidence` 欄位 + `idx_edges_source`/`idx_edges_target` 索引
+   - `_migrate_kg_to_unified()`：從舊 knowledge_graph.db 匯入 nodes+edges，
+     設置 `c01_kg_merged` 標記，舊檔重命名為 `.db.bak`
+   - `SCHEMA_VERSION` 升至 27
+
+3. **`project_brain/engine.py`** — 移除 Observer：
+   - `graph` property 傳入 `conn=self.db.conn` 共享連線
+   - 移除 `_on_graph_node_upserted` callback 和 `add_listener` 呼叫
+
+4. **`project_brain/engines/review_board.py`** — 簡化 approve()：
+   - 移除 BrainDB 雙寫 + 回滾邏輯（BLOCKER-02 era）
+   - 改為單一 `graph.add_node()` 呼叫（直接寫入 brain.db）
+
+5. **`project_brain/health.py`** — 單 DB 模式：
+   - 移除 knowledge_graph.db 存取檢查
+   - 移除 KG/BrainDB sync drift 偵測
+   - 報告 "single DB mode" + 遺留 KG 檔案遷移狀態
+
+6. **`project_brain/interfaces/cli_fed.py`** — 修復既有 bug：
+   - `KnowledgeGraph(bd / "brain.db")` → `KnowledgeGraph(bd)`（3 處）
+
+**新增測試**（`tests/unit/test_db_unification.py`，25 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestMigrationV27` | 6 | edges 新欄位 + 索引 + schema version |
+| `TestKGMigration` | 5 | nodes/edges 匯入、.bak 重命名、冪等性 |
+| `TestUnifiedDB` | 3 | graph↔braindb 雙向可見、無 KG 檔建立 |
+| `TestEdgesUnified` | 1 | graph.add_edge 存入 brain.db |
+| `TestFTS5Unified` | 2 | FTS5 搜尋 + 更新後搜尋 |
+| `TestConnectionSharing` | 3 | 同一 conn、shared close 無操作 |
+| `TestBackwardCompat` | 3 | standalone 模式、brain.db 路徑、50 thread 並發 |
+| `TestHealthSingleDB` | 2 | single DB mode 報告、無 KG error |
+
+---
+
+## v0.35.0（2026-04-26）— 可觀測性與維護性 Phase B
+
+### B-07 — LOW-01~04 錯誤處理批次修復（21 tests）
+
+**問題**：四處靜默 `pass` 吞掉例外 + PII 清理遺漏 UUID/token 格式。
+
+**修法**：
+
+1. **LOW-01** `context.py:103` — `except Exception: pass` → `logger.warning("LOW-01: ...")`
+   - config.json 讀取失敗時記錄 warning 而非靜默
+   - 仍 fallback 到預設值（不影響正常運作）
+
+2. **LOW-02** `brain_db.py:67` — `except OSError: pass` → `logger.debug("LOW-02: ...")`
+   - 備份清理失敗時記錄 debug（非關鍵路徑）
+
+3. **LOW-03** `brain_db.py:89` — `close()` 冪等保護
+   - 新增 `if self._conn_obj is None: return` 前置檢查
+   - `close()` 後將 `_conn_obj` 設為 `None`
+   - 重複呼叫不拋例外
+
+4. **LOW-04** `federation.py` — `_strip_pii` 新增 UUID 與 API token 清理
+   - `_PII_UUID`：UUID 格式 (8-4-4-4-12)，不分大小寫
+   - `_PII_TOKEN`：`sk-` / `ghp_` / `xoxb-` / `xoxp-` / `xoxa-` 開頭，≥ 16 字元
+   - 既有 75 個 federation 測試全通過（零 regression）
+
+**新增測試**（`tests/unit/test_low_fixes.py`，21 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestLow01ContextConfigLog` | 3 | 無效 JSON warning、正常 JSON 無 warning、缺檔無 warning |
+| `TestLow02BackupCleanupLog` | 2 | source 有 LOW-02 標記、初始化不 crash |
+| `TestLow03CloseIdempotent` | 4 | double/triple close、conn=None、already-None safe |
+| `TestLow04PiiUUID` | 3 | UUID 替換、大寫 UUID、正常連字詞不誤判 |
+| `TestLow04PiiToken` | 6 | ghp_/sk-/xoxb-/xoxp- 替換、短 token 不誤判、正常文字不動 |
+| `TestLow04RegressionExistingPii` | 3 | email/IP/Slack URL 仍正常清理 |
+
+---
+
+### B-06 — `_count_tokens` 移除 LRU cache（30 tests）
+
+**問題**：`@functools.lru_cache(maxsize=1024)` 對 5000+ 節點的知識庫
+命中率 < 20%，持續驅逐 + 重算浪費 CPU，cache key 管理本身成為開銷。
+
+**修法**：
+
+1. **`project_brain/engines/context.py`** — `_count_tokens()` 改為確定性 O(n) 估算：
+   - 移除 `@lru_cache(maxsize=1024)` decorator
+   - 新增空字串早期返回 `if not text: return 0`
+   - 擴展 CJK 範圍：新增 Extension A (U+3400-U+4DBF)、
+     Compatibility Ideographs (U+F900-U+FAFF)
+   - 移除舊範圍 U+3000-U+303F（CJK 標點）、U+FF00-U+FFEF（全形字）
+     — 這些不是 CJK 表意文字
+   - 非空 ASCII 部分保證至少 1 token：`max(1, ascii_like // 4) if ascii_like else 0`
+
+2. **結果與舊實作誤差 < 20%**（6 組文字 parametrize 驗證）
+
+**測試重寫**（`tests/unit/test_perf03_token_cache.py`，30 tests 取代舊 26 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestB06CacheRemoved` | 3 | 無 cache_info / cache_clear / __wrapped__ |
+| `TestB06Determinism` | 2 | 相同輸入相同輸出、呼叫順序無關 |
+| `TestB06EmptyString` | 2 | 空字串 → 0 |
+| `TestB06PureCJK` | 4 | 4/100 CJK chars、Extension A、Compatibility |
+| `TestB06PureASCII` | 5 | hello world、hi、single char、100 chars、4 chars |
+| `TestB06Mixed` | 2 | CJK+ASCII 混合、CJK >= ASCII token 數 |
+| `TestB06EdgeCases` | 6 | 空白、換行、emoji、全形、長文、Unicode 穩定性 |
+| `TestB06BackwardCompat` | 6 | 新舊實作誤差 < 20%（parametrize） |
+
+---
+
+### B-05 — MCP Server Singleton 重構（18 tests）
+
+**問題**：`mcp_server.py` 頂層有 7 組 module-level 可變狀態變數
+（`_call_times`、`_session_nodes`、`_session_served`、`_brain_cache`、
+3 組 daemon flags），同程序多個 Brain 實例（或 pytest-xdist 並行）
+共享這些狀態，導致跨測試污染與微妙的並發 bug。
+
+**修法**：
+
+1. **`project_brain/interfaces/mcp_server.py`** — 新增 `BrainServer` class：
+   - 所有可變狀態（rate limiter、session tracking、daemon flags、brain cache）
+     封裝為 instance 屬性
+   - `rate_check()`、`cleanup_expired_sessions()`、`resolve_brain()` 改為
+     instance methods，使用 `self._*` 狀態
+   - `_start_daemons()` 統一管理 decay / cleanup / pipeline 三個 daemon 的
+     per-instance 啟動
+   - `create_mcp_server()` 方法註冊所有 MCP tools，閉包捕獲 `srv`（self）
+
+2. **`create_server(workdir)` 工廠函式**（公開 API 不變）：
+   - 內部建立 `BrainServer` 實例，回傳 `srv.create_mcp_server()`
+   - 多次呼叫產生完全獨立的狀態空間
+
+3. **Backward compatibility**：
+   - 保留 module-level `_call_times`、`_rate_check()`、`_session_nodes` 等
+     原有變數與函式，供舊測試使用
+   - `_safe_str`、`_validate_workdir`、`_find_brain_root`、`_run_maintenance_cycle`
+     仍為 module-level（無狀態，不需實例化）
+
+**新增測試**（`tests/unit/test_mcp_server_isolation.py`，18 tests）：
+
+| 群組 | Tests | 覆蓋重點 |
+|------|-------|---------|
+| `TestBrainServerConstruction` | 3 | 建構、屬性初始化、primary brain cached |
+| `TestRateLimiterIsolation` | 3 | 兩實例互不干擾、limit 執行、timestamp 過期 |
+| `TestSessionIsolation` | 3 | session_nodes / session_served / cleanup 各自獨立 |
+| `TestDaemonFlagIsolation` | 1 | daemon flags per-instance |
+| `TestBrainCacheIsolation` | 1 | brain_cache 不共享 |
+| `TestCreateServerCompat` | 4 | create_server 回傳值、module-level 變數/函式存在、BrainServer export |
+| `TestConcurrentRateCheck` | 1 | 多 threads 並發不超過 RPM |
+| `TestResolveBrain` | 2 | 空 workdir / 同 workdir 回傳 primary |
+
+---
 
 ### B-04 — Pipeline Metrics Dashboard（19 tests）
 

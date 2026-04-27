@@ -22,12 +22,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 @pytest.fixture
 def app_and_brain(tmp_path):
     """建立測試用 Flask app 和暫時知識圖譜"""
+    from project_brain.core.brain_db import BrainDB
     from project_brain.graph import KnowledgeGraph
     from project_brain.web_ui.server import create_app
 
     bd = tmp_path / ".brain"
     bd.mkdir()
-    g = KnowledgeGraph(bd)
+    # C-01: BrainDB must be initialized first so brain.db has the correct
+    # unified schema (kind, scope columns). KG then shares the connection.
+    brain_db = BrainDB(bd)
+    g = KnowledgeGraph(bd, conn=brain_db.conn)
 
     # Pre-populate
     g.add_node("n1", "Pitfall", "JWT 必須驗證過期", content="exp claim 必須驗證",
@@ -37,6 +41,7 @@ def app_and_brain(tmp_path):
     g.add_node("n3", "Rule", "API 版本化規則", content="所有 API 必須版本化",
                meta={"confidence": 0.8})
     g.add_edge("n1", "BECAUSE", "n2")
+    brain_db.conn.commit()
 
     # create_app takes the *workdir* (parent of .brain), not .brain itself
     app = create_app(tmp_path)

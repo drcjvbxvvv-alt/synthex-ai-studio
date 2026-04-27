@@ -240,8 +240,8 @@ class TestMEM02Description:
         node = db.get_node("desc-003")
         assert "description" in node
 
-    def test_schema_version_is_22(self, tmp_path):
-        """BrainDB 應遷移到 schema_version=22。"""
+    def test_schema_version_is_current(self, tmp_path):
+        """BrainDB 應遷移到當前 SCHEMA_VERSION (C-01: 27)。"""
         from project_brain.brain_db import BrainDB, SCHEMA_VERSION
         brain_dir = tmp_path / ".brain"
         brain_dir.mkdir()
@@ -250,7 +250,7 @@ class TestMEM02Description:
             "SELECT value FROM brain_meta WHERE key='schema_version'"
         ).fetchone()
         assert row is not None
-        assert int(row[0]) == SCHEMA_VERSION == 22
+        assert int(row[0]) == SCHEMA_VERSION
 
     def test_old_nodes_description_defaults_empty(self, tmp_path):
         """舊節點 description 預設空字串，get_context 不應退化。"""

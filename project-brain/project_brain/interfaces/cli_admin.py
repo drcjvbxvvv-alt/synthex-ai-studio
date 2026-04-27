@@ -213,6 +213,92 @@ def cmd_pipeline_stats(args):
     print()
 
 
+def cmd_validate(args):
+    """C-03: brain validate — 三階段知識驗證（Rule + Code + LLM）。
+
+    --ci 模式跳過 LLM 抽樣，只跑 Rule + Code 兩階段，輸出 JSON。
+    exit code 1 if passed=false（供 CI pipeline 解析）。
+    """
+    wd = _workdir(args)
+    brain_dir = Path(wd) / ".brain"
+    if not brain_dir.exists():
+        _err("Brain 尚未初始化，請執行：brain init")
+        sys.exit(1)
+
+    ci_mode    = getattr(args, 'ci', False)
+    json_mode  = getattr(args, 'json', False) or ci_mode
+    output     = getattr(args, 'output', None)
+    max_api    = getattr(args, 'max_api_calls', 20)
+
+    from project_brain.brain_db import BrainDB
+    from project_brain.graph import KnowledgeGraph
+    from project_brain.engines.knowledge_validator import KnowledgeValidator
+
+    db = BrainDB(brain_dir)
+    graph = KnowledgeGraph(brain_dir, conn=db.conn)
+
+    # CI mode: no LLM client, no API calls
+    client = None
+    model = ""
+    if not ci_mode:
+        try:
+            from project_brain.integrations.llm_client import from_brain_config
+            llm = from_brain_config("pipeline", brain_dir=brain_dir)
+            # KnowledgeValidator expects anthropic-compatible client; wrap if needed
+            from project_brain.integrations.llm_client import NoopLLMClient
+            if not isinstance(llm, NoopLLMClient):
+                client = _ValidatorLLMAdapter(llm)
+                model = llm.model
+        except Exception as _e:
+            logger.debug("C-03: LLM client init failed: %s", _e)
+
+    validator = KnowledgeValidator(
+        graph, wd, client=client, model=model, brain_dir=brain_dir,
+    )
+    max_api_effective = 0 if ci_mode else max_api
+    report = validator.run(max_api_calls=max_api_effective, dry_run=ci_mode)
+
+    report_dict = report.to_dict()
+
+    if json_mode:
+        out_str = json.dumps(report_dict, ensure_ascii=False, indent=2)
+        if output:
+            Path(output).write_text(out_str, encoding="utf-8")
+            _ok(f"Report written to {output}")
+        else:
+            print(out_str)
+
+    if ci_mode and not report_dict["passed"]:
+        sys.exit(1)
+    db.close()
+
+
+class _ValidatorLLMAdapter:
+    """Adapt unified LLMClient to the duck-typed interface KnowledgeValidator expects.
+
+    KnowledgeValidator calls client.messages.create(model=, max_tokens=, messages=)
+    and reads resp.content[0].text. This adapter translates to LLMClient.complete().
+    """
+
+    def __init__(self, llm_client) -> None:
+        self._llm = llm_client
+        self.messages = self
+
+    def create(self, *, model: str = "", max_tokens: int = 256,
+               messages: list | None = None, **kwargs) -> "_AdapterResponse":
+        prompt = ""
+        for m in (messages or []):
+            if m.get("role") == "user":
+                prompt = m.get("content", "")
+        text = self._llm.complete(prompt, max_tokens=max_tokens)
+        return _AdapterResponse(text)
+
+
+class _AdapterResponse:
+    def __init__(self, text: str) -> None:
+        self.content = [type("_Block", (), {"text": text})()]
+
+
 def cmd_setup(args):
     """One-command setup (first-time use)."""
     wd = _workdir(args)

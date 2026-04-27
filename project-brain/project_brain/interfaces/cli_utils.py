@@ -580,6 +580,18 @@ def _build_parser():
     p.add_argument('--prometheus', action='store_true',
                    help='輸出 Prometheus text exposition 格式')
 
+    # C-03: validate
+    p = mkp('validate', '三階段知識驗證（Rule + Code + LLM）')
+    p.add_argument('--ci', action='store_true',
+                   help='CI-safe 模式：跳過 LLM，只跑 Rule + Code，輸出 JSON，'
+                        'exit code 1 if passed=false')
+    p.add_argument('--json', dest='json', action='store_true',
+                   help='輸出 JSON 格式')
+    p.add_argument('--output', '-o', type=str, default=None,
+                   help='輸出 JSON report 到檔案')
+    p.add_argument('--max-api-calls', type=int, default=20,
+                   help='AI 驗證最大 API 呼叫數（預設 20）')
+
     p = mkp('config', '顯示並驗證所有設定來源')
     p.add_argument('config_subcmd', nargs='?', default=None,
                    metavar='[init]',

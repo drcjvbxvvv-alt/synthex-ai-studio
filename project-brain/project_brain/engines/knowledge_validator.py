@@ -130,6 +130,33 @@ class ValidationReport:
             f"{GR}{hr()}{R}"
         )
 
+    def to_dict(self) -> dict:
+        """C-03: JSON-serializable dict for --json and --ci output."""
+        return {
+            "run_id":         self.run_id,
+            "passed":         self.invalidated_count == 0,
+            "total_checked":  self.total_checked,
+            "valid":          self.valid_count,
+            "flagged":        self.flagged_count,
+            "invalidated":    self.invalidated_count,
+            "api_calls_used": self.api_calls_used,
+            "elapsed_ms":     self.elapsed_ms,
+            "results": [
+                {
+                    "node_id":    r.node_id,
+                    "title":      r.title,
+                    "kind":       r.kind,
+                    "is_valid":   r.is_valid,
+                    "validator":  r.validator,
+                    "action":     r.action,
+                    "conf_old":   round(r.original_conf, 3),
+                    "conf_new":   round(r.new_conf, 3),
+                    "reason":     r.reason,
+                }
+                for r in self.results
+            ],
+        }
+
 
 # ══════════════════════════════════════════════════════════════
 #  KnowledgeValidator

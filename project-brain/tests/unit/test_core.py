@@ -26,6 +26,9 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+
+
+
 # ══════════════════════════════════════════════════════════════
 # Test Group 1：_safe_run 安全執行
 # ══════════════════════════════════════════════════════════════
@@ -1339,9 +1342,11 @@ class TestEngineCoverageBoost:
         assert results[0].get("is_pinned") == 1
 
     def test_graph_search_nodes_multi(self, tmp_path):
-        """A-4: search_nodes_multi 批次 OR 查詢"""
+        """A-4: search_nodes_multi 批次 OR 查詢 (C-01: via shared BrainDB conn)"""
+        from project_brain.core.brain_db import BrainDB
         from project_brain.graph import KnowledgeGraph
-        g = KnowledgeGraph(tmp_path)
+        bdb = BrainDB(tmp_path)
+        g = KnowledgeGraph(tmp_path, conn=bdb.conn)
         g.add_node("n1", "Rule", "JWT RS256", content="必須用 RS256")
         g.add_node("n2", "Rule", "Stripe Webhook", content="需要冪等性")
         results = g.search_nodes_multi(["jwt","rs256","token"], node_type="Rule")

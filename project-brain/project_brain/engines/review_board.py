@@ -398,51 +398,22 @@ class KnowledgeReviewBoard:
         # KRB-01: pass stored confidence into L3
         node_conf = float(row["confidence"]) if "confidence" in row.keys() else 0.75
 
-        # BLOCKER-02 fix: atomic dual-DB write with rollback.
-        #
-        # Write order: BrainDB FIRST (FTS5 index + primary search), then graph.
-        # If BrainDB fails → raise immediately; staged_nodes stays 'pending'.
-        # If graph fails   → roll back BrainDB via delete_node; staged_nodes stays 'pending'.
-        #
-        # This guarantees that either BOTH databases are updated or NEITHER is,
-        # preventing the previously silent "L3 node exists but FTS5 missing" state.
-        bdb = BrainDB(self.brain_dir)
-        try:
-            bdb.add_node(
-                node_id    = l3_id,
-                node_type  = row["kind"],
-                title      = row["title"],
-                content    = row["content"] or "",
-                confidence = node_conf,
-            )
-        except Exception as _e:
-            logger.error(
-                "krb_approve: BrainDB 寫入失敗，放棄核准，staged_nodes 保持 pending "
-                "staged=%s error=%s", staged_id[:8], _e
-            )
-            raise  # ← caller sees the error; staged_nodes is NOT modified
-
+        # C-01: single unified brain.db — graph.add_node() writes directly to brain.db.
+        # No dual-write or rollback needed (was BLOCKER-02 fix for two-DB era).
         try:
             self.graph.add_node(
                 node_id   = l3_id,
                 node_type = row["kind"],
                 title     = row["title"],
-                content   = row["content"],
+                content   = row["content"] or "",
                 meta      = {"confidence": node_conf},
             )
         except Exception as _e:
-            # KG 失敗：回滾 BrainDB，保持原子性
-            try:
-                bdb.delete_node(l3_id)
-                logger.warning(
-                    "krb_approve: KG 失敗，BrainDB 已回滾 l3_id=%s", l3_id
-                )
-            except Exception as _rb:
-                logger.error(
-                    "krb_approve: KG 失敗 且 BrainDB 回滾也失敗（資料不一致！）"
-                    " l3_id=%s rollback_error=%s", l3_id, _rb
-                )
-            raise  # ← staged_nodes 不被修改
+            logger.error(
+                "krb_approve: write failed, staged_nodes stays pending "
+                "staged=%s error=%s", staged_id[:8], _e
+            )
+            raise
 
         node_id = l3_id
 

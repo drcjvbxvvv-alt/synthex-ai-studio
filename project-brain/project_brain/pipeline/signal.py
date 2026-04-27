@@ -38,6 +38,8 @@ class SignalKind(str, Enum):
     TEST_PASS     = "test_pass"     # 測試通過（追蹤解決）
     MANUAL        = "manual"        # 人工觸發分析
 
+    KNOWLEDGE_CONFLICT = "knowledge_conflict"  # C-04: find_conflicts 發現矛盾知識
+
     # ── Phase 3+（待數據驗證後決定）─────────────────────────────────────
     KNOWLEDGE_GAP = "knowledge_gap" # get_context 返回空（見設計文件 4.1 節）
     CI_EVENT      = "ci_event"      # CI/CD pipeline 事件（未來）

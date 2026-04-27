@@ -249,27 +249,10 @@ class ProjectBrain:
             with self._graph_lock:                     # BUG-A03
                 if self._graph is None:
                     self.brain_dir.mkdir(parents=True, exist_ok=True)
-                    g = KnowledgeGraph(self.brain_dir)
-                    # B-02: wire Observer — graph writes auto-sync to brain.db
-                    g.add_listener(self._on_graph_node_upserted)
+                    # C-01: share BrainDB connection — single unified brain.db
+                    g = KnowledgeGraph(self.brain_dir, conn=self.db.conn)
                     self._graph = g
         return self._graph
-
-    def _on_graph_node_upserted(self, event: str, data: dict) -> None:
-        """B-02: Observer callback — forward graph node events to BrainDB.
-
-        Called from KnowledgeGraph._emit() OUTSIDE the graph write lock.
-        Uses self.db (lazy property) so BrainDB is initialised on first call.
-        Failures are logged as WARNING; the graph write already committed, so
-        a sync failure causes a temporary inconsistency detectable by `brain health`.
-        """
-        try:
-            self.db.sync_from_graph_node(event, data)
-        except Exception as _e:
-            logger.warning(
-                "graph→braindb_sync_failed event=%s node=%s: %s",
-                event, data.get("node_id"), _e,
-            )
 
     @property
     def extractor(self) -> KnowledgeExtractor:

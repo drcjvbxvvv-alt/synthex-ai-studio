@@ -89,85 +89,53 @@ class HealthChecker:
     # ── Individual checks ──────────────────────────────────────
 
     def _check_db_access(self) -> list[dict]:
-        """Check brain.db and knowledge_graph.db accessibility + node counts."""
+        """Check brain.db accessibility + node/edge counts (C-01: unified DB)."""
         results: list[dict] = []
 
-        # brain.db
         db_path = self.brain_dir / "brain.db"
         if not db_path.exists():
             results.append(_check(ERROR, "brain.db", "not found",
                                   "Run: brain init"))
-        else:
-            try:
-                conn = sqlite3.connect(str(db_path))
-                conn.row_factory = sqlite3.Row
-                nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
-                fts = 0
-                try:
-                    fts = conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
-                except Exception:
-                    pass
-                conn.close()
-                results.append(_check(OK, "brain.db",
-                                      f"accessible ({nodes} nodes, {fts} FTS5 indexed)"))
-            except Exception as e:
-                results.append(_check(ERROR, "brain.db",
-                                      f"read failed: {e}"))
+            return results
 
-        # knowledge_graph.db
-        kg_path = self.brain_dir / "knowledge_graph.db"
-        if not kg_path.exists():
-            results.append(_check(ERROR, "knowledge_graph.db", "not found",
-                                  "Run: brain init"))
-        else:
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            edges = 0
             try:
-                conn = sqlite3.connect(str(kg_path))
-                conn.row_factory = sqlite3.Row
-                nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
                 edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-                conn.close()
-                results.append(_check(OK, "knowledge_graph.db",
-                                      f"accessible ({nodes} nodes, {edges} edges)"))
-            except Exception as e:
-                results.append(_check(ERROR, "knowledge_graph.db",
-                                      f"read failed: {e}"))
+            except Exception:
+                pass
+            fts = 0
+            try:
+                fts = conn.execute("SELECT COUNT(*) FROM nodes_fts").fetchone()[0]
+            except Exception:
+                pass
+            conn.close()
+            results.append(_check(
+                OK, "brain.db",
+                f"accessible ({nodes} nodes, {edges} edges, {fts} FTS5 indexed) — single DB mode"
+            ))
+        except Exception as e:
+            results.append(_check(ERROR, "brain.db", f"read failed: {e}"))
+
+        # C-01: check if legacy knowledge_graph.db still exists (migration pending)
+        kg_path = self.brain_dir / "knowledge_graph.db"
+        if kg_path.exists():
+            results.append(_check(WARN, "knowledge_graph.db",
+                                  "legacy file still exists — migration may be pending",
+                                  "Will auto-migrate on next brain startup"))
+        kg_bak = self.brain_dir / "knowledge_graph.db.bak"
+        if kg_bak.exists():
+            results.append(_check(OK, "KG migration",
+                                  "knowledge_graph.db.bak present (migration completed)"))
 
         return results
 
     def _check_kg_braindb_sync(self) -> list[dict]:
-        """Compare node IDs between KG and BrainDB to detect sync drift."""
-        kg_path = self.brain_dir / "knowledge_graph.db"
-        db_path = self.brain_dir / "brain.db"
-        if not kg_path.exists() or not db_path.exists():
-            return []  # already reported by _check_db_access
-
-        try:
-            kg_conn = sqlite3.connect(str(kg_path))
-            kg_ids = {r[0] for r in kg_conn.execute("SELECT id FROM nodes").fetchall()}
-            kg_conn.close()
-
-            db_conn = sqlite3.connect(str(db_path))
-            db_ids = {r[0] for r in db_conn.execute("SELECT id FROM nodes").fetchall()}
-            db_conn.close()
-
-            in_kg_not_db = kg_ids - db_ids
-            in_db_not_kg = db_ids - kg_ids
-
-            if not in_kg_not_db and not in_db_not_kg:
-                return [_check(OK, "KG/BrainDB sync",
-                               f"in sync ({len(kg_ids)} nodes)")]
-
-            parts = []
-            if in_kg_not_db:
-                parts.append(f"{len(in_kg_not_db)} in KG only")
-            if in_db_not_kg:
-                parts.append(f"{len(in_db_not_kg)} in BrainDB only")
-            return [_check(WARN, "KG/BrainDB sync",
-                           f"drift detected: {', '.join(parts)}",
-                           "B-02 observer should auto-sync new writes; "
-                           "existing drift may need manual brain index")]
-        except Exception as e:
-            return [_check(ERROR, "KG/BrainDB sync", f"check failed: {e}")]
+        """C-01: No longer relevant — single unified DB. Kept as no-op for compat."""
+        return []
 
     def _check_krb_staging(self) -> list[dict]:
         """Check KRB staging: pending count + stale detection."""

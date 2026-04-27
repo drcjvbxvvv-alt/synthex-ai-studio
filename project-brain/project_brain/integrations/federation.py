@@ -50,6 +50,12 @@ _PII_CLOUD_URL = re.compile(
     r'|\.s3\.[a-z0-9-]+\.amazonaws\.com'
     r')\S*'
 )
+# LOW-04: UUID 與常見 API token 格式
+_PII_UUID = re.compile(
+    r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b',
+    re.IGNORECASE,
+)
+_PII_TOKEN = re.compile(r'\b(?:sk-|ghp_|xoxb-|xoxp-|xoxa-)[A-Za-z0-9_-]{16,}\b')
 
 # ── 聯邦設定路徑 ──────────────────────────────────────────────
 _FED_CONFIG_NAME   = "federation.json"
@@ -61,13 +67,15 @@ _MAX_CONTENT_LEN   = 600
 
 
 def _strip_pii(text: str) -> str:
-    """移除電子郵件、內部主機名稱、私有 IP、Slack URL 及 Cloud service URL（SEC-04）"""
+    """移除 PII：email、內部主機、私有 IP、Slack/Cloud URL、UUID、API token（SEC-04 + LOW-04）"""
     text = _PII_EMAIL.sub("[redacted-email]", text)
     text = _PII_INTERNAL.sub("[redacted-internal]", text)
     text = _PII_LOCAL.sub("[redacted-local]", text)
     text = _PII_PRIVATE_IP.sub("[redacted-ip]", text)
     text = _PII_SLACK.sub("[redacted-slack-url]", text)
     text = _PII_CLOUD_URL.sub("[redacted-cloud-url]", text)
+    text = _PII_UUID.sub("[redacted-uuid]", text)
+    text = _PII_TOKEN.sub("[redacted-token]", text)
     return text
 
 

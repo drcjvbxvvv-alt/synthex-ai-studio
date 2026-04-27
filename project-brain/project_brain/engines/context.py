@@ -12,7 +12,7 @@ ContextEngineer — 動態 Context 組裝引擎
 不只是「找到知識」，而是「把正確的知識，在正確的時機，
 以正確的密度注入 Context」。
 """
-import functools
+import functools  # retained for potential use by subclasses
 import logging
 import os
 import re
@@ -100,30 +100,35 @@ def _get_type_limit(node_type: str, brain_dir: "Path | None" = None) -> int:
                 lim = cfg.get("context", {}).get("limits", {}).get(node_type)
                 if lim is not None:
                     return max(1, int(lim))
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("LOW-01: failed to load config.json limits: %s", _e)
     # 3. Default
     return _DEFAULT_TYPE_LIMITS.get(node_type, 2)
 
 
-@functools.lru_cache(maxsize=1024)  # PERF-03: cache repeated token counts
 def _count_tokens(text: str) -> int:
-    """
-    BUG-03 fix: CJK-aware token estimator (no external dependency).
+    """Deterministic CJK-aware token estimator (B-06: no LRU cache).
 
-    舊做法 len(text) // 4 對中文嚴重低估：
-      - CJK 每字 ≈ 1 token（len=1 但 token=1）
-      - ASCII 每字 ≈ 0.25 token（len=1 但 token≈0.25）
-    實際超出 6000 預算 20-30%。
+    BUG-03 fix: 分別統計 CJK 字元與其餘字元，誤差 < 20%。
+    B-06: 移除 @lru_cache — 5000+ 節點知識庫命中率 < 20%，
+    持續驅逐 + 重算浪費 CPU。確定性 O(n) 估算無 cache 管理成本。
 
-    新做法：分別統計 CJK 字元（1 token/char）與其餘字元（1 token/4 chars）。
-    誤差 < 8%（不依賴 tiktoken，無需安裝額外套件）。
+    CJK 範圍：
+      - U+4E00–U+9FFF  CJK Unified Ideographs
+      - U+3400–U+4DBF  CJK Extension A
+      - U+F900–U+FAFF  CJK Compatibility Ideographs
+
+    Estimation:
+      - CJK ideographs: ~1 token per character
+      - Other characters: ~1 token per 4 characters
     """
+    if not text:
+        return 0
     cjk = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff'
-              or '\u3000' <= ch <= '\u303f'
-              or '\uff00' <= ch <= '\uffef')
-    rest = len(text) - cjk
-    return cjk + (rest // 4)
+              or '\u3400' <= ch <= '\u4dbf'
+              or '\uf900' <= ch <= '\ufaff')
+    ascii_like = len(text) - cjk
+    return cjk + (max(1, ascii_like // 4) if ascii_like else 0)
 
 
 class ContextEngineer:

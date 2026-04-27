@@ -89,11 +89,15 @@ class LLMJudgmentEngine:
 
     def __init__(
         self,
-        client:    Any,
+        client:    Any = None,
         model:     str = DEFAULT_MODEL,
         brain_dir: Optional[Path] = None,
+        *,
+        llm_client: "Any | None" = None,
     ) -> None:
-        self.client    = client
+        # C-02: prefer unified LLMClient, fall back to legacy duck-typed client
+        self._llm_client = llm_client  # project_brain.integrations.llm_client.LLMClient
+        self.client    = client        # legacy: anthropic.Anthropic / OllamaClient
         self.model     = model
         self.brain_dir = Path(brain_dir) if brain_dir else None
 
@@ -107,78 +111,32 @@ class LLMJudgmentEngine:
         """
         從 brain.toml [pipeline.llm] 建立 LLMJudgmentEngine（推薦方式）。
 
-        Fallback chain:
-          [pipeline.llm] Ollama (gemma4:27b, primary) →
-          [pipeline.llm.fallback] Anthropic Haiku →
-          OllamaClient default (本地 llama3.2, last resort)
-
-        Ollama provider 使用 krb_ai_assist.OllamaClient（無需 openai 套件，
-        介面與 anthropic.Anthropic 相容）。
+        C-02: 使用統一 LLMClient 介面（integrations/llm_client.py）。
+        Fallback chain 由 from_brain_config() 工廠自動處理。
         """
+        bd = Path(brain_dir) if brain_dir else None
         try:
-            from project_brain.brain_config import (
-                load_config, _find_brain_dir, _is_ollama_available,
-            )
-            bd  = Path(brain_dir) if brain_dir else _find_brain_dir()
-            cfg = load_config(bd)
-            pl  = cfg.pipeline.llm
-
-            # 1. 嘗試 [pipeline.llm] 主要設定（通常是 Ollama）
-            if pl.provider in ("ollama", "openai"):
-                if _is_ollama_available(pl.base_url, timeout=2):
-                    from project_brain.krb_ai_assist import OllamaClient
-                    client = OllamaClient(
-                        base_url=pl.base_url.replace("/v1", ""),
-                        timeout=pl.timeout,
-                    )
-                    logger.debug(
-                        "LLMJudgmentEngine: using [pipeline.llm] Ollama model=%s",
-                        pl.model,
-                    )
-                    return cls(client=client, model=pl.model, brain_dir=bd)
-                logger.debug(
-                    "LLMJudgmentEngine: [pipeline.llm] Ollama 不可用 (%s)，嘗試 fallback",
-                    pl.base_url,
-                )
-
-            # 2. fallback → Anthropic（通常是 Haiku）
-            fb = pl.fallback
-            if fb.provider == "anthropic":
-                import os
-                if os.environ.get("ANTHROPIC_API_KEY"):
-                    try:
-                        import anthropic
-                        client = anthropic.Anthropic()
-                        logger.info(
-                            "LLMJudgmentEngine: using Anthropic fallback model=%s",
-                            fb.model,
-                        )
-                        return cls(client=client, model=fb.model, brain_dir=bd)
-                    except ImportError:
-                        logger.debug("anthropic 套件未安裝，跳過 Anthropic fallback")
-
-            # 3. 最終 fallback → 本地 OllamaClient 預設位址
-            from project_brain.krb_ai_assist import OllamaClient
-            logger.warning(
-                "LLMJudgmentEngine: 無可用 LLM，使用預設 OllamaClient (%s)",
-                DEFAULT_OLLAMA_URL,
+            from project_brain.integrations.llm_client import from_brain_config as _factory
+            llm = _factory("pipeline", brain_dir=bd)
+            logger.debug(
+                "LLMJudgmentEngine: using unified LLMClient %r", llm,
             )
             return cls(
-                client=OllamaClient(base_url=DEFAULT_OLLAMA_URL),
-                model=DEFAULT_MODEL,
+                llm_client=llm,
+                model=llm.model,
                 brain_dir=bd,
             )
-
         except Exception as e:
             logger.warning(
-                "LLMJudgmentEngine.from_brain_config failed: %s，使用 OllamaClient 預設",
+                "LLMJudgmentEngine.from_brain_config failed: %s — "
+                "falling back to legacy OllamaClient",
                 e,
             )
             from project_brain.krb_ai_assist import OllamaClient
             return cls(
                 client=OllamaClient(base_url=DEFAULT_OLLAMA_URL),
                 model=DEFAULT_MODEL,
-                brain_dir=Path(brain_dir) if brain_dir else None,
+                brain_dir=bd,
             )
 
     # ── 主入口 ────────────────────────────────────────────────────
@@ -260,6 +218,29 @@ class LLMJudgmentEngine:
 
     # ── Prompt 建構 ───────────────────────────────────────────────
 
+    # C-04: signal-specific context hints for LLM prompt
+    _SIGNAL_HINTS: dict[str, str] = {
+        "mcp_tool_call": (
+            "\nSignal-specific guidance (MCP_TOOL_CALL):\n"
+            "- If this is an add_knowledge call with kind=Pitfall → high value, action=add, confidence=0.8\n"
+            "- If this is a repeated get_context call with no new insights → action=skip\n"
+            "- Focus on USAGE PATTERNS that reveal important project knowledge\n"
+        ),
+        "test_failure": (
+            "\nSignal-specific guidance (TEST_FAILURE):\n"
+            "- Extract the ROOT CAUSE and the fix, not just 'test failed'\n"
+            "- Prefer kind=Pitfall for recurring patterns, kind=Rule for new constraints\n"
+            "- If the failure is a flaky test or environment issue → action=skip\n"
+        ),
+        "knowledge_conflict": (
+            "\nSignal-specific guidance (KNOWLEDGE_CONFLICT):\n"
+            "- Two existing knowledge nodes contradict each other\n"
+            "- Determine which is correct based on the content timestamps and confidence\n"
+            "- If one clearly supersedes the other → action=add with kind=Decision explaining the resolution\n"
+            "- If both are valid in different contexts → action=skip (they coexist)\n"
+        ),
+    }
+
     def _build_prompt(self, signal: Signal, related_nodes: list[dict]) -> str:
         """建構送給 LLM 的 prompt。輸入已做 injection 清理。"""
         kind = signal.kind.value if isinstance(signal.kind, SignalKind) else str(signal.kind)
@@ -279,6 +260,9 @@ class LLMJudgmentEngine:
                     "\n\n既有相關知識（避免重複入庫）：\n"
                     + "\n".join(items)
                 )
+
+        # C-04: signal-specific hint
+        hint = self._SIGNAL_HINTS.get(kind, "")
 
         return f"""You are a knowledge extraction assistant for a software engineering project.
 Your task: analyze a signal from the project (git commit / task completion / etc.) and
@@ -318,7 +302,7 @@ Decision rules:
 - Pitfall MUST describe the root cause, not just "X didn't work"
 - Never fabricate details not present in the signal content
 - confidence for node.confidence should reflect how certain you are the knowledge is correct
-  AND reusable in similar situations; keep ≤ 0.85 for auto-extracted knowledge"""
+  AND reusable in similar situations; keep ≤ 0.85 for auto-extracted knowledge{hint}"""
 
     # ── LLM 呼叫 ─────────────────────────────────────────────────
 
@@ -326,15 +310,20 @@ Decision rules:
         """
         呼叫 LLM 取得原始回應字串。
 
-        使用 duck-typed 介面（與 anthropic.Anthropic.messages.create 相容）。
+        C-02: 優先使用統一 LLMClient.complete()；若未提供則 fallback 到
+        legacy duck-typed client.messages.create()。
         不做任何 parsing — 交給 _extract_json 處理。
         """
+        if self._llm_client is not None:
+            return self._llm_client.complete(
+                prompt, max_tokens=MAX_OUTPUT_TOKENS,
+            ).strip()
+        # Legacy path: duck-typed anthropic / OllamaClient
         resp = self.client.messages.create(
             model      = self.model,
             max_tokens = MAX_OUTPUT_TOKENS,
             messages   = [{"role": "user", "content": prompt}],
         )
-        # 與 anthropic Response / OllamaResponse 相容
         return resp.content[0].text.strip()
 
     # ── JSON 解析 ─────────────────────────────────────────────────

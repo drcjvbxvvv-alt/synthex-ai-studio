@@ -55,13 +55,19 @@ class KnowledgeGraph:
         "TESTED_BY":       "A 組件被 B 測試覆蓋",
     }
 
-    def __init__(self, brain_dir: Path):
-        self.db_path = brain_dir / "knowledge_graph.db"
+    def __init__(self, brain_dir: Path, *, conn: "sqlite3.Connection | None" = None):
+        # C-01: unified DB — use brain.db instead of knowledge_graph.db
+        self.db_path = brain_dir / "brain.db"
         self._lock = threading.Lock()  # serialise concurrent SQLite access
         # B-02: Observer pattern — callables notified after successful node writes
         self._listeners: list = []
-        # ARCH-02: single shared connection — no per-thread fd leak
-        self._conn_obj: sqlite3.Connection = self._make_connection()
+        # ARCH-02 + C-01: accept shared connection or create own
+        if conn is not None:
+            self._conn_obj = conn
+            self._owns_conn = False
+        else:
+            self._conn_obj = self._make_connection()
+            self._owns_conn = True
         self._setup_schema()
         self._migrate_schema()
 
@@ -80,7 +86,12 @@ class KnowledgeGraph:
         return self._conn_obj
 
     def close(self) -> None:
-        """ARCH-02: explicitly close the shared connection to release the fd."""
+        """ARCH-02: explicitly close the shared connection to release the fd.
+
+        C-01: skip if the connection is shared (not owned by this instance).
+        """
+        if not getattr(self, '_owns_conn', True):
+            return
         try:
             self._conn_obj.close()
         except Exception:
@@ -163,7 +174,7 @@ class KnowledgeGraph:
         CREATE INDEX IF NOT EXISTS idx_nodes_type_created ON nodes(type, created_at DESC);
         CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
             id UNINDEXED, title, content, tags,
-            content='nodes', content_rowid='rowid'
+            tokenize='unicode61'
         );
 
         -- A-8: 不再用觸發器自動同步 FTS5
@@ -354,14 +365,16 @@ class KnowledgeGraph:
             """, (node_id, node_type, title, content, tags_json,
                   source_url, author, meta_json, confidence,
                   created_at or None))
-            # A-8: 直接 INSERT N-gram 格式到 FTS5（單次寫入，無 double write）
+            # A-8 + C-01: DELETE+INSERT FTS5 (works in both standalone and content-sync mode)
             try:
                 fts_title   = self._ngram_text(title)
                 fts_content = self._ngram_text(content or '')
                 self._conn.execute(
-                    'INSERT INTO nodes_fts(rowid, id, title, content, tags) '
-                    'VALUES ((SELECT rowid FROM nodes WHERE id=?), ?, ?, ?, ?)',
-                    (node_id, node_id, fts_title, fts_content, tags_json)
+                    "DELETE FROM nodes_fts WHERE id=?", (node_id,)
+                )
+                self._conn.execute(
+                    'INSERT INTO nodes_fts(id, title, content, tags) VALUES(?, ?, ?, ?)',
+                    (node_id, fts_title, fts_content, tags_json)
                 )
             except Exception as _fts_err:
                 # R-2: log instead of silently swallowing — node is saved but unsearchable
@@ -432,23 +445,25 @@ class KnowledgeGraph:
                 f"(expected version {current_version})"
             )
 
-        # 同步 FTS5 N-gram 索引（使用 FTS5 content 觸發器方式）
+        # C-01: FTS5 sync — DELETE+INSERT by id (works with standalone FTS5)
         if title is not None or content is not None:
             new_title   = title   if title   is not None else existing.get("title", "")
             new_content = content if content is not None else existing.get("content", "")
             try:
-                # FTS5 的正確更新方式：先刪除再插入
                 self._conn.execute(
-                    "DELETE FROM nodes_fts WHERE rowid="
-                    "(SELECT rowid FROM nodes WHERE id=?)", (node_id,)
+                    "DELETE FROM nodes_fts WHERE id=?", (node_id,)
                 )
+                tags_json = existing.get("tags", "[]")
+                if isinstance(tags_json, list):
+                    import json as _j
+                    tags_json = _j.dumps(tags_json, ensure_ascii=False)
                 self._conn.execute(
-                    "INSERT INTO nodes_fts(rowid, id, title, content, tags) "
-                    "SELECT rowid, id, ?, ?, tags FROM nodes WHERE id=?",
-                    (self._ngram_text(new_title), self._ngram_text(new_content), node_id)
+                    "INSERT INTO nodes_fts(id, title, content, tags) VALUES(?, ?, ?, ?)",
+                    (node_id, self._ngram_text(new_title),
+                     self._ngram_text(new_content), tags_json)
                 )
             except Exception as _e:
-                logger.error("FTS5 sync failed in update_node: %s", _e)  # FTS5 同步失敗不影響主流程
+                logger.error("FTS5 sync failed in update_node: %s", _e)
 
         self._conn.commit()
         # B-02: notify listeners with merged node data
@@ -537,10 +552,11 @@ class KnowledgeGraph:
             sanitized = [t for t in sanitized if len(t) >= 1]
             fts_q = " OR ".join(f'"{t}"' for t in sanitized) if sanitized else '""'
             try:
+                # C-01: JOIN on id (works with both standalone and content-sync FTS5)
                 if node_type:
                     rows = self._conn.execute(
                         "SELECT n.* FROM nodes_fts"
-                        " JOIN nodes n ON nodes_fts.rowid = n.rowid"
+                        " JOIN nodes n ON nodes_fts.id = n.id"
                         " WHERE nodes_fts MATCH ? AND n.type = ?"
                         " ORDER BY n.is_pinned DESC, n.confidence DESC, n.importance DESC"
                         " LIMIT ?",
@@ -549,7 +565,7 @@ class KnowledgeGraph:
                 else:
                     rows = self._conn.execute(
                         "SELECT n.* FROM nodes_fts"
-                        " JOIN nodes n ON nodes_fts.rowid = n.rowid"
+                        " JOIN nodes n ON nodes_fts.id = n.id"
                         " WHERE nodes_fts MATCH ?"
                         " ORDER BY n.is_pinned DESC, n.confidence DESC, n.importance DESC"
                         " LIMIT ?",
@@ -1237,5 +1253,4 @@ class KnowledgeGraph:
         affected.sort(key=lambda x: x.get("impact_score", 0), reverse=True)
         return affected
 
-    def close(self):
-        self._conn.close()
+    # C-01: duplicate close() removed — see primary definition above (line ~88)

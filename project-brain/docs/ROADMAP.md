@@ -91,8 +91,8 @@ project_brain/
 | Phase | 版本目標 | 未完成項目數 | 核心目標 |
 |-------|----------|-------------|---------|
 | Phase A | v0.31~v0.34 | 0 | 止血 + 架構深化 ✅ 完成 |
-| Phase B | v0.35 | 7 | 可觀測性、資料同步、維護性 |
-| Phase C | v0.40 | 5 | 架構統一、LLM 介面、Pipeline 擴展 |
+| Phase B | v0.35 | 0 | 可觀測性、資料同步、維護性 ✅ 完成 |
+| Phase C | v0.40 | 0 | 架構統一、LLM 介面、Pipeline 擴展 ✅ 完成 |
 | Phase D | v1.0 | 5 | 生產就緒、LoRA 蒸餾、CI 全覆蓋 |
 
 ---
@@ -201,7 +201,7 @@ project_brain/
 
 ---
 
-## 4. Phase B — 可觀測性與維護性 [目標 v0.35]
+## 4. Phase B — 可觀測性與維護性 [DONE v0.35.0]
 
 > **前提依賴**：Phase A 全部完成（v0.34.0 ✅）
 >
@@ -465,7 +465,7 @@ class TestPipelineStats:
 
 ---
 
-### B-05 MEDIUM-03：MCP Server Singleton 重構
+### B-05 MEDIUM-03：MCP Server Singleton 重構 [DONE v0.35.0]
 
 **ID**：MEDIUM-03
 **優先**：P2（測試穩定性，pytest-xdist 並行時狀態污染風險）
@@ -537,16 +537,16 @@ class TestExistingBehaviorUnchanged:
 
 #### 驗收條件
 
-- [ ] `create_server()` 公開 API 不變（無 breaking change）
-- [ ] 兩個 `create_server()` 實例的狀態互相隔離
-- [ ] 現有所有 MCP server 測試通過（零 regression）
+- [x] `create_server()` 公開 API 不變（無 breaking change）
+- [x] 兩個 `create_server()` 實例的狀態互相隔離
+- [x] 現有所有 MCP server 測試通過（零 regression）
 
 **推薦模型**：Sonnet 4.6（跨檔重構，需確保所有呼叫方正確）
 **估計工作量**：6h
 
 ---
 
-### B-06 MEDIUM-06：`_count_tokens` 停用 LRU cache
+### B-06 MEDIUM-06：`_count_tokens` 停用 LRU cache [DONE v0.35.0]
 
 **ID**：MEDIUM-06
 **優先**：P3（性能優化）
@@ -594,16 +594,16 @@ class TestCountTokens:
 
 #### 驗收條件
 
-- [ ] `_count_tokens` 無 `@lru_cache` decorator
-- [ ] 結果與舊實作誤差 < 20%（token 估算允許誤差）
-- [ ] `context.py` 相關測試全通過
+- [x] `_count_tokens` 無 `@lru_cache` decorator
+- [x] 結果與舊實作誤差 < 20%（token 估算允許誤差）
+- [x] `context.py` 相關測試全通過
 
 **推薦模型**：Haiku 4.5（單函式改寫，< 20 行）
 **估計工作量**：1h
 
 ---
 
-### B-07 LOW-01~04：錯誤處理批次修復
+### B-07 LOW-01~04：錯誤處理批次修復 [DONE v0.35.0]
 
 **ID**：LOW-01, LOW-02, LOW-03, LOW-04
 **優先**：P3（可維護性）
@@ -661,9 +661,9 @@ class TestLow04PiiUUID:
 
 #### 驗收條件
 
-- [ ] LOW-01~03：相關位置無靜默 `pass`
-- [ ] LOW-04：UUID 和常見 token 格式被 `_strip_pii` 清理
-- [ ] 所有現有 federation 測試通過（75 tests 不退化）
+- [x] LOW-01~03：相關位置無靜默 `pass`
+- [x] LOW-04：UUID 和常見 token 格式被 `_strip_pii` 清理
+- [x] 所有現有 federation 測試通過（75 tests 不退化）
 
 **推薦模型**：Haiku 4.5（LOW-01~03）；Sonnet 4.6（LOW-04，PII 邊界需思考）
 **估計工作量**：3h
@@ -686,7 +686,7 @@ brain health
 
 ---
 
-## 5. Phase C — 架構演進 [目標 v0.40]
+## 5. Phase C — 架構演進 [DONE v0.40.0]
 
 > **前提依賴**：Phase B 全部完成，系統可觀測性建立後再動架構
 >
@@ -694,11 +694,11 @@ brain health
 >
 > **總估計工作量**：~60h（Haiku 0h / Sonnet 16h / Opus 44h）
 
-### C-01 ARCH-01：統一 DB（knowledge_graph.db 合併進 brain.db）
+### C-01 ARCH-01：統一 DB（knowledge_graph.db 合併進 brain.db）[DONE v0.40.0]
 
 **ID**：ARCH-01
 **優先**：P3（架構債，但 B-02 事件同步先緩解症狀）
-**依賴**：B-02 完成（事件同步讓遷移更安全）；需要 Schema v31 migration
+**依賴**：B-02 完成（事件同步讓遷移更安全）；Schema v27 migration
 
 #### 設計
 
@@ -771,17 +771,17 @@ class TestKGOnUnifiedDB:
 
 #### 驗收條件
 
-- [ ] 遷移後 `knowledge_graph.db` 不再被建立
-- [ ] 所有既有 KG 測試通過（無 regression）
-- [ ] `brain health` 顯示單 DB 模式
-- [ ] 50 threads 並發測試在統一 DB 上通過
+- [x] 遷移後 `knowledge_graph.db` 不再被建立
+- [x] 所有既有 KG 測試通過（無 regression）
+- [x] `brain health` 顯示單 DB 模式
+- [x] 50 threads 並發測試在統一 DB 上通過
 
 **推薦模型**：Opus 4.6 (1M)（Schema 遷移 + 全檔掃描，架構級設計）
 **估計工作量**：24h
 
 ---
 
-### C-02 integrations/llm_client.py — 統一 LLM 介面
+### C-02 integrations/llm_client.py — 統一 LLM 介面 [DONE v0.40.0]
 
 **ID**：新功能（§6.2 延後項目）
 **優先**：P3（為 C-03、C-04 提供乾淨基礎）
@@ -847,15 +847,15 @@ class TestFromBrainConfig:
 
 #### 驗收條件
 
-- [ ] `from_brain_config` 工廠可替換現有各模組的 OllamaClient 建構方式
-- [ ] 現有 LLM judgment 測試通過（零 regression）
+- [x] `from_brain_config` 工廠可替換現有各模組的 OllamaClient 建構方式
+- [x] 現有 LLM judgment 測試通過（零 regression）
 
 **推薦模型**：Opus 4.6 (1M)（跨多模組重構，需理解所有呼叫方）
 **估計工作量**：8h
 
 ---
 
-### C-03 ARCH-02：KnowledgeValidator CI 集成
+### C-03 ARCH-02：KnowledgeValidator CI 集成 [DONE v0.40.0]
 
 **ID**：ARCH-02
 **優先**：P3
@@ -880,15 +880,15 @@ class TestFromBrainConfig:
 
 #### 驗收條件
 
-- [ ] `brain validate --ci` 在無 Ollama 環境執行不 crash
-- [ ] JSON report 可被 CI 解析（exit code 1 if `passed: false`）
+- [x] `brain validate --ci` 在無 Ollama 環境執行不 crash
+- [x] JSON report 可被 CI 解析（exit code 1 if `passed: false`）
 
 **推薦模型**：Sonnet 4.6
 **估計工作量**：6h
 
 ---
 
-### C-04 ARCH-04：Pipeline Phase 2 — 新增 MCP_TOOL_CALL / TEST_FAILURE 信號
+### C-04 ARCH-04：Pipeline Phase 2 — 新增 MCP_TOOL_CALL / TEST_FAILURE 信號 [DONE v0.40.0]
 
 **ID**：ARCH-04
 **優先**：P3
@@ -950,16 +950,16 @@ class TestKnowledgeConflictSignal:
 
 #### 驗收條件
 
-- [ ] 3 個新 SignalKind 定義完整，向後相容
-- [ ] `add_knowledge` MCP tool 呼叫後 signal_queue 有對應記錄
-- [ ] LLM 不可用時信號進 queue 但不 crash（非同步）
+- [x] 3 個新 SignalKind 定義完整，向後相容
+- [x] `add_knowledge` MCP tool 呼叫後 signal_queue 有對應記錄
+- [x] LLM 不可用時信號進 queue 但不 crash（非同步）
 
 **推薦模型**：Opus 4.6 (1M)（Signal schema + prompt 設計，需長 context 理解 pipeline 全貌）
 **估計工作量**：16h
 
 ---
 
-### C-05 Pipeline Layer 5 — Feedback Loop
+### C-05 Pipeline Layer 5 — Feedback Loop [DONE v0.40.0]
 
 **ID**：§7.1 功能強化
 **優先**：P3
@@ -982,9 +982,9 @@ def _adjust_signal_confidence(signal_kind: str) -> None:
 
 #### 驗收條件
 
-- [ ] `report_knowledge_outcome` 記錄寫入 `feedback_log` 表（含信號類型）
-- [ ] 週期統計在 decay daemon 中觸發
-- [ ] 30% 負面回饋觸發 auto_confidence 下調（有測試覆蓋）
+- [x] `report_knowledge_outcome` 記錄寫入 `feedback_log` 表（含信號類型）
+- [x] 週期統計在 decay daemon 中觸發
+- [x] 30% 負面回饋觸發 auto_confidence 下調（有測試覆蓋）
 
 **推薦模型**：Opus 4.6 (1M)（跨層設計，需理解 feedback_tracker + pipeline + config 三塊）
 **估計工作量**：12h

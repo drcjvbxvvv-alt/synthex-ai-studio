@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 22          # DEF-04: bump on every schema change
+SCHEMA_VERSION = 28          # DEF-04: bump on every schema change (C-05: feedback_log)
 
 # REF-02: single source of truth in synonyms.py
 from ..synonyms import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -64,8 +64,8 @@ class BrainDB:
                 try:
                     old.unlink()
                     logger.debug("FEAT-06: removed old backup %s", old.name)
-                except OSError:
-                    pass
+                except OSError as _oe:
+                    logger.debug("LOW-02: backup cleanup failed (non-critical): %s", _oe)
         except Exception as _e:
             # 備份失敗不應影響正常啟動
             logger.warning("FEAT-06: daily backup failed (non-fatal): %s", _e)
@@ -87,11 +87,17 @@ class BrainDB:
         return self._conn_obj
 
     def close(self) -> None:
-        """ARCH-02: explicitly close the shared connection to release the fd."""
+        """ARCH-02: explicitly close the shared connection to release the fd.
+
+        LOW-03: idempotent — safe to call multiple times.
+        """
+        if self._conn_obj is None:
+            return
         try:
             self._conn_obj.close()
         except Exception:
             pass
+        self._conn_obj = None
 
     def _setup(self) -> None:
         self.conn.executescript("""
@@ -174,6 +180,8 @@ class BrainDB:
         self.conn.commit()
         # DEF-04: run versioned migrations (idempotent, replaces scattered ALTER TABLE blocks)
         self._run_migrations()
+        # C-01: one-time import of knowledge_graph.db into unified brain.db
+        self._migrate_kg_to_unified()
 
         # REF-01: instantiate extracted sub-modules
         self._vector_store     = VectorStore(self.conn)
@@ -342,6 +350,29 @@ class BrainDB:
                  feedback_note TEXT,
                  PRIMARY KEY (node_id, signal_id)
              )"""),
+            # v27: C-01 — align edges schema with graph.py (weight, created_at,
+            # trigger_condition, confidence) + add edge indexes for graph traversal
+            ("C-01: edges schema alignment + indexes",
+             lambda conn: (
+                 conn.execute("ALTER TABLE edges ADD COLUMN weight REAL DEFAULT 1.0"),
+                 conn.execute("ALTER TABLE edges ADD COLUMN created_at TEXT DEFAULT ''"),
+                 conn.execute("ALTER TABLE edges ADD COLUMN trigger_condition TEXT DEFAULT ''"),
+                 conn.execute("ALTER TABLE edges ADD COLUMN confidence REAL DEFAULT 0.8"),
+                 conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)"),
+                 conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)"),
+             )),
+            # v28: C-05 — feedback_log table for pipeline feedback loop
+            ("C-05: feedback_log table",
+             """CREATE TABLE IF NOT EXISTS feedback_log (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 node_id     TEXT NOT NULL,
+                 signal_kind TEXT DEFAULT '',
+                 was_useful  INTEGER NOT NULL,
+                 notes       TEXT DEFAULT '',
+                 conf_before REAL,
+                 conf_after  REAL,
+                 created_at  TEXT DEFAULT (datetime('now'))
+             )"""),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -376,6 +407,93 @@ class BrainDB:
                 )
                 self.conn.commit()
                 logger.debug("DEF-04: schema migration v%d applied: %s", ver, desc)
+
+    def _migrate_kg_to_unified(self) -> None:
+        """C-01: One-time import of nodes+edges from knowledge_graph.db into brain.db.
+
+        Idempotent: checks ``brain_meta.c01_kg_merged`` marker before running.
+        After successful import, renames knowledge_graph.db → .db.bak.
+        Failures are non-fatal (logged as WARNING) — the migration will retry
+        on next startup until the marker is set.
+        """
+        kg_path = self.brain_dir / "knowledge_graph.db"
+        if not kg_path.exists():
+            return
+        # Idempotent check
+        try:
+            row = self.conn.execute(
+                "SELECT value FROM brain_meta WHERE key='c01_kg_merged'"
+            ).fetchone()
+            if row:
+                return
+        except Exception:
+            pass
+
+        logger.info("C-01: migrating knowledge_graph.db → brain.db …")
+        try:
+            import sqlite3 as _sql
+            old = _sql.connect(str(kg_path))
+            old.row_factory = _sql.Row
+
+            # ── Import nodes (upsert by id) ──
+            node_count = 0
+            for r in old.execute("SELECT * FROM nodes").fetchall():
+                d = dict(r)
+                try:
+                    self.add_node(
+                        node_id=d["id"],
+                        node_type=d.get("type", ""),
+                        title=d.get("title", ""),
+                        content=d.get("content", ""),
+                        confidence=float(d.get("confidence") or 0.8),
+                    )
+                    node_count += 1
+                except Exception:
+                    pass  # upsert conflict — already exists
+
+            # ── Import edges (INSERT OR IGNORE) ──
+            edge_count = 0
+            for r in old.execute("SELECT * FROM edges").fetchall():
+                d = dict(r)
+                try:
+                    self.conn.execute(
+                        """INSERT OR IGNORE INTO edges
+                           (source_id, relation, target_id, weight, note,
+                            causal_direction, trigger_condition, confidence, created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (
+                            d["source_id"], d["relation"], d["target_id"],
+                            d.get("weight", 1.0), d.get("note", ""),
+                            d.get("causal_direction", "CORRELATES"),
+                            d.get("trigger_condition", ""),
+                            d.get("confidence", 0.8),
+                            d.get("created_at", ""),
+                        ),
+                    )
+                    edge_count += 1
+                except Exception:
+                    pass
+            old.close()
+
+            # ── Mark as done ──
+            self.conn.execute(
+                "INSERT OR REPLACE INTO brain_meta(key,value) VALUES('c01_kg_merged','done')"
+            )
+            self.conn.commit()
+
+            # ── Backup old file ──
+            bak = kg_path.with_suffix(".db.bak")
+            try:
+                kg_path.rename(bak)
+                logger.info(
+                    "C-01: migration complete — %d nodes, %d edges imported. "
+                    "Old file → %s", node_count, edge_count, bak.name,
+                )
+            except OSError as _oe:
+                logger.warning("C-01: rename failed (non-fatal): %s", _oe)
+
+        except Exception as _e:
+            logger.warning("C-01: KG migration failed (will retry next startup): %s", _e)
 
     # -- helpers --
 

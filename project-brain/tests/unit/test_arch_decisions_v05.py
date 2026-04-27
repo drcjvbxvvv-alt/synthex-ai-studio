@@ -136,12 +136,15 @@ class TestColdStartGuidance(unittest.TestCase):
     def test_build_returns_header_when_knowledge_exists(self):
         """有知識時 build() 應回傳含 Project Brain 標頭的字串（而非引導訊息）。"""
         import tempfile
+        from project_brain.brain_db import BrainDB
         from project_brain.graph import KnowledgeGraph
         from project_brain.context import ContextEngineer
         tmp = Path(tempfile.mkdtemp())
         brain_dir = tmp / ".brain"
         brain_dir.mkdir()
-        graph = KnowledgeGraph(tmp)
+        # C-01: init BrainDB first so FTS5 table exists, then share connection
+        db = BrainDB(brain_dir)
+        graph = KnowledgeGraph(tmp, conn=db.conn)
         graph.add_node("n1", "Rule", "測試規則", content="內容")
         engine = ContextEngineer(graph, brain_dir=brain_dir)
 

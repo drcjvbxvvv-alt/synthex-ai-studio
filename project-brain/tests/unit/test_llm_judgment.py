@@ -368,11 +368,11 @@ class TestConfidenceCap(unittest.TestCase):
 class TestFromBrainConfig(unittest.TestCase):
 
     def test_J14_missing_brain_dir_returns_default(self):
-        """不存在的 brain_dir 應該仍能建立 engine（使用預設 OllamaClient）"""
+        """不存在的 brain_dir 應該仍能建立 engine（使用預設 client）"""
         from pathlib import Path
         judge = LLMJudgmentEngine.from_brain_config(Path("/nonexistent/path"))
-        # 應該有某個 client 和 model（即使最後 fallback 也不拋例外）
-        self.assertIsNotNone(judge.client)
+        # C-02: 應該有 _llm_client 或 legacy client（即使最後 fallback 也不拋例外）
+        self.assertTrue(judge._llm_client is not None or judge.client is not None)
         self.assertTrue(judge.model)
 
 

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from project_brain.engines.review_board import KnowledgeReviewBoard
 from project_brain.graph import KnowledgeGraph
+from project_brain.core.brain_db import BrainDB
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -31,18 +32,23 @@ from project_brain.graph import KnowledgeGraph
 # ══════════════════════════════════════════════════════════════════
 
 class _KRBFixture(unittest.TestCase):
-    """每個測試獨立 tmp brain_dir + KnowledgeGraph + KRB。"""
+    """每個測試獨立 tmp brain_dir + KnowledgeGraph + KRB.
+
+    C-01: BrainDB created first; KG shares its connection.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.brain_dir = Path(self._tmp.name)
-        self.graph = KnowledgeGraph(self.brain_dir)
+        self.bdb = BrainDB(self.brain_dir)
+        self.graph = KnowledgeGraph(self.brain_dir, conn=self.bdb.conn)
         self.krb = KnowledgeReviewBoard(self.brain_dir, self.graph)
 
     def tearDown(self):
         try:
             self.krb.close()
             self.graph.close()
+            self.bdb.close()
         except Exception:
             pass
         self._tmp.cleanup()

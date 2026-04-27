@@ -52,18 +52,18 @@ class _KGFixture(unittest.TestCase):
 
 
 class _PairFixture(unittest.TestCase):
-    """每個測試獨立 tmp 目錄 + KnowledgeGraph + BrainDB（已接線）。"""
+    """每個測試獨立 tmp 目錄 + BrainDB + KnowledgeGraph（shared conn）.
+
+    C-01: unified brain.db — KnowledgeGraph shares BrainDB connection.
+    No Observer sync needed; writes go directly to the single DB.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self._tmp.name)
-        self.graph = KnowledgeGraph(self.tmp_path)
         self.bdb = BrainDB(self.tmp_path)
-        # 接線：graph → bdb
-        self.graph.add_listener(self._sync)
-
-    def _sync(self, event: str, data: dict) -> None:
-        self.bdb.sync_from_graph_node(event, data)
+        # C-01: KG shares BrainDB connection — single unified brain.db
+        self.graph = KnowledgeGraph(self.tmp_path, conn=self.bdb.conn)
 
     def tearDown(self):
         try:
@@ -143,11 +143,12 @@ class TestObserverAPI(_KGFixture):
 class TestAddNodeSync(_PairFixture):
 
     def test_ADD01_new_node_searchable_in_braindb(self):
-        """graph.add_node() 後，brain_db.search_nodes(title) 能找到節點。"""
+        """C-01: graph.add_node() writes to unified brain.db, visible via BrainDB."""
         self.graph.add_node("n1", "Rule", "Avoid circular imports")
-        results = self._bdb_search("circular imports")
-        ids = [r["id"] for r in results]
-        self.assertIn("n1", ids)
+        # C-01: shared connection — node is directly visible via BrainDB
+        node = self._bdb_node("n1")
+        self.assertIsNotNone(node, "node should be directly visible in BrainDB via shared conn")
+        self.assertEqual(node["title"], "Avoid circular imports")
 
     def test_ADD02_synced_node_has_correct_type(self):
         """同步後 BrainDB 節點的 type 與 graph 一致。"""
@@ -292,11 +293,13 @@ class TestEngineIntegration(unittest.TestCase):
         from project_brain.engine import ProjectBrain
         return ProjectBrain(str(self.tmp_path))
 
-    def test_ENG01_engine_graph_has_listener_wired(self):
-        """engine.graph 初始化後，_listeners 不為空（含 _on_graph_node_upserted）。"""
+    def test_ENG01_engine_graph_shares_db_connection(self):
+        """C-01: engine.graph shares BrainDB connection (no Observer needed)."""
         engine = self._make_engine()
         _ = engine.graph  # trigger lazy init
-        self.assertGreater(len(engine.graph._listeners), 0)
+        # C-01: graph and db share the same SQLite connection
+        self.assertIs(engine.graph._conn, engine.db.conn,
+                      "graph and db should share the same connection in C-01")
 
     def test_ENG02_add_node_via_engine_syncs_to_db(self):
         """engine.graph.add_node() 後，engine.db.search_nodes() 能找到節點。"""
@@ -361,12 +364,10 @@ class TestIdempotency(_PairFixture):
         ).fetchone()[0]
         self.assertEqual(rows, 1)
 
-    def test_IDM02_sync_from_graph_node_called_twice_no_duplicate(self):
-        """直接呼叫 sync_from_graph_node 兩次，BrainDB 只有一筆。"""
-        data = {"node_id": "d2", "node_type": "Note", "title": "Idem",
-                "content": "", "tags": [], "confidence": 0.8, "created_at": ""}
-        self.bdb.sync_from_graph_node("node_upserted", data)
-        self.bdb.sync_from_graph_node("node_upserted", data)
+    def test_IDM02_graph_add_twice_no_duplicate(self):
+        """C-01: graph.add_node() called twice with same id → only one row in DB."""
+        self.graph.add_node("d2", "Note", "Idem", content="")
+        self.graph.add_node("d2", "Note", "Idem", content="")
         rows = self.bdb.conn.execute(
             "SELECT COUNT(*) FROM nodes WHERE id=?", ("d2",)
         ).fetchone()[0]

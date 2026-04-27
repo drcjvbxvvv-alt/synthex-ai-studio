@@ -37,7 +37,7 @@ def cmd_fed(args):
         from project_brain.graph    import KnowledgeGraph
         from project_brain.federation import cmd_fed_export
         db    = BrainDB(bd)
-        graph = KnowledgeGraph(bd / "brain.db")
+        graph = KnowledgeGraph(bd)
         cmd_fed_export(bd, graph, args)
 
     elif fed_sub == 'import':
@@ -46,7 +46,7 @@ def cmd_fed(args):
         from project_brain.review_board import KnowledgeReviewBoard
         from project_brain.federation   import cmd_fed_import
         db    = BrainDB(bd)
-        graph = KnowledgeGraph(bd / "brain.db")
+        graph = KnowledgeGraph(bd)
         krb   = KnowledgeReviewBoard(db, graph)
         cmd_fed_import(bd, krb, args)
 
@@ -56,7 +56,7 @@ def cmd_fed(args):
         from project_brain.review_board import KnowledgeReviewBoard
         from project_brain.federation   import cmd_fed_sync
         db    = BrainDB(bd)
-        graph = KnowledgeGraph(bd / "brain.db")
+        graph = KnowledgeGraph(bd)
         krb   = KnowledgeReviewBoard(db, graph)
         cmd_fed_sync(bd, krb, args)
 
