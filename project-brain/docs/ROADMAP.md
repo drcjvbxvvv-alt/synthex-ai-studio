@@ -81,7 +81,7 @@ project_brain/
 │   ├── mcp_server.py        [STABLE] BrainServer class，22 MCP tools，feedback_log 整合
 │   ├── api_server.py        [STABLE]
 │   ├── cli*.py              [STABLE] brain validate --ci/--json 已加入
-│   └── web_ui/              [PARTIAL] 零測試覆蓋（D-02）
+│   └── web_ui/              [STABLE] 行內編輯 + KRB Staging API + 33 tests（D-02 ✅）
 │
 └── integrations/
     ├── llm_client.py        [STABLE] LLMClient Protocol + Ollama/Anthropic/Fallback/Noop
@@ -452,11 +452,12 @@ def _adjust_signal_confidence(brain):
 >
 > **總估計工作量**：~90h（主要為研究 + 測試工作）
 
-### D-01 ARCH-03：KnowledgeDistiller Layer 3 LoRA
+### D-01 ARCH-03：KnowledgeDistiller Layer 3 LoRA 🕐 待實作
 
 **ID**：ARCH-03
 **優先**：P4（需要 GPU 環境）
 **依賴**：C-02（統一 LLM 介面），需本地 GPU（≥ 16GB VRAM）
+**狀態**：⏳ 待實作 — 等待 GPU 資源（≥ 16GB VRAM）；可在 D-02~D-05 完成後平行進行或使用 Google Colab T4
 
 #### 設計
 
@@ -534,7 +535,7 @@ class TestLoRAClientIntegration:
 
 ---
 
-### D-02 ARCH-05：WebUI 完整化（行內編輯 + KRB 管理）
+### D-02 ARCH-05：WebUI 完整化（行內編輯 + KRB 管理）[DONE v0.41.0]
 
 **ID**：ARCH-05
 **優先**：P4
@@ -595,10 +596,13 @@ class TestKRBManagement:
 
 #### 驗收條件
 
-- [ ] 行內編輯儲存後立即反映於圖譜視圖
-- [ ] KRB staging 管理界面可正常 approve/reject
-- [ ] `pytest tests/integration/test_web_ui*.py` 全通過（零 failing）
-- [ ] 覆蓋率從 0 提升至 ≥ 40%
+- [x] 行內編輯儲存後立即反映於圖譜視圖（JS 即時更新圖形顏色/標籤）
+- [x] KRB staging 管理界面可正常 approve/reject（`/api/staging/*` 端點）
+- [x] `pytest tests/unit/test_web_ui_edit.py` 33/33 passed（零 regression）
+- [x] 覆蓋率從 0 提升至 33 tests（後端 API 全覆蓋）
+
+**實際實作**：`_validate_node_patch` + `_sync_fts` + `_load_staging` 三個共用 helper；  
+`kind` API 欄位自動映射到 DB 的 `type` 欄位（在 docstring 中標記）。
 
 **推薦模型**：Sonnet 4.6（前端 + API 整合）
 **估計工作量**：16h

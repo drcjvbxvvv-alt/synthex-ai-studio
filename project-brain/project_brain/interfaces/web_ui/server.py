@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 MAX_QUERY_LEN = 200
 MAX_NODES_RETURN = 500
 HOST = "127.0.0.1"
-_VERSION = "1.0"
+_VERSION = "1.1"
+
+ALLOWED_EDIT_FIELDS = {"title", "content", "confidence", "kind"}
+VALID_KINDS = {"Pitfall", "Decision", "Rule", "ADR", "Component", "Architecture", "Note"}
 
 KIND_COLOR = {
     "Pitfall":      "#f87171",
@@ -110,7 +113,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -130,6 +133,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._route_analytics()
             elif path == "/api/search":
                 self._route_search(qs)
+            elif path == "/api/staging":
+                self._route_staging()
             elif path.startswith("/api/node/") and not path.endswith("/pin"):
                 nid = path[len("/api/node/"):]
                 self._route_node(nid)
@@ -151,10 +156,45 @@ class _Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/node/") and path.endswith("/pin"):
                 nid = path[len("/api/node/"):-len("/pin")]
                 self._route_pin(nid, body)
+            elif path.startswith("/api/staging/") and path.endswith("/approve"):
+                sid = path[len("/api/staging/"):-len("/approve")]
+                self._route_staging_action(sid, "approve", body)
+            elif path.startswith("/api/staging/") and path.endswith("/reject"):
+                sid = path[len("/api/staging/"):-len("/reject")]
+                self._route_staging_action(sid, "reject", body)
             else:
                 self._json({"error": "not found"}, 404)
         except Exception:
             logger.exception("POST %s", self.path)
+            self._json({"error": "內部錯誤"}, 500)
+
+    def do_PATCH(self):
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)
+                              or b"{}") if length else {}
+            if path.startswith("/api/node/"):
+                nid = path[len("/api/node/"):]
+                self._route_patch_node(nid, body)
+            else:
+                self._json({"error": "not found"}, 404)
+        except Exception:
+            logger.exception("PATCH %s", self.path)
+            self._json({"error": "內部錯誤"}, 500)
+
+    def do_DELETE(self):
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            if path.startswith("/api/node/"):
+                nid = path[len("/api/node/"):]
+                self._route_delete_node(nid)
+            else:
+                self._json({"error": "not found"}, 404)
+        except Exception:
+            logger.exception("DELETE %s", self.path)
             self._json({"error": "內部錯誤"}, 500)
 
     # ── API: /api/graph ──────────────────────
@@ -426,6 +466,165 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    # ── API: PATCH /api/node/<id> ────────────
+    def _route_patch_node(self, node_id: str, body: dict):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        updates, values, err = _validate_node_patch(body)
+        if err:
+            self._json({"error": err}, 400)
+            return
+        if not updates:
+            self._json({"error": "沒有可更新的欄位"}, 400)
+            return
+        conn = self._db()
+        try:
+            set_clause = ", ".join(f"{col}=?" for col in updates)
+            cur = conn.execute(
+                f"UPDATE nodes SET {set_clause} WHERE id=?", values + [safe]
+            )
+            if cur.rowcount == 0:
+                self._json({"error": "節點不存在"}, 404)
+                conn.commit()
+                return
+            _sync_fts(conn, safe)
+            conn.commit()
+            self._json({"ok": True, "id": safe})
+        finally:
+            conn.close()
+
+    # ── API: DELETE /api/node/<id> ───────────
+    def _route_delete_node(self, node_id: str):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        conn = self._db()
+        try:
+            cur = conn.execute("DELETE FROM nodes WHERE id=?", (safe,))
+            if cur.rowcount == 0:
+                self._json({"error": "節點不存在"}, 404)
+                conn.commit()
+                return
+            try:
+                conn.execute("DELETE FROM nodes_fts WHERE id=?", (safe,))
+            except Exception:
+                pass
+            conn.execute(
+                "DELETE FROM edges WHERE source_id=? OR target_id=?", (safe, safe)
+            )
+            conn.commit()
+            self._json({"ok": True, "id": safe})
+        finally:
+            conn.close()
+
+    # ── API: GET /api/staging ────────────────
+    def _route_staging(self):
+        items = _load_staging(self.__class__.workdir)
+        self._json({"staging": items, "total": len(items)})
+
+    # ── API: POST /api/staging/<id>/approve|reject ──
+    def _route_staging_action(self, staging_id: str, action: str, body: dict):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", staging_id)[:64]
+        note = str(body.get("note", ""))[:500]
+        try:
+            from project_brain.engines.review_board import KnowledgeReviewBoard
+            from project_brain.graph import KnowledgeGraph
+            wd = self.__class__.workdir
+            bd = wd / ".brain"
+            g = KnowledgeGraph(bd)
+            krb = KnowledgeReviewBoard(bd, g)
+            if action == "approve":
+                krb.approve(safe, reviewer="web-ui", note=note)
+            else:
+                krb.reject(safe, reviewer="web-ui", reason=note or "web-ui reject")
+            self._json({"ok": True, "id": safe, "action": action})
+        except Exception as exc:
+            logger.exception("staging action %s %s", action, safe)
+            self._json({"error": str(exc)}, 500)
+
+
+# ─────────────────────────────────────────────
+# Shared helpers (used by both _Handler and create_app)
+# ─────────────────────────────────────────────
+
+def _validate_node_patch(body: dict) -> tuple[list[str], list, str | None]:
+    """Validate PATCH body. Returns (sql_columns, values, error_or_None).
+
+    Note: 'kind' in the API maps to the 'type' column in the nodes table
+    (brain_db uses 'type'; web UI aliases it to 'kind' for display).
+    """
+    unknown = set(body) - ALLOWED_EDIT_FIELDS
+    if unknown:
+        return [], [], f"不允許的欄位：{', '.join(sorted(unknown))}"
+    cols, vals = [], []
+    if "title" in body:
+        t = str(body["title"]).strip()
+        if not t:
+            return [], [], "title 不能為空"
+        cols.append("title"); vals.append(t[:500])
+    if "content" in body:
+        cols.append("content"); vals.append(str(body["content"])[:10000])
+    if "confidence" in body:
+        try:
+            c = float(body["confidence"])
+        except (TypeError, ValueError):
+            return [], [], "confidence 必須是數字"
+        if not (0.0 <= c <= 1.0):
+            return [], [], "confidence 必須在 0.0~1.0 之間"
+        cols.append("confidence"); vals.append(round(c, 4))
+    if "kind" in body:
+        k = str(body["kind"])
+        if k not in VALID_KINDS:
+            return [], [], f"kind 必須是：{', '.join(sorted(VALID_KINDS))}"
+        # nodes table uses 'type' column; 'kind' is an alias used in SELECT
+        cols.append("type"); vals.append(k)
+    return cols, vals, None
+
+
+def _sync_fts(conn: sqlite3.Connection, node_id: str) -> None:
+    """Re-sync FTS5 index for a node after update (standalone FTS5 mode)."""
+    try:
+        conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
+        row = conn.execute(
+            "SELECT id, title, content, tags FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if row:
+            conn.execute(
+                "INSERT INTO nodes_fts(id, title, content, tags) VALUES (?,?,?,?)",
+                (row["id"], row["title"] or "", row["content"] or "", row["tags"] or ""),
+            )
+    except Exception:
+        pass  # FTS5 sync is best-effort; main nodes table is authoritative
+
+
+def _load_staging(workdir: "Path") -> list[dict]:
+    """Read pending entries from review_board.db (returns [] if not found)."""
+    rb_path = workdir / ".brain" / "review_board.db"
+    if not rb_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(str(rb_path), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, kind, title, content, confidence, source, submitter, "
+            "created_at, review_note FROM staged_nodes WHERE status='pending' "
+            "ORDER BY created_at DESC LIMIT 100"
+        ).fetchall()
+        conn.close()
+        return [
+            {
+                "id":         r["id"],
+                "kind":       r["kind"] or "Note",
+                "title":      r["title"] or "",
+                "content":    (r["content"] or "")[:300],
+                "confidence": float(r["confidence"] if r["confidence"] is not None else 0.7),
+                "source":     r["source"] or "manual",
+                "submitter":  r["submitter"] or "",
+                "created_at": r["created_at"] or "",
+                "color":      KIND_COLOR.get(r["kind"] or "Note", "#94a3b8"),
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
+
 
 # ─────────────────────────────────────────────
 # HTML generation (pure JS, no D3 CDN)
@@ -619,6 +818,46 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 .l-text{{font-size:12px;color:var(--text2)}}
 #empty-state .es-icon{{font-size:36px;opacity:.35}}
 #empty-state .es-text{{font-size:13px;color:var(--text2);line-height:1.6}}
+
+/* ── Inline edit form ── */
+#edit-form{{display:none;background:var(--bg3);border:1px solid var(--border2);
+  border-radius:var(--radius-sm);padding:10px;margin-bottom:8px}}
+#edit-form.visible{{display:block}}
+.ef-label{{font-size:10px;color:var(--text3);margin-bottom:3px;display:block;
+  text-transform:uppercase;letter-spacing:.05em}}
+.ef-input,.ef-textarea,.ef-select{{width:100%;background:var(--bg2);
+  border:1px solid var(--border);border-radius:4px;color:var(--text);
+  padding:5px 7px;font-size:12px;outline:none;
+  transition:border-color var(--trans);margin-bottom:7px}}
+.ef-input:focus,.ef-textarea:focus,.ef-select:focus{{border-color:var(--accent2)}}
+.ef-textarea{{min-height:72px;resize:vertical;font-family:inherit;line-height:1.5}}
+.ef-select{{cursor:pointer}}
+.ef-row{{display:flex;gap:5px;margin-top:4px}}
+.ef-btn{{flex:1;padding:5px;border-radius:4px;font-size:11px;cursor:pointer;
+  border:1px solid var(--border);transition:all var(--trans)}}
+.ef-btn.save{{background:rgba(59,130,246,0.15);border-color:#3b82f6;color:#60a5fa}}
+.ef-btn.save:hover{{background:rgba(59,130,246,0.3)}}
+.ef-btn.cancel{{background:var(--bg2);color:var(--text2)}}
+.ef-btn.cancel:hover{{border-color:var(--accent);color:var(--accent)}}
+
+/* ── Staging panel ── */
+#staging-panel{{display:none}}
+#staging-panel.visible{{display:block}}
+.stg-item{{padding:7px 0;border-bottom:1px solid var(--border)}}
+.stg-title{{font-size:11px;color:var(--text);margin-bottom:3px;
+  font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.stg-meta{{font-size:10px;color:var(--text3);margin-bottom:5px}}
+.stg-actions{{display:flex;gap:4px}}
+.stg-btn{{flex:1;font-size:10px;padding:3px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:var(--bg2);
+  color:var(--text2);transition:all var(--trans)}}
+.stg-btn.approve{{border-color:#22c55e;color:#22c55e}}
+.stg-btn.approve:hover{{background:rgba(34,197,94,0.15)}}
+.stg-btn.reject{{border-color:#f87171;color:#f87171}}
+.stg-btn.reject:hover{{background:rgba(248,113,113,0.15)}}
+#stg-badge{{display:inline-block;font-size:10px;font-weight:700;
+  background:#f87171;color:#fff;border-radius:8px;
+  padding:0 5px;margin-left:4px;vertical-align:middle}}
 </style>
 </head>
 <body>
@@ -699,9 +938,36 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
       <div id="node-meta"></div>
       <div class="node-actions">
         <button id="pin-btn" class="node-btn" onclick="togglePin()">📌 釘選</button>
+        <button class="node-btn" onclick="startEdit()">✏ 編輯</button>
         <button class="node-btn" onclick="copyContent()">⎘ 複製</button>
+        <button class="node-btn" style="color:var(--red);border-color:var(--red)" onclick="deleteNode()">✕</button>
+      </div>
+      <!-- Inline edit form -->
+      <div id="edit-form">
+        <label class="ef-label">標題</label>
+        <input id="ef-title" class="ef-input" type="text" maxlength="500">
+        <label class="ef-label">類型</label>
+        <select id="ef-kind" class="ef-select">
+          <option>Pitfall</option><option>Decision</option><option>Rule</option>
+          <option>ADR</option><option>Component</option><option>Architecture</option><option>Note</option>
+        </select>
+        <label class="ef-label">信心 (<span id="ef-conf-val">0.7</span>)</label>
+        <input id="ef-confidence" class="ef-input" type="range" min="0" max="1" step="0.01" value="0.7"
+          oninput="document.getElementById('ef-conf-val').textContent=parseFloat(this.value).toFixed(2)">
+        <label class="ef-label">內容</label>
+        <textarea id="ef-content" class="ef-textarea" maxlength="10000"></textarea>
+        <div class="ef-row">
+          <button class="ef-btn save" onclick="saveEdit()">儲存</button>
+          <button class="ef-btn cancel" onclick="cancelEdit()">取消</button>
+        </div>
       </div>
       <div id="neighbor-list"></div>
+    </div>
+
+    <!-- KRB Staging panel -->
+    <div class="s-sec" id="staging-panel">
+      <div class="s-lbl">待審知識 <span id="stg-badge"></span></div>
+      <div id="stg-list"></div>
     </div>
   </div>
 
@@ -1349,10 +1615,124 @@ async function refreshAll() {{
   await Promise.all([loadStats(), loadGraph()]);
 }}
 
+// ── Inline edit ──────────────────────────────
+function startEdit() {{
+  if (!currentNodeData) return;
+  const nd = currentNodeData;
+  document.getElementById('ef-title').value = nd.title || '';
+  document.getElementById('ef-kind').value = nd.kind || 'Note';
+  const ci = document.getElementById('ef-confidence');
+  ci.value = nd.confidence || 0.7;
+  document.getElementById('ef-conf-val').textContent = parseFloat(ci.value).toFixed(2);
+  fetch('/api/node/' + nd.id).then(r => r.json()).then(n => {{
+    document.getElementById('ef-content').value = n.content || '';
+  }});
+  document.getElementById('edit-form').classList.add('visible');
+}}
+
+function cancelEdit() {{
+  document.getElementById('edit-form').classList.remove('visible');
+}}
+
+async function saveEdit() {{
+  if (!currentNodeData) return;
+  const nd = currentNodeData;
+  const body = {{
+    title:      document.getElementById('ef-title').value.trim(),
+    kind:       document.getElementById('ef-kind').value,
+    confidence: parseFloat(document.getElementById('ef-confidence').value),
+    content:    document.getElementById('ef-content').value,
+  }};
+  const res = await fetch('/api/node/' + nd.id, {{
+    method: 'PATCH',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify(body),
+  }});
+  if (!res.ok) {{
+    const err = await res.json().catch(()=>({{}}));
+    alert('儲存失敗：' + (err.error || res.status));
+    return;
+  }}
+  Object.assign(nd, body);
+  nd.color = KIND_COLOR[nd.kind] || '#94a3b8';
+  if (nd._circ) nd._circ.setAttribute('fill', nd.color);
+  if (nd._lbl)  nd._lbl.textContent = nd.title.length > 12 ? nd.title.slice(0,12)+'…' : nd.title;
+  document.getElementById('edit-form').classList.remove('visible');
+  showNodePanel(nd);
+  loadStats();
+}}
+
+async function deleteNode() {{
+  if (!currentNodeData) return;
+  const nd = currentNodeData;
+  if (!confirm('確定刪除「' + nd.title + '」？此操作無法復原。')) return;
+  const res = await fetch('/api/node/' + nd.id, {{ method: 'DELETE' }});
+  if (!res.ok) {{
+    const err = await res.json().catch(()=>({{}}));
+    alert('刪除失敗：' + (err.error || res.status));
+    return;
+  }}
+  if (nd._g)   nd._g.remove();
+  if (nd._lbl) nd._lbl.remove();
+  allLinks.filter(l => l._src === nd || l._tgt === nd).forEach(l => {{ if (l._el) l._el.remove(); }});
+  allLinks = allLinks.filter(l => l._src !== nd && l._tgt !== nd);
+  allNodes = allNodes.filter(n => n !== nd);
+  delete nodeMap[nd.id];
+  clearSelection();
+  loadStats();
+}}
+
+// ── KRB Staging ──────────────────────────────
+let stagingData = [];
+
+async function loadStaging() {{
+  let data;
+  try {{ data = await fetch('/api/staging').then(r => r.json()); }}
+  catch(e) {{ return; }}
+  stagingData = data.staging || [];
+  const panel = document.getElementById('staging-panel');
+  const badge = document.getElementById('stg-badge');
+  const list  = document.getElementById('stg-list');
+  if (!stagingData.length) {{ panel.classList.remove('visible'); return; }}
+  badge.textContent = stagingData.length;
+  panel.classList.add('visible');
+  list.innerHTML = stagingData.map(s => `
+    <div class="stg-item" id="stg-${{s.id}}">
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
+        <div style="width:6px;height:6px;border-radius:50%;background:${{s.color}};flex-shrink:0"></div>
+        <span class="stg-title" title="${{s.title}}">${{s.title}}</span>
+      </div>
+      <div class="stg-meta">${{s.kind}} · ${{s.source}} · ${{s.created_at.slice(0,10)}}</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:5px;line-height:1.4">${{(s.content||'').slice(0,120)}}${{(s.content||'').length>120?'…':''}}</div>
+      <div class="stg-actions">
+        <button class="stg-btn approve" onclick="stagingAction('${{s.id}}','approve')">✓ 核准</button>
+        <button class="stg-btn reject"  onclick="stagingAction('${{s.id}}','reject')">✕ 拒絕</button>
+      </div>
+    </div>`).join('');
+}}
+
+async function stagingAction(sid, action) {{
+  const res = await fetch('/api/staging/' + sid + '/' + action, {{
+    method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: '{{}}',
+  }});
+  if (!res.ok) {{
+    const err = await res.json().catch(()=>({{}}));
+    alert(action + ' 失敗：' + (err.error || res.status));
+    return;
+  }}
+  const el = document.getElementById('stg-' + sid);
+  if (el) el.remove();
+  stagingData = stagingData.filter(s => s.id !== sid);
+  document.getElementById('stg-badge').textContent = stagingData.length;
+  if (!stagingData.length) document.getElementById('staging-panel').classList.remove('visible');
+  if (action === 'approve') refreshAll();
+}}
+
 // ── Boot ─────────────────────────────────────────
 _restoreHash();   // UX-01: apply filter state from URL hash before first load
 loadStats();
 loadGraph();
+loadStaging();
 </script>
 </body>
 </html>"""
@@ -1628,6 +2008,88 @@ def create_app(workdir, **_):
         finally:
             conn.close()
         return jsonify({"ok": True, "id": safe, "pinned": pinned})
+
+    @app.route("/api/node/<node_id>", methods=["PATCH"])
+    def api_patch_node(node_id):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        body = request.get_json(silent=True) or {}
+        cols, vals, err = _validate_node_patch(body)
+        if err:
+            return jsonify({"error": err}), 400
+        if not cols:
+            return jsonify({"error": "沒有可更新的欄位"}), 400
+        conn = _get_db()
+        try:
+            set_clause = ", ".join(f"{c}=?" for c in cols)
+            cur = conn.execute(
+                f"UPDATE nodes SET {set_clause} WHERE id=?", vals + [safe]
+            )
+            if cur.rowcount == 0:
+                conn.commit()
+                return jsonify({"error": "節點不存在"}), 404
+            _sync_fts(conn, safe)
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "id": safe})
+
+    @app.route("/api/node/<node_id>", methods=["DELETE"])
+    def api_delete_node(node_id):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
+        conn = _get_db()
+        try:
+            cur = conn.execute("DELETE FROM nodes WHERE id=?", (safe,))
+            if cur.rowcount == 0:
+                conn.commit()
+                return jsonify({"error": "節點不存在"}), 404
+            try:
+                conn.execute("DELETE FROM nodes_fts WHERE id=?", (safe,))
+            except Exception:
+                pass
+            conn.execute(
+                "DELETE FROM edges WHERE source_id=? OR target_id=?", (safe, safe)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "id": safe})
+
+    @app.route("/api/staging")
+    def api_staging():
+        items = _load_staging(wd)
+        return jsonify({"staging": items, "total": len(items)})
+
+    @app.route("/api/staging/<staging_id>/approve", methods=["POST"])
+    def api_staging_approve(staging_id):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", staging_id)[:64]
+        body = request.get_json(silent=True) or {}
+        note = str(body.get("note", ""))[:500]
+        try:
+            from project_brain.engines.review_board import KnowledgeReviewBoard
+            from project_brain.graph import KnowledgeGraph
+            bd = wd / ".brain"
+            g = KnowledgeGraph(bd)
+            krb = KnowledgeReviewBoard(bd, g)
+            krb.approve(safe, reviewer="web-ui", note=note)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+        return jsonify({"ok": True, "id": safe, "action": "approve"})
+
+    @app.route("/api/staging/<staging_id>/reject", methods=["POST"])
+    def api_staging_reject(staging_id):
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", staging_id)[:64]
+        body = request.get_json(silent=True) or {}
+        note = str(body.get("note", ""))[:500]
+        try:
+            from project_brain.engines.review_board import KnowledgeReviewBoard
+            from project_brain.graph import KnowledgeGraph
+            bd = wd / ".brain"
+            g = KnowledgeGraph(bd)
+            krb = KnowledgeReviewBoard(bd, g)
+            krb.reject(safe, reviewer="web-ui", reason=note or "web-ui reject")
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+        return jsonify({"ok": True, "id": safe, "action": "reject"})
 
     return app
 

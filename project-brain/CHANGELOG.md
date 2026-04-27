@@ -4,6 +4,27 @@
 
 ---
 
+## v0.41.0（2026-04-27）— D-02 WebUI 行內編輯 + KRB Staging 管理
+
+### D-02 ARCH-05：WebUI 完整化（行內編輯 + KRB Staging API）
+
+**新增 API 端點**：
+- `PATCH /api/node/<id>` — 更新節點 title/content/confidence/kind（白名單驗證）
+- `DELETE /api/node/<id>` — 刪除節點 + 同步清除 FTS5 index + 關聯 edges
+- `GET /api/staging` — 列出 KRB pending 待審節點（讀取 review_board.db）
+- `POST /api/staging/<id>/approve` — 核准 staging 節點（透過 KnowledgeReviewBoard）
+- `POST /api/staging/<id>/reject` — 拒絕 staging 節點
+
+**前端新增**：
+- 節點 panel 新增「✏ 編輯」「✕ 刪除」按鈕
+- 行內編輯表單（title / kind / confidence slider / content textarea）
+- KRB Staging Panel（sidebar 最底部，有待審節點時自動顯示）
+- 儲存後即時更新圖譜視覺化
+
+**測試**（`tests/unit/test_web_ui_edit.py`，33 tests）— 零 regression（1400 passed）
+
+---
+
 ## v0.35.0（2026-04-26）— 可觀測性與維護性 Phase B
 
 測試基準：**919 unit passed**（v0.34 baseline 684 → v0.40.0 919；零 regression）
