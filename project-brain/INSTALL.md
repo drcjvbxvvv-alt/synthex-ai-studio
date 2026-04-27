@@ -231,3 +231,94 @@ brain ask "JWT 設定"    # 使用 auth-service/.brain/
 ```
 
 每個專案擁有獨立記憶庫，互不干擾。
+
+---
+
+## GPU 環境安裝（D-01 LoRA 蒸餾，待實作）
+
+> **狀態**：D-01 待實作 — 需 GPU ≥ 16GB VRAM
+> 此章節為預先規劃的安裝指南，功能尚未發布。
+
+### 硬體需求
+
+| 組件 | 最低配置 | 推薦配置 |
+|------|---------|---------|
+| GPU | NVIDIA 16GB（RTX 3080 Ti / A10）| NVIDIA 24GB（RTX 3090 / A100）|
+| VRAM | 16 GB | 24 GB+ |
+| RAM | 32 GB | 64 GB |
+| 儲存 | 100 GB SSD | 500 GB NVMe |
+
+### Step 1：安裝 CUDA + PyTorch
+
+```bash
+# CUDA 12.1 + PyTorch 2.x（NVIDIA GPU）
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# 驗證
+python -c "import torch; print(torch.cuda.is_available(), torch.version.cuda)"
+# 預期輸出：True  12.1
+```
+
+### Step 2：安裝 LoRA 微調依賴
+
+```bash
+pip install "project-brain[gpu]"
+# 包含：transformers, peft, accelerate, bitsandbytes, datasets
+```
+
+或手動安裝：
+
+```bash
+pip install \
+  transformers>=4.40.0 \
+  peft>=0.10.0 \
+  accelerate>=0.28.0 \
+  bitsandbytes>=0.43.0 \
+  datasets>=2.18.0
+```
+
+### Step 3：安裝微調框架（二選一）
+
+**Axolotl（推薦，支援 QLoRA / LoRA）**：
+
+```bash
+pip install axolotl[flash-attn,deepspeed]
+```
+
+**Unsloth（速度更快，節省 VRAM）**：
+
+```bash
+pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+```
+
+### Step 4：生成訓練資料集（腳本待實作）
+
+```bash
+# D-01 待實作：從 L3 知識庫生成 Q&A 訓練集
+brain distill --output dataset.jsonl --format alpaca
+
+# 預期輸出：dataset.jsonl（每行一個 Q&A pair）
+# {"instruction": "JWT 簽名應用什麼算法？", "output": "應使用 RS256 非對稱加密..."}
+```
+
+### Step 5：執行 LoRA 微調
+
+```bash
+# Axolotl 方式
+axolotl train config/lora_config.yml
+
+# 預計訓練時間：
+#   16GB GPU + QLoRA 4-bit：~2h（7B 模型）
+#   24GB GPU + LoRA：~4h（13B 模型）
+```
+
+### Google Colab 替代方案（免費 T4 GPU）
+
+若無本地 GPU，可使用 Google Colab T4（15GB VRAM）：
+
+1. 開啟 [Google Colab](https://colab.research.google.com/)
+2. 執行環境 → 變更執行環境類型 → **T4 GPU**
+3. 安裝依賴：`!pip install "project-brain[gpu]" unsloth`
+4. 掛載 Google Drive 儲存模型：`from google.colab import drive; drive.mount('/content/drive')`
+
+> **注意**：Colab 免費版有使用時間限制，建議分段訓練並定期儲存 checkpoint。

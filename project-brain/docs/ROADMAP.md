@@ -672,17 +672,18 @@ class TestKRBManagement:
 
 ---
 
-### D-05 文件完整化
+### D-05 文件完整化 **[DONE v0.44.0]**
 
 **優先**：P4
 
-| 文件 | 目標狀態 | 工作量 |
-|------|---------|--------|
-| `COMMANDS.md` | 更新至 v1.0（含 `brain health`、`brain pipeline-stats`、`brain validate`） | 2h |
-| `INSTALL.md` | 加入 GPU 環境（LoRA 蒸餾）安裝指引 | 2h |
-| `tests/TEST_PLAN.md` | 更新至 v1.0 測試套件全覽（1367 tests 分類） | 3h |
-| `docs/EXPERIMENT_REPORT.md` | 填入 REV-01/02 真實實驗數據（E2E 驗證後） | 4h |
-| `README.md` | 加入架構圖、核心功能 GIF、快速開始指引 | 4h |
+| 文件 | 狀態 |
+|------|------|
+| `COMMANDS.md` | ✅ v1.0 — 加入 `brain health` / `brain validate` / `brain pipeline-stats` 詳細說明 |
+| `INSTALL.md` | ✅ 加入 GPU/LoRA 環境（CUDA + Axolotl / Unsloth + Colab 替代） |
+| `tests/TEST_PLAN.md` | ✅ v1.0 — 更新至 1029+ tests 全覽，含 Phase B/C/D |
+| `docs/EXPERIMENT_REPORT.md` | ✅ 填入 D-04 真實效能數據；REV-01/02 框架留待真實舊專案 |
+| `README.md` | ✅ 新建 — 三層架構、快速開始、效能指標、文件導覽 |
+| `tests/unit/test_docs_accuracy.py` | ✅ 51 tests — 驗證文件與程式碼一致性 |
 
 ---
 

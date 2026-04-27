@@ -1,5 +1,6 @@
 # Project Brain — 命令參考
 
+> 版本：v1.0（v0.43.0）
 > 已安裝全局指令：`brain <command>`
 > `brain` 自動從當前目錄往上找 `.brain/`，無需 `--workdir`
 
@@ -10,28 +11,27 @@
 | 狀態 | 命令 | 說明 | 例子 |
 |------|------|------|------|
 | 🟢 | `brain setup` | 一鍵初始化（建 db + git hook + MCP）| `brain setup` |
+| 🟢 | `brain init` | 低階初始化 | （一般用 setup 即可）|
 | 🟢 | `brain add` | 加入知識 | `brain add "JWT 必須用 RS256"` |
 | 🟢 | `brain ask` | 查詢知識 | `brain ask "JWT 設定"` |
+| 🟢 | `brain context` | 查詢（技術名，同 ask）| `brain context "JWT"` |
+| 🟢 | `brain search` | 純語意搜尋（不組裝 Context）| `brain search "JWT 設定"` |
 | 🟢 | `brain status` | 記憶庫狀態（含飛輪健康度）| `brain status` |
+| 🟢 | `brain health` | 一鍵診斷：DB / schema / signal queue | `brain health --json` |
+| 🟢 | `brain validate` | 三階段知識驗證（Rule + Code + LLM）| `brain validate --ci` |
+| 🟢 | `brain pipeline-stats` | Pipeline 運行統計 | `brain pipeline-stats --json` |
 | 🟢 | `brain sync` | 從最新 commit 自動學習 | `brain sync --quiet` |
 | 🟢 | `brain scan` | 掃描 git 歷史提取知識 | `brain scan --all` |
 | 🟢 | `brain review` | 審查 KRB 暫存區知識 | `brain review list` |
+| 🟢 | `brain webui` | D3.js 瀏覽器視覺化（含行內編輯）| `brain webui --port 7890` |
 | 🟢 | `brain serve` | REST API / MCP Server | `brain serve --mcp` |
-| 🟡 | `brain webui` | D3.js 瀏覽器視覺化 | `brain webui --port 7890` |
-| 🟢 | `brain context` | 查詢（技術名，同 ask）| `brain context "JWT"` |
-| 🟡 | `brain index` | 建立向量索引（需 sentence-transformers）| `brain index` |
+| 🟢 | `brain doctor` | 環境診斷與自動修復 | `brain doctor --fix` |
+| 🟢 | `brain config` | 顯示並驗證所有設定來源 | `brain config` |
 | 🟢 | `brain optimize` | VACUUM + ANALYZE + FTS5 rebuild | `brain optimize` |
 | 🟢 | `brain clear` | 清除 session 工作記憶 | `brain clear` |
-| 🟢 | `brain export` | 匯出知識庫 | `brain export --format neo4j` |
+| 🟢 | `brain export` | 匯出知識庫 | `brain export --format json` |
 | 🟢 | `brain import` | 匯入知識庫 | `brain import data.json` |
-| 🟢 | `brain analytics` | 使用率分析 | `brain analytics --export csv` |
-| 🟢 | `brain deprecate` | 廢棄知識節點 | `brain deprecate <id>` |
-| 🟢 | `brain lifecycle` | 節點生命週期 | `brain lifecycle <id>` |
-| 🟡 | `brain counterfactual` | 反事實影響分析 | `brain counterfactual "換掉 PostgreSQL"` |
-| 🟢 | `brain health-report` | 健康報告 | `brain health-report` |
-| 🟢 | `brain doctor` | 環境診斷與修復 | `brain doctor --fix` |
-| 🟢 | `brain init` | 低階初始化 | （一般用 setup 即可）|
-| 🟡 | `brain meta` | 後設知識管理 | `brain meta --list` |
+| 🟡 | `brain index` | 建立向量索引（需 sentence-transformers）| `brain index` |
 
 ---
 
@@ -52,6 +52,135 @@ brain add "JWT 規則" \
 **kind 類型**：`Note`（預設）/ `Rule` / `Pitfall` / `Decision` / `ADR` / `Component`
 
 **scope 範例**：`auth` / `payment_service` / `user_profile` / `global`（預設）
+
+---
+
+## brain health 詳細說明
+
+```bash
+# 互動式健康報告（彩色輸出）
+brain health
+
+# JSON 格式輸出（供 CI 或腳本解析）
+brain health --json
+
+# 指定專案目錄
+brain health --workdir /path/to/project
+```
+
+**JSON 輸出結構**（`d["summary"]["overall"]`，非頂層 `overall`）：
+
+```json
+{
+  "version": "0.43.0",
+  "brain_dir": "/your/project/.brain",
+  "checks": [
+    {"level": "ok",   "label": "brain.db",        "message": "20 nodes, 8 edges"},
+    {"level": "ok",   "label": "schema",           "message": "v26, up to date"},
+    {"level": "warn", "label": "signal_queue",     "message": "3 pending signals"},
+    {"level": "ok",   "label": "krb_staging",      "message": "0 pending staged"}
+  ],
+  "summary": {
+    "overall": "warn",
+    "ok": 3,
+    "warn": 1,
+    "error": 0
+  }
+}
+```
+
+**CI 整合**（`.github/workflows/ci.yml`）：
+
+```bash
+brain health --json | python - <<'PYEOF'
+import json, sys
+d = json.load(sys.stdin)
+overall = d["summary"]["overall"]   # 注意：不是 d["overall"]
+sys.exit(0 if overall in ("ok", "warn") else 1)
+PYEOF
+```
+
+---
+
+## brain validate 詳細說明
+
+```bash
+# 互動式三階段驗證（Rule + Code + LLM）
+brain validate
+
+# CI 模式（跳過 LLM，只跑 Rule + Code，輸出 JSON，exit 1 if failed）
+brain validate --ci
+
+# 輸出 JSON 報告到檔案
+brain validate --ci --output /tmp/validate-report.json
+
+# 限制 LLM API 呼叫數
+brain validate --max-api-calls 5
+```
+
+**三個驗證階段**：
+
+| 階段 | 需要 LLM | 說明 |
+|------|---------|------|
+| Stage 1: Rule | 否 | 結構規則（信心範圍、必要欄位、標籤格式） |
+| Stage 2: Code | 否 | code 比對（Pitfall 節點不能沒有 content）|
+| Stage 3: LLM  | 是 | 語意一致性檢查（CI 模式略過）|
+
+**CI 整合**：
+
+```bash
+brain validate --ci --output /tmp/report.json
+python -c "
+import json, sys
+d = json.load(open('/tmp/report.json'))
+sys.exit(0 if d['passed'] else 1)
+"
+```
+
+---
+
+## brain pipeline-stats 詳細說明
+
+```bash
+# 顯示過去 7 天 Pipeline 統計
+brain pipeline-stats
+
+# 指定時間窗口（天）
+brain pipeline-stats --days 30
+
+# JSON 格式（供 dashboard 解析）
+brain pipeline-stats --json
+
+# Prometheus text format（供 Prometheus scrape）
+brain pipeline-stats --prometheus
+```
+
+**輸出範例**：
+
+```
+Pipeline Stats（過去 7 天）
+────────────────────────────────────────────
+  訊號隊列
+    pending:    2    processing: 0    done: 47    failed: 1
+    新增訊號:   50   |  成功處理: 47  |  失敗率: 2.1%
+
+  知識提取
+    add:        31   skip: 16   failed: 1
+    API 呼叫:   31   avg confidence: 0.74
+
+  訊號種類分布
+    git_commit:     41    task_complete:  7    manual: 2
+```
+
+**Prometheus 格式**（`--prometheus`）：
+
+```
+# HELP brain_signals_total Total signals by status
+brain_signals_total{status="done"} 47
+brain_signals_total{status="failed"} 1
+brain_pipeline_add_total 31
+brain_pipeline_skip_total 16
+```
 
 ---
 
@@ -243,12 +372,19 @@ brain counterfactual "如果我們用 NoSQL 代替 PostgreSQL"
 
 ---
 
-## 已移除命令
+## 已移除 / 隱藏命令
 
-`learn`, `validate`, `export-rules`, `daemon` 等已在 v10.x 清理。
+以下命令存在但標記為 `==SUPPRESS==`（進階 / 實驗性，不在主要 help 中顯示）：
 
-`distill` — 已移除。此命令產生的是 **JSONL 訓練設定檔**，並不自動執行模型訓練。
-實際微調需自行搭配 [Axolotl](https://github.com/OpenAccess-AI-Collective/axolotl) 或 [Unsloth](https://github.com/unslothai/unsloth)。
+`analytics`, `backfill-git`, `deprecated`, `deprecate`, `fed`, `history`,
+`index`, `lifecycle`, `link-issue`, `meta`, `migrate`, `report`, `restore`,
+`rollback`, `session`, `timeline`
+
+舊版命令（已完全移除）：
+- `learn`, `export-rules`, `daemon` — 已在 v0.10.x 清理
+
+`distill` — 待實作（D-01，需 GPU ≥16GB）。計劃：從 L3 知識庫生成 Q&A 訓練集，
+搭配 [Axolotl](https://github.com/OpenAccess-AI-Collective/axolotl) 做 LoRA 微調。
 
 ---
 

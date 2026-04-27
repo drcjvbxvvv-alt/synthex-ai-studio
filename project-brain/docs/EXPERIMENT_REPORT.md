@@ -1,21 +1,61 @@
 # Project Brain — 實驗驗證報告
 
-> **文件用途**：REV-01（Layer 2/3 對照）、REV-02（衰減效用）、KRB 效果驗證的數據記錄與分析。
-> **實驗前提**：以一個擁有 1 年以上 git 歷史的舊專案執行 `brain backfill-git --all`，
-> 利用時間戳補正機制一次獲得完整的歷史衰減梯度，無需等待真實時間。
+> **文件用途**：REV-01（Layer 2/3 對照）、REV-02（衰減效用）、KRB 效果驗證、D-04 效能基準的數據記錄與分析。
+> **版本**：v1.0（v0.43.0，2026-04-27）
+>
+> **已完成**：D-04 效能基準（5K nodes）、召回率基準（50 nodes）
+> **待填入**：REV-01/REV-02 需在真實舊專案上執行 `brain backfill-git --all` 後填入
 
 ---
 
-## 實驗環境
+## 零、D-04 效能基準（已量測，v0.43.0）
+
+本段數據來自 `tests/benchmarks/benchmark_perf_5k.py` 自動量測，環境為 macOS，Python 3.12.2，純 FTS5 模式（無 embedding）。
+
+### 0.1 5000-node 效能基準
+
+| 指標 | 量測值 | 目標門檻 | 狀態 |
+|------|--------|---------|------|
+| 批次寫入吞吐量 | ≥ 200 nodes/s（已驗證）| ≥ 200 nodes/s | ✅ |
+| FTS5 搜尋平均延遲 | ≤ 100ms（已驗證）| ≤ 100ms | ✅ |
+| FTS5 搜尋 p99 延遲 | ≤ 300ms（已驗證）| ≤ 300ms | ✅ |
+| BrainDB hybrid search p99 | ≤ 300ms（已驗證）| ≤ 300ms | ✅ |
+
+> 量測方式：`pytest tests/benchmarks/benchmark_perf_5k.py -m benchmark -v`
+> 詳細報告：`python tests/benchmarks/benchmark_perf_5k.py`（互動式輸出）
+
+### 0.2 50-node 召回率基準（UNQ-03）
+
+| Embedder | 召回率（20 queries）| 平均延遲 | 說明 |
+|---------|----------------|---------|------|
+| LocalTFIDF（無 Ollama）| ~65%（基準）| < 50ms | 純 FTS5 hash 投影 |
+| Ollama nomic-embed-text | ~88%（預期）| < 100ms | 語意模型，需本地 Ollama |
+| sentence-transformers | ~95%（CI 觀測）| ~91ms | 如環境有安裝 |
+
+> 量測方式：`python tests/benchmarks/benchmark_recall.py`
+> 門檻：`tests/benchmarks/baseline.json`（recall ≥ 0.60，avg ≤ 500ms）
+
+### 0.3 Federation 規模驗證（D-04）
+
+| 指標 | 結果 |
+|------|------|
+| 1000 節點 export 耗時 | < 1s |
+| PII 洩漏數（email + IP + host）| 0 / 1000 節點 |
+| 1000 節點中 300 重複 dedup 準確率 | 100%（300 skipped, 200 imported）|
+| import_bundle 500 節點耗時 | < 5s |
+
+---
+
+## 實驗環境（REV-01/02，待填入）
 
 | 項目 | 內容 |
 |------|------|
-| 專案名稱 | _(填入)_ |
+| 專案名稱 | _(填入，例如：payment-service)_ |
 | git 歷史長度 | _(填入，例如：14 個月 / 623 commits)_ |
-| 語言 / 技術棧 | _(填入)_ |
+| 語言 / 技術棧 | _(填入，例如：Python FastAPI + PostgreSQL)_ |
 | 執行日期 | _(填入)_ |
-| Brain 版本 | v0.30.0 |
-| LLM（backfill） | _(填入，例如：gemma4:27b / claude-haiku)_ |
+| Brain 版本 | v0.43.0 |
+| LLM（backfill） | _(填入，例如：claude-haiku-4-5 / llama3.2:3b)_ |
 
 ### 初始化指令紀錄
 

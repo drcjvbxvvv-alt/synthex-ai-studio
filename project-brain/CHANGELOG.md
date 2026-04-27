@@ -4,6 +4,49 @@
 
 ---
 
+## v0.44.0（2026-04-27）— D-05 文件完整化
+
+### D-05：文件完整化 v1.0
+
+**更新 `COMMANDS.md`**（v1.0）：
+- 命令狀態表加入 `brain health`、`brain validate`、`brain pipeline-stats`、`brain search`、`brain config`
+- 新增 `brain health` 詳細說明：JSON 輸出結構、CI 整合腳本（正確使用 `d["summary"]["overall"]`）
+- 新增 `brain validate` 詳細說明：三個驗證階段（Rule / Code / LLM）、CI 整合
+- 新增 `brain pipeline-stats` 詳細說明：各選項、輸出格式、Prometheus text format
+- 修正「已移除命令」段落（`distill` 為待實作，非已移除）
+
+**更新 `INSTALL.md`**（加入 GPU/LoRA 環境）：
+- 新增「GPU 環境安裝（D-01 LoRA 蒸餾）」章節
+- CUDA + PyTorch 安裝、Axolotl / Unsloth 框架說明
+- Google Colab T4 GPU 替代方案（免費 15GB VRAM）
+- 硬體需求表（最低 / 推薦配置）
+
+**更新 `tests/TEST_PLAN.md`**（v1.0）：
+- 從 v0.6.0（2026-04-04）升至 v1.0（v0.43.0，2026-04-27）
+- 完整測試套件全覽：unit（1016）、e2e（14）、integration（67）、benchmark（9）
+- 新增 Phase B/C/D 測試章節、Federation 測試、Pipeline 測試
+- 更新品質門檻總表（含 D-03~D-04 實際數據）
+
+**更新 `docs/EXPERIMENT_REPORT.md`**（填入 D-04 真實數據）：
+- 新增「零、D-04 效能基準」段落：5K nodes 效能、召回率基準、Federation 規模驗證
+- 保留 REV-01/02 框架（待真實舊專案執行後填入）
+
+**新建 `README.md`**（快速開始 + 架構說明）：
+- 三層記憶架構（L1a / L2 / L3）說明
+- 知識節點類型表（Rule / Decision / Pitfall / ADR / Note）
+- 快速開始指引（install → setup → add → ask）
+- 核心功能：Auto-Pipeline、KRB 審查、知識衰減、CI 整合、WebUI、Federation
+- 效能指標表、文件導覽
+
+**新增 `tests/unit/test_docs_accuracy.py`**（51 tests，全部通過）：
+- `TestCommandsDocAccuracy`（14）：COMMANDS.md 命令存在於 CLI、JSON key 正確
+- `TestVersionConsistency`（5）：版本號碼跨文件一致性
+- `TestInstallDocStructure`（10）：INSTALL.md 必要章節（含 GPU/LoRA/Colab）
+- `TestTestPlanStructure`（9）：TEST_PLAN.md v1.0 結構驗證
+- `TestREADMEStructure`（13）：README.md 快速開始、架構、命令、效能數字
+
+---
+
 ## v0.43.0（2026-04-27）— D-04 生產驗證
 
 ### D-04：生產驗證（Federation × E2E Pipeline × 5K 效能基準）
