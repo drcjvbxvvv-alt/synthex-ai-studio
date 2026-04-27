@@ -868,7 +868,7 @@ class TestSSETransport:
 
 ---
 
-### E-02 Central Brain 模式（多用戶寫入安全）
+### E-02 Central Brain 模式（多用戶寫入安全）[DONE v0.46.0]
 
 **ID**：E-02
 **優先**：P1（與 E-01 並行開發）

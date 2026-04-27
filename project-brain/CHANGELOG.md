@@ -4,6 +4,52 @@
 
 ---
 
+## v0.46.0（2026-04-27）— E-02 多用戶寫入安全 + E-VERIFY 連接驗證
+
+### E-02：多用戶寫入安全 + author 歸屬
+
+**MCP `add_knowledge` tool 新增 `source` 參數**：
+- 小龍蝦/Agent 可傳入 `source="telegram:@alice"` 追蹤知識來源
+- 透傳到 `engine.add_knowledge(source=...)` → `nodes.source_url` 欄位
+- 回傳 dict 包含 `source` 欄位確認
+
+**MCP `search_knowledge` tool 新增 `author` 過濾 + `source` 回傳**：
+- 結果 dict 新增 `source` 欄位（對應 `nodes.source_url`）
+- 新增 `author` 參數：`search_knowledge(query, author="telegram:@alice")` → 只回傳該 author 的知識
+- author 過濾為 case-insensitive substring match
+
+**並發寫入驗證**：
+- 10 threads × 10 writes：≥90% 成功率，source 欄位不串線
+- 並發讀寫不 crash（5 writers + 5 readers）
+- find_conflicts 在並發寫入後正常運作
+
+**測試**：15 tests（`tests/unit/test_multi_user_writes.py`）
+- `TestAuthorAttribution`（5）：source 寫入、查詢回傳、雙 author 共存
+- `TestAuthorFiltering`（3）：按 author 過濾、無過濾回傳全部
+- `TestConcurrentWrites`（4）：10 threads 並發、source 正確性、讀寫並行
+- `TestNearDuplicateDetection`（3）：相似偵測、不同標題、並發下正確性
+
+### E-VERIFY：MCP Tools 端到端驗證
+
+**37 tests（`tests/integration/test_mcp_tools_e2e.py`）**：
+- `TestAddKnowledge`（5）：node_id 回傳、source 持久化、全參數、round-trip
+- `TestSearchKnowledge`（5）：結果格式、source 欄位、limit、空結果、空知識庫
+- `TestGetContext`（3）：回傳字串、包含知識、空知識庫
+- `TestBatchAddKnowledge`（2）：批次寫入、搜尋可找到
+- `TestBrainStatus`（2）：有/無資料
+- `TestCompleteTask`（1）：不 crash
+- `TestReportKnowledgeOutcome`（2）：正/負面回饋
+- `TestKRBPreScreen`（2）：待審列表、空知識庫
+- `TestImpactAnalysis`（2）：未知元件、有 edges
+- `TestTemporalQuery`（2）：預設參數、空知識庫
+- `TestMarkHelpful`（2）：正/負面 feedback
+- `TestReasoningChain`（2）：空知識庫、有知識
+- `TestFederationSync`（2）：空/有資料 export
+- `TestGraphOperations`（3）：edges + neighbors、stats、mermaid
+- `TestEndToEndRoundTrip`（2）：完整工作流、多 author 工作流
+
+---
+
 ## v0.45.0（2026-04-27）— E-01 HTTP MCP Transport
 
 ### E-01：HTTP MCP Transport（Phase E 基礎）

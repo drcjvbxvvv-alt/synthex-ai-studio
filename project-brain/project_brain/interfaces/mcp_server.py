@@ -661,6 +661,7 @@ class BrainServer:
             query:     str,
             kind:      str = "",
             top_k:     int = 5,
+            author:    str = "",
         ) -> list[dict]:
             """
             語義搜尋專案知識庫。
@@ -669,9 +670,10 @@ class BrainServer:
                 query:  搜尋詞（自然語言）
                 kind:   節點類型過濾（Decision / Pitfall / Rule / ADR，空字串=全部）
                 top_k:  回傳筆數（1-10）
+                author: E-02: 按來源過濾（例："telegram:@alice"，空字串=不過濾）
 
             Returns:
-                知識片段列表，每筆包含 title / content / type / similarity。
+                知識片段列表，每筆包含 title / content / type / similarity / source。
             """
             srv.rate_check()
             q_clean = _safe_str(query, MAX_QUERY_LEN, "query")
@@ -682,40 +684,42 @@ class BrainServer:
                 raise ValueError(f"kind 必須是 {valid_kinds} 之一")
 
             top_k = max(1, min(10, int(top_k)))
+            author_filter = _safe_str(author, 200, "author") if author else ""
+
+            def _format_result(r: dict) -> dict:
+                return {
+                    "title":      r.get("title", ""),
+                    "content":    (r.get("content", "") or "")[:500],
+                    "type":       r.get("type", ""),
+                    "similarity": r.get("similarity"),
+                    "tags":       r.get("tags", []),
+                    "source":     r.get("source_url", ""),
+                }
+
+            def _author_match(r: dict) -> bool:
+                if not author_filter:
+                    return True
+                src = r.get("source_url", "") or ""
+                return author_filter.lower() in src.lower()
 
             try:
                 # 優先用向量搜尋，fallback 到 FTS5
                 from project_brain.vector_memory import VectorMemory
                 vm = VectorMemory(Path(str(work_path)) / ".brain")
                 if vm.available:
-                    results = vm.search(q_clean, top_k=top_k,
+                    results = vm.search(q_clean, top_k=top_k * 3 if author_filter else top_k,
                                         node_type=kind or None)
                     if results:
-                        return [
-                            {
-                                "title":      r["title"],
-                                "content":    r["content"][:500],
-                                "type":       r["type"],
-                                "similarity": r["similarity"],
-                                "tags":       r["tags"],
-                            }
-                            for r in results
-                        ]
+                        filtered = [r for r in results if _author_match(r)]
+                        return [_format_result(r) for r in filtered[:top_k]]
 
                 # Fallback：SQLite FTS5
                 raw = brain.graph.search_nodes(
-                    q_clean, node_type=kind or None, limit=top_k
+                    q_clean, node_type=kind or None,
+                    limit=top_k * 3 if author_filter else top_k,
                 )
-                return [
-                    {
-                        "title":      r.get("title", ""),
-                        "content":    (r.get("content", "") or "")[:500],
-                        "type":       r.get("type", ""),
-                        "similarity": None,
-                        "tags":       r.get("tags", []),
-                    }
-                    for r in raw
-                ]
+                filtered = [r for r in raw if _author_match(r)]
+                return [_format_result(r) for r in filtered[:top_k]]
             except Exception as e:
                 logger.error("search_knowledge 內部錯誤：%s", e)
                 return []
@@ -750,6 +754,7 @@ class BrainServer:
             scope:       str = "global",
             tags:        "list[str] | None" = None,
             confidence:  float = 0.8,
+            source:      str = "",
             workdir:     str = "",
             description: str = "",  # MEM-02: one-line summary for AI relevance selection
         ) -> dict:
@@ -763,6 +768,7 @@ class BrainServer:
                 scope:       模組作用域（"global" / "auth" / "payment_service" 等）
                 confidence:  確信度 0.0~1.0（agent 發現 = 0.6, human verified = 0.9）
                 tags:        標籤列表（最多 10 個）
+                source:      E-02: 知識來源（例："telegram:@alice" / "cli:bob" / "agent:crawler"）
                 workdir:     Claude Code 當前工作目錄（選填，讓 Brain 自動找對應 .brain/）
                 description: MEM-02：一行摘要，供 AI 相關性選取使用（空白時自動截取 content 前 100 字）
 
@@ -784,6 +790,8 @@ class BrainServer:
                 if t:
                     safe_tags.append(t)
 
+            source_c = _safe_str(source, 200, "source") if source else ""
+
             b = srv.resolve_brain(workdir)
             try:
                 node_id = b.add_knowledge(
@@ -792,6 +800,7 @@ class BrainServer:
                     kind        = kind,
                     tags        = safe_tags,
                     confidence  = max(0.0, min(1.0, confidence)),
+                    source      = source_c,
                     description = desc_c,  # MEM-02
                 )
                 # A-21: write scope to BrainDB (P1-A integration)
@@ -831,7 +840,7 @@ class BrainServer:
                     except Exception:
                         pass
                 threading.Thread(target=_bg_conflict_check, daemon=True).start()
-                return {"node_id": node_id, "success": True, "scope": scope, "confidence": confidence}
+                return {"node_id": node_id, "success": True, "scope": scope, "confidence": confidence, "source": source_c}
             except Exception as e:
                 logger.error("add_knowledge 內部錯誤：%s", e)
                 return {"node_id": "", "success": False, "error": "加入失敗"}
