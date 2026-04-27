@@ -1874,7 +1874,7 @@
           >
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 24px">
-          <span class="hpill hp-v">v0.15.0</span>
+          <span class="hpill hp-v">v0.46.0</span>
           <span class="hpill hp-py">Python 3.10+</span>
           <span class="hpill hp-mc">MCP Compatible</span>
           <span class="hpill hp-zt">Zero External Deps</span>
@@ -3079,7 +3079,7 @@
         <div class="footer-tagline" data-i18n="footer_tagline">
           為 AI Agent 設計的工程記憶基礎設施。<br />
           讓每次對話都能承接上一次的決策、規則與踩坑。<br />
-          <span style="color: var(--cyan)">v0.15.0</span> · Python 3.10+
+          <span style="color: var(--cyan)">v0.46.0</span> · Python 3.10+
         </div>
       </div>
       <div class="footer-right">
@@ -3677,12 +3677,17 @@
           cli_desc_fed_export: "匯出 global 知識聯邦 bundle",
           cli_desc_fed_import: "匯入外部專案知識 bundle",
           mcp_card_title: "Claude Code MCP 設定",
-          mcp_tools_card_title: "MCP 可用工具（v0.3.0 共 13 個）",
+          mcp_tools_card_title: "MCP 可用工具（v0.46.0 共 22 個）",
           mcp_desc_get_context: "取得任務相關知識（含因果鏈 + 主動警告）",
-          mcp_desc_add_knowledge: "Agent 寫入新知識到 Brain",
-          mcp_desc_search_knowledge: "直接語意搜尋知識庫",
+          mcp_desc_add_knowledge: "Agent 寫入新知識（支援 source 來源追蹤）",
+          mcp_desc_search_knowledge: "語意搜尋知識庫（支援 author 過濾）",
           mcp_desc_temporal_query: "時光機——讀取指定時間點的知識狀態",
           mcp_desc_brain_status: "記憶庫統計",
+          mcp_desc_batch_add: "批次寫入知識（最多 50 條）",
+          mcp_desc_complete_task: "記錄任務完成 + 學到的東西",
+          mcp_desc_report_outcome: "回饋知識是否有用（Feedback Loop）",
+          mcp_desc_krb_pre_screen: "AI 預審待審知識",
+          mcp_desc_impact_analysis: "元件影響範圍分析",
           mcp_desc_complete_task: "記錄任務完成，寫入決策 / 踩坑 / 經驗",
           mcp_desc_report_knowledge_outcome:
             "回饋知識節點是否有效，動態調整信心分數",
@@ -3798,7 +3803,7 @@
           env_ollama_embed_desc: "Ollama embedding 模型名稱",
           env_ollama_url_desc: "Ollama 服務位址（LLM 提取 + embedding）",
           footer_tagline:
-            "為 AI Agent 設計的工程記憶基礎設施。\n讓每次對話都能承接上一次的決策、規則與踩坑。\nv0.15.0 · Python 3.10+",
+            "為 AI Agent 設計的工程記憶基礎設施。\n讓每次對話都能承接上一次的決策、規則與踩坑。\nv0.46.0 · Python 3.10+",
         },
         en: {
           conf_note_1: "More Agent queries → slower decay",
@@ -3978,11 +3983,11 @@
           cli_desc_fed_export: "Export global knowledge federation bundle",
           cli_desc_fed_import: "Import external project knowledge bundle",
           mcp_card_title: "Claude Code MCP Config",
-          mcp_tools_card_title: "MCP Tools (v0.3.0 — 13 total)",
+          mcp_tools_card_title: "MCP Tools (v0.46.0 — 22 total)",
           mcp_desc_get_context:
             "Get task-relevant knowledge (causal chains + proactive warnings)",
-          mcp_desc_add_knowledge: "Agent writes new knowledge to Brain",
-          mcp_desc_search_knowledge: "Direct semantic search of knowledge base",
+          mcp_desc_add_knowledge: "Agent writes new knowledge (supports source tracking)",
+          mcp_desc_search_knowledge: "Semantic search (supports author filtering)",
           mcp_desc_temporal_query:
             "Time machine—read knowledge state at a given point in time",
           mcp_desc_brain_status: "Memory stats",
@@ -4111,7 +4116,7 @@
           env_ollama_url_desc:
             "Ollama service URL (LLM extraction + embedding)",
           footer_tagline:
-            "Engineering memory infrastructure for AI Agents.\nEvery conversation picks up where the last one left off.\nv0.15.0 · Python 3.10+",
+            "Engineering memory infrastructure for AI Agents.\nEvery conversation picks up where the last one left off.\nv0.46.0 · Python 3.10+",
         },
       };
 
