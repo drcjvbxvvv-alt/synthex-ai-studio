@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "project-brain"
-version         = "0.42.0"
+version         = "0.43.0"
 description     = "AI Memory System — stores, retrieves and decays project knowledge for LLM-assisted development"
 readme          = "README.md"
 license         = { text = "MIT" }
@@ -62,6 +62,7 @@ python_files = ["test_*.py"]
 markers      = [
     "chaos: Chaos & load tests — run with -m chaos (STAB-08 CI gate)",
     "benchmark: Performance benchmarks — run with -m benchmark (MEDIUM-07 baseline regression check)",
+    "e2e_ollama: E2E tests requiring a live Ollama instance — set BRAIN_TEST_OLLAMA=1 to enable",
 ]
 
 [tool.coverage.run]

@@ -4,6 +4,33 @@
 
 ---
 
+## v0.43.0（2026-04-27）— D-04 生產驗證
+
+### D-04：生產驗證（Federation × E2E Pipeline × 5K 效能基準）
+
+**新增 `tests/unit/test_prod_validation.py`**（19 tests）：
+- `TestCrossBrainSync`（7）：兩個真實 tmp brain dir export→import round-trip
+- `TestPIIAtScale`（5）：1000 節點 PII 清理完整性驗證（email / private IP / internal host 全部移除）
+- `TestDedupAtScale`（4）：1000 節點中 300 重複 → `skipped_dup=300`，200 novel 正確 staged
+- `TestFederationBundleIntegrity`（3）：JSON 序列化、必要欄位、空庫
+
+**新增 `tests/e2e/test_pipeline_e2e.py`**（14 tests）：
+- `TestSignalToL3Flow`（8）：stub judge 驗證完整 signal→L3 資料流
+- `TestPipelineLatency`（2）：signal-to-L3 < 5s；batch 10 signals < 30s
+- `TestPipelineWorkerLifecycle`（3）：daemon thread start/stop/double-start
+- `TestPipelineOllama`（1）：`BRAIN_TEST_OLLAMA=1` guard — CI 安全 skip
+
+**新增 `tests/benchmarks/benchmark_perf_5k.py`**（5 tests，`@pytest.mark.benchmark`）：
+- 5000 節點寫入吞吐量 ≥ 200 nodes/s
+- FTS5 p99 延遲 ≤ 300ms，平均 ≤ 100ms
+- BrainDB hybrid search p99 ≤ 300ms
+
+**已修正行為**：
+- `mark_failed` retry 語義：失敗後回到 pending（最多 MAX_ATTEMPTS=3 次）
+- pytest.ini 新增 `e2e_ollama` marker 定義
+
+---
+
 ## v0.42.0（2026-04-27）— D-03 完整 CI 集成
 
 ### D-03：GitHub Actions CI Pipeline
