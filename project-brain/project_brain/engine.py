@@ -4,7 +4,7 @@ ProjectBrain — 主引擎
 統一入口，管理整個 .brain/ 目錄結構：
 
 .brain/
-├── knowledge_graph.db     ← SQLite 知識圖譜
+├── brain.db               ← SQLite 統一資料庫（C-01：KG + BrainDB 合併）
 ├── vectors/               ← 向量記憶（簡易實作，未來可替換 pgvector）
 ├── adrs/                  ← 自動生成的 ADR 快照
 ├── sessions/              ← 每次 AI 對話的知識增量
@@ -383,10 +383,10 @@ class ProjectBrain:
         (self.brain_dir / "adrs").mkdir(exist_ok=True)
         (self.brain_dir / "sessions").mkdir(exist_ok=True)
 
-        # ── 強制建立 knowledge_graph.db ──────────────────────
+        # ── 強制建立 brain.db ──────────────────────────────────
         # graph 是 lazy property，必須主動存取才會建立 SQLite 檔案。
         # 不論 git 歷史是否存在，都應先把 DB 建好。
-        _ = self.graph   # 觸發 KnowledgeGraph.__init__ → 建立 .db 檔案
+        _ = self.graph   # 觸發 KnowledgeGraph.__init__ → 建立 brain.db
 
         # 設定檔
         name = project_name or self.workdir.name
@@ -464,7 +464,7 @@ class ProjectBrain:
 專案：{name}
 目錄：{self.brain_dir}
 狀態：
-  • 知識圖譜 DB 已建立（knowledge_graph.db）
+  • 統一資料庫已建立（brain.db）
   • 設定檔：{self.brain_dir / self.CONFIG_FILE}
   • Git Hook 已設定（每次 commit 自動學習）
 {git_tip}
@@ -1167,15 +1167,18 @@ if __name__ == '__main__':
         """設定 .gitignore：提交 ADR，不提交 DB"""
         gitignore = self.workdir / ".gitignore"
         brain_rules = """
-# Project Brain（知識圖譜DB和向量記憶不提交，ADR 提交）
-.brain/knowledge_graph.db
+# Project Brain（統一DB和向量記憶不提交，ADR 提交）
+.brain/brain.db
+.brain/brain.db-wal
+.brain/brain.db-shm
+.brain/knowledge_graph.db.bak
 .brain/vectors/
 .brain/sessions/
 brain_hook.py
 """
         if gitignore.exists():
             existing = gitignore.read_text()
-            if ".brain/knowledge_graph.db" not in existing:
+            if ".brain/brain.db" not in existing:
                 gitignore.write_text(existing + brain_rules)
         else:
             gitignore.write_text(brain_rules)
