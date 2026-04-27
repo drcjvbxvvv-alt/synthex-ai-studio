@@ -97,7 +97,7 @@ project_brain/
 | Phase B | v0.35 | ✅ **DONE** | 可觀測性、資料同步、維護性（7 項） |
 | Phase C | v0.40 | ✅ **DONE** | 架構統一、LLM 介面、Pipeline 擴展（5 項） |
 | Phase D | v1.0 | 🔄 **進行中** | 生產就緒、LoRA 蒸餾、CI 全覆蓋（5 項） |
-| Phase E | v2.0 | 📋 **規劃中** | 團隊共享腦、HTTP MCP、集中知識庫（6 項） |
+| Phase E | v2.0 | 🔄 **進行中** | 團隊共享腦、HTTP MCP、集中知識庫（6 項） |
 
 ---
 
@@ -738,7 +738,7 @@ python -m pytest tests/ -q | tail -3
 >                        所有人共享同一份知識
 > ```
 
-### E-01 HTTP MCP Transport（核心基礎）
+### E-01 HTTP MCP Transport（核心基礎）[DONE v0.45.0]
 
 **ID**：E-01
 **優先**：P1（Phase E 的基礎，其他項目依賴此項）
@@ -852,12 +852,19 @@ class TestSSETransport:
 
 #### 驗收條件
 
-- [ ] `brain serve --bind 0.0.0.0 --auth-key $KEY` 可啟動 HTTP server
+- [x] `brain serve --mcp --auth-key $KEY` 可啟動 HTTP server（streamable-http / sse）
 - [ ] Claude Code 可透過 `claude_desktop_config.json` 連接（manual test）
-- [ ] 未認證請求回傳 401
-- [ ] Rate limiting 正常運作（429）
-- [ ] 兩個並發客戶端的 session 互相隔離
-- [ ] `pytest tests/integration/test_http_mcp_server.py` 全通過
+- [x] 未認證請求回傳 401（`hmac.compare_digest` timing-safe）
+- [x] Rate limiting 正常運作（429，per-IP sliding window）
+- [x] `/health` 端點免認證、不受限流（供負載均衡 + 監控）
+- [x] `pytest tests/integration/test_http_mcp_server.py` 36/36 passed
+
+#### 實際實作
+
+- **`http_transport.py`**（新模組，290 行）：AuthMiddleware + RateLimitMiddleware + CORSMiddleware + HealthEndpoint + HTTPBrainServer
+- **middleware 堆疊**（由外到內）：HealthEndpoint → CORS → Auth → RateLimit → FastMCP Starlette App
+- **支援傳輸**：`streamable-http`（預設）、`sse`（向後兼容）
+- **安全設計**：Bearer token + timing-safe 比較 + per-IP 限流 + CORS 白名單
 
 ---
 

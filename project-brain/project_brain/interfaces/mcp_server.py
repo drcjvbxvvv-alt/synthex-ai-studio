@@ -1730,6 +1730,63 @@ def create_server(workdir: str) -> Any:
     return srv.create_mcp_server()
 
 
+def create_http_server(
+    workdir: str,
+    *,
+    bind: str = "127.0.0.1",
+    port: int = 3000,
+    auth_key: str | None = None,
+    rate_limit_rpm: int = 60,
+    allowed_origins: list[str] | None = None,
+    transport: str = "streamable-http",
+) -> "HTTPBrainServer":
+    """E-01: 建立支援 HTTP/SSE 的 MCP Server（供遠端 Claude Code 連接）。
+
+    Args:
+        workdir: 專案工作目錄（需要有 .brain/）
+        bind: 綁定地址（預設 127.0.0.1，生產環境用 0.0.0.0）
+        port: 監聽 port（預設 3000）
+        auth_key: API key（None = 不需認證，僅限本地開發）
+        rate_limit_rpm: 每 IP 每分鐘最大請求數（預設 60）
+        allowed_origins: CORS 白名單（None = 不設 CORS）
+        transport: 傳輸方式（'streamable-http' 或 'sse'）
+
+    Returns:
+        HTTPBrainServer 實例，呼叫 .run() 啟動或 .create_app() 取得 ASGI app
+
+    Example::
+
+        # 遠端存取模式
+        http = create_http_server(
+            "/path/to/project",
+            bind="0.0.0.0", port=3000,
+            auth_key=os.environ["BRAIN_API_KEY"],
+        )
+        http.run()  # blocking — starts uvicorn
+
+        # Claude Code 客戶端設定
+        # {
+        #   "mcpServers": {
+        #     "company-brain": {
+        #       "url": "http://brain.company.internal:3000/mcp",
+        #       "headers": {"Authorization": "Bearer ${BRAIN_API_KEY}"}
+        #     }
+        #   }
+        # }
+    """
+    from project_brain.interfaces.http_transport import HTTPBrainServer
+    srv = BrainServer(workdir)
+    return HTTPBrainServer(
+        brain_server=srv,
+        bind=bind,
+        port=port,
+        auth_key=auth_key,
+        rate_limit_rpm=rate_limit_rpm,
+        allowed_origins=allowed_origins,
+        transport=transport,
+    )
+
+
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1751,15 +1808,63 @@ def main() -> None:
     parser.add_argument(
         "--transport",
         default = "stdio",
-        choices = ["stdio", "sse"],
-        help    = "傳輸方式（stdio 供 Claude Code 使用，sse 供網頁使用）",
+        choices = ["stdio", "sse", "streamable-http"],
+        help    = "傳輸方式（stdio 供本地 Claude Code，sse/streamable-http 供遠端連接）",
+    )
+    parser.add_argument(
+        "--bind",
+        default = "127.0.0.1",
+        help    = "HTTP 綁定地址（預設 127.0.0.1，遠端存取用 0.0.0.0）",
+    )
+    parser.add_argument(
+        "--port",
+        type    = int,
+        default = 3000,
+        help    = "HTTP 監聽 port（預設 3000）",
+    )
+    parser.add_argument(
+        "--auth-key",
+        dest    = "auth_key",
+        default = os.environ.get("BRAIN_API_KEY"),
+        help    = "API key for HTTP auth（或設 BRAIN_API_KEY 環境變數）",
+    )
+    parser.add_argument(
+        "--rate-limit-rpm",
+        dest    = "rate_limit_rpm",
+        type    = int,
+        default = int(os.environ.get("BRAIN_RATE_LIMIT_RPM", "60")),
+        help    = "每 IP 每分鐘最大請求數（預設 60）",
+    )
+    parser.add_argument(
+        "--allow-origin",
+        dest    = "allow_origins",
+        action  = "append",
+        default = None,
+        help    = "CORS 允許的 origin（可多次指定）",
     )
     args = parser.parse_args()
 
     try:
-        mcp = create_server(args.workdir)
-        logger.warning("Project Brain MCP Server 啟動（workdir: %s）", args.workdir)
-        mcp.run(transport=args.transport)
+        if args.transport in ("sse", "streamable-http"):
+            # E-01: HTTP MCP mode
+            http = create_http_server(
+                args.workdir,
+                bind=args.bind,
+                port=args.port,
+                auth_key=args.auth_key,
+                rate_limit_rpm=args.rate_limit_rpm,
+                allowed_origins=args.allow_origins,
+                transport=args.transport,
+            )
+            logger.warning(
+                "Project Brain HTTP MCP Server 啟動（workdir: %s, %s:%d）",
+                args.workdir, args.bind, args.port,
+            )
+            http.run()
+        else:
+            mcp = create_server(args.workdir)
+            logger.warning("Project Brain MCP Server 啟動（workdir: %s）", args.workdir)
+            mcp.run(transport=args.transport)
     except FileNotFoundError as e:
         print(f"[錯誤] {e}", file=sys.stderr)
         sys.exit(1)

@@ -24,7 +24,7 @@
 | 🟢 | `brain scan` | 掃描 git 歷史提取知識 | `brain scan --all` |
 | 🟢 | `brain review` | 審查 KRB 暫存區知識 | `brain review list` |
 | 🟢 | `brain webui` | D3.js 瀏覽器視覺化（含行內編輯）| `brain webui --port 7890` |
-| 🟢 | `brain serve` | REST API / MCP Server | `brain serve --mcp` |
+| 🟢 | `brain serve` | REST API / MCP Server / HTTP MCP | `brain serve --mcp --auth-key $KEY` |
 | 🟢 | `brain doctor` | 環境診斷與自動修復 | `brain doctor --fix` |
 | 🟢 | `brain config` | 顯示並驗證所有設定來源 | `brain config` |
 | 🟢 | `brain optimize` | VACUUM + ANALYZE + FTS5 rebuild | `brain optimize` |
@@ -368,6 +368,84 @@ brain lifecycle <node_id>
 # 分析假設變更的影響
 brain counterfactual "如果我們用 NoSQL 代替 PostgreSQL"
 # 輸出：受影響的知識節點，依影響分數排序
+```
+
+---
+
+## brain serve 詳細說明
+
+`brain serve` 支援三種模式：
+
+### 1. REST API 模式（預設）
+
+```bash
+brain serve --port 7891
+```
+
+### 2. MCP stdio 模式（本地 Claude Code）
+
+```bash
+brain serve --mcp
+```
+
+### 3. HTTP MCP 模式（E-01，遠端 Claude Code 連接）
+
+```bash
+# 啟動 HTTP MCP Server（streamable-http transport）
+brain serve --mcp --auth-key $BRAIN_API_KEY --port 3000
+
+# 綁定所有介面（生產環境）
+brain serve --mcp --auth-key $BRAIN_API_KEY --bind 0.0.0.0 --port 3000
+
+# 使用 SSE transport（向後兼容）
+brain serve --mcp --transport sse --auth-key $BRAIN_API_KEY --port 3000
+
+# CORS 白名單
+brain serve --mcp --auth-key $KEY --allow-origin http://localhost:8080
+
+# 自訂 Rate Limit
+brain serve --mcp --auth-key $KEY --rate-limit-rpm 120
+```
+
+**選項：**
+
+| 選項 | 預設 | 說明 |
+|------|------|------|
+| `--auth-key` | `$BRAIN_API_KEY` | Bearer token 認證 key |
+| `--bind` | `127.0.0.1` | 綁定地址（`0.0.0.0` = 所有介面） |
+| `--port` | `3000`（HTTP MCP）| 監聽 port |
+| `--transport` | `streamable-http` | `streamable-http` 或 `sse` |
+| `--allow-origin` | — | CORS 允許 origin（可多次指定） |
+| `--rate-limit-rpm` | `60` | 每 IP 每分鐘最大請求數 |
+
+**Claude Code 客戶端設定：**
+
+```json
+{
+  "mcpServers": {
+    "company-brain": {
+      "url": "http://brain.company.internal:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BRAIN_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+**端點：**
+
+| 端點 | 方法 | 認證 | 說明 |
+|------|------|------|------|
+| `/health` | GET | 不需要 | 健康檢查（JSON） |
+| `/mcp` | POST | Bearer | MCP JSON-RPC（streamable-http） |
+| `/sse` | GET | Bearer | SSE 連線（sse transport） |
+
+**健康檢查範例：**
+
+```bash
+curl http://localhost:3000/health
+# {"status": "ok", "version": "0.45.0", "transport": "streamable-http"}
 ```
 
 ---

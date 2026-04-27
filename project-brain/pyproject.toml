@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "project-brain"
-version         = "0.44.0"
+version         = "0.45.0"
 description     = "AI Memory System — stores, retrieves and decays project knowledge for LLM-assisted development"
 readme          = "README.md"
 license         = { text = "MIT" }
@@ -16,7 +16,7 @@ keywords = [
 ]
 
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

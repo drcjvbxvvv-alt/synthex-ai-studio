@@ -4,6 +4,48 @@
 
 ---
 
+## v0.45.0（2026-04-27）— E-01 HTTP MCP Transport
+
+### E-01：HTTP MCP Transport（Phase E 基礎）
+
+**新模組 `http_transport.py`**：
+- `AuthMiddleware` — Bearer token 認證（`hmac.compare_digest` timing-safe）
+- `RateLimitMiddleware` — 每 IP 滑動視窗限流（in-memory，多實例需 Redis backend）
+- `CORSMiddleware` — preflight OPTIONS + origin 白名單
+- `HealthEndpoint` — `/health` JSON 回應（免認證，供負載均衡 + 監控）
+- `HTTPBrainServer` — 包裝 FastMCP Starlette app + 中介層堆疊
+
+**`mcp_server.py` 更新**：
+- 新增 `create_http_server()` 工廠函式
+- `main()` 支援 `--transport streamable-http`、`--bind`、`--port`、`--auth-key`、`--allow-origin`、`--rate-limit-rpm`
+
+**CLI 更新（`cli_serve.py` + `cli_utils.py`）**：
+- `brain serve --mcp --auth-key $KEY` 啟動 HTTP MCP Server
+- `brain serve --mcp --transport sse` 使用 SSE 傳輸
+- 自動偵測：設定 `--auth-key` 或 `--transport streamable-http` 時啟用 HTTP 模式
+- 無 auth-key 時顯示安全警告
+
+**測試**：36 tests（`tests/integration/test_http_mcp_server.py`）
+- `TestAuthMiddleware`（8）：401/timing-safe/health bypass/non-http passthrough
+- `TestRateLimitMiddleware`（7）：under/over limit、per-IP 獨立、sliding window
+- `TestCORSMiddleware`（5）：preflight、origin 白名單、allow-all
+- `TestHealthEndpoint`（4）：200 JSON、trailing slash、passthrough
+- `TestHTTPBrainServer`（9）：full stack、auth+cors+rate-limit、SSE transport、idempotent
+- `TestMiddlewareStackOrder`（2）：auth before rate-limit、health bypasses all
+- `TestCreateHTTPServerFactory`（1）：factory returns correct type
+
+---
+
+## v0.44.1（2026-04-27）— 調整開發狀態為 Alpha
+
+### 開發狀態調整
+
+- `pyproject.toml` classifier 由 `Development Status :: 4 - Beta` 降至 `Development Status :: 3 - Alpha`
+- 原因：尚缺乏大規模實驗數據驗證，暫無正式（stable）發行計畫
+- 0.x 版號維持不變；v1.0 凍結直至完成充分的效能與召回率實驗驗證
+
+---
+
 ## v0.44.0（2026-04-27）— D-05 文件完整化
 
 ### D-05：文件完整化 v1.0

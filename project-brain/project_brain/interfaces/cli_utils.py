@@ -768,12 +768,21 @@ def _build_parser():
                    help='archive：同時清理超過 N 天的歸檔')
 
     p = mkp('serve', '啟動 OpenAI 相容 API / MCP server')
-    p.add_argument('--port',           type=int,   default=7891,  help='監聽 port（預設：7891）')
+    p.add_argument('--port',           type=int,   default=7891,  help='監聽 port（預設：7891，MCP HTTP 預設 3000）')
     p.add_argument('--production',     action='store_true',       help='生產模式：使用 Gunicorn multi-worker')
     p.add_argument('--workers',        type=int,   default=4,     help='Gunicorn worker 數量（--production 時有效）')
     p.add_argument('--host',           default='0.0.0.0',         help='綁定 host（預設 0.0.0.0）')
     p.add_argument('--mcp',            action='store_true',        help='MCP Server 模式（Claude Code / Cursor 直接連接）')
     p.add_argument('--readonly',        action='store_true',        help='唯讀模式：禁止寫入操作，適合團隊共享查詢')
+    p.add_argument('--auth-key',       dest='auth_key', default=None,
+                   help='E-01: HTTP MCP 認證 API key（或設 BRAIN_API_KEY 環境變數）')
+    p.add_argument('--transport',      default=None,
+                   choices=['stdio', 'sse', 'streamable-http'],
+                   help='E-01: MCP 傳輸方式（預設 stdio；HTTP 模式自動選 streamable-http）')
+    p.add_argument('--allow-origin',   dest='allow_origins', action='append', default=None,
+                   help='E-01: CORS 允許的 origin（可多次指定）')
+    p.add_argument('--rate-limit-rpm', dest='rate_limit_rpm', type=int, default=None,
+                   help='E-01: 每 IP 每分鐘最大請求數（預設 60）')
     p.add_argument('--slack-webhook',  dest='slack_webhook', default=None,
                    help='FEAT-10: Slack Incoming Webhook URL（覆蓋 BRAIN_SLACK_WEBHOOK_URL）')
 
