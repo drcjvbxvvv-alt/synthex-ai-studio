@@ -16,7 +16,7 @@
 6. [知識審查（KRB）](#6-知識審查krb)
 7. [自動學習](#7-自動學習)
 8. [與 AI 助手整合](#8-與-ai-助手整合)
-9. [團隊共用模式](#9-團隊共用模式)
+9. [團隊共用模式](#9-團隊共用模式)（含 AI Agent 自主託管、餵入文件）
 10. [知識庫管理](#10-知識庫管理)
 11. [視覺化界面（WebUI）](#11-視覺化界面webui)
 12. [匯出與匯入](#12-匯出與匯入)
@@ -431,6 +431,100 @@ add_knowledge(title="JWT 規則", source="telegram:@alice")
 # 按來源搜尋
 # AI Agent 可用 search_knowledge(query="JWT", author="telegram:@alice")
 ```
+
+### 9.4 讓 AI Agent 自主安裝與託管
+
+如果你的 AI Agent（例如小龍蝦 / OpenClaw）有 Shell 存取權限，可以讓它自己安裝 Brain 並全權託管知識庫，你完全不需要手動操作。
+
+**只需告訴你的 AI Agent：**
+
+> 「安裝 Project Brain 並託管知識庫」
+
+AI Agent 會自主執行：
+
+```
+1. pip install "project-brain[mcp]"       ← 安裝
+2. cd /path/to/project && brain setup     ← 初始化
+3. 設定 MCP 連接                           ← 接上知識庫
+4. brain health                           ← 確認正常
+5. 回報：「Brain 已安裝，準備就緒」         ← 通知你
+```
+
+之後 AI Agent 可以自主處理所有日常運營：
+
+| 操作 | AI Agent 怎麼做 | 頻率 |
+|------|-----------------|------|
+| 同事上傳文件 | 讀文件 → 提取知識 → `add_knowledge` | 有人上傳時 |
+| 同事問問題 | `get_context` / `search_knowledge` → 回覆 | 隨時 |
+| 知識品質審查 | `krb_pre_screen` → approve / reject | 定期 |
+| 健康監控 | `brain health` → 異常時通知群組 | 每天 |
+| 資料庫維護 | Shell 執行 `brain optimize` | 每週 |
+| 統計報告 | `brain_status` → 回報群組 | 每天/每週 |
+
+### 9.5 AI Agent 託管的建議 System Prompt
+
+在你的 AI Agent 的 System Prompt 中加入以下指引，讓它知道怎麼管理 Brain：
+
+```markdown
+## Brain 知識庫託管
+
+你負責管理 Project Brain 知識庫。
+
+### 安裝（首次）
+如果 Brain 未安裝，執行：
+  pip install "project-brain[mcp]"
+  cd /company/project && brain setup
+
+### 日常運營
+- 同事上傳文件 → 讀取內容 → 提取知識點 → 呼叫 add_knowledge
+- 同事問問題 → 呼叫 get_context → 根據知識庫回答
+- 每天執行一次 brain health，異常時通知群組
+- 每週執行一次 brain optimize
+
+### 知識品質控制
+- add_knowledge 時設定 confidence=0.85（來自文件的知識）
+- source 欄位填入 "telegram:@用戶名"（追蹤來源）
+- 知識類型分類：
+  - Rule：必須遵守的規則
+  - Decision：架構或技術決策
+  - Pitfall：踩過的坑、要避免的錯誤
+  - Note：一般筆記
+
+### 知識提取原則
+- 從文件中只提取值得長期記住的知識，不要什麼都加
+- 每條知識一個重點，不要把整段文件塞進一條
+- 如果文件沒有值得記錄的知識，直接告訴用戶
+```
+
+### 9.6 餵入文件的三種方式
+
+#### 方式 1：透過 AI Agent（最推薦）
+
+直接在 Telegram 或對話中告訴 AI Agent：
+
+> 「請讀取這份文件，提取重要的知識加入 Brain」
+
+AI Agent 會自動讀取文件、提取 Rule / Decision / Pitfall，然後呼叫 `add_knowledge` 寫入。
+
+#### 方式 2：CLI 手動加入
+
+```bash
+brain add "JWT 必須使用 RS256 簽名" --kind Rule --confidence 0.9
+brain add "選用 PostgreSQL 因為需要 ACID" --kind Decision
+```
+
+精確但需要逐條操作。
+
+#### 方式 3：Git Commit 自動學習
+
+```bash
+git add docs/new-spec.md
+git commit -m "docs: add API specification"
+# → Brain 的 post-commit hook 自動分析 diff
+# → 值得記住的部分進入 KRB 暫存區等待審查
+```
+
+適合程式碼和文件的變更，但只分析 diff（不是整份文件）。
 
 ---
 
