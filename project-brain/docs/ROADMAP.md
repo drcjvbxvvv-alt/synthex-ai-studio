@@ -2,9 +2,9 @@
 
 > **主要規劃文件**。設計、開發、實作、測試的完整依賴鏈。
 >
-> **版本**：v1.0
-> **建立日期**：2026-04-26
-> **基準版本**：v0.34.0（684 passed，0 regression）
+> **版本**：v2.0
+> **最後更新**：2026-04-27
+> **基準版本**：v0.40.0（1367 passed，0 regression）
 > **維護原則**：每個 Phase 完成後在對應區塊標記 `[DONE vX.Y.Z]`，不刪除內容。
 
 ---
@@ -14,13 +14,14 @@
 1. [文件導覽](#1-文件導覽)
 2. [系統現況快照](#2-系統現況快照)
 3. [Phase A — 基礎鞏固](#3-phase-a--基礎鞏固-done-v0340)
-4. [Phase B — 可觀測性與維護性](#4-phase-b--可觀測性與維護性-v035)
-5. [Phase C — 架構演進](#5-phase-c--架構演進-v040)
-6. [Phase D — 生產就緒](#6-phase-d--生產就緒-v10)
-7. [依賴關係圖](#7-依賴關係圖)
-8. [模型選擇速查表](#8-模型選擇速查表)
-9. [品質門檻](#9-品質門檻)
-10. [歸檔文件索引](#10-歸檔文件索引)
+4. [Phase B — 可觀測性與維護性](#4-phase-b--可觀測性與維護性-done-v0350)
+5. [Phase C — 架構演進](#5-phase-c--架構演進-done-v0400)
+6. [Phase D — 生產就緒](#6-phase-d--生產就緒-目標-v100)
+7. [Phase E — 團隊共享腦](#7-phase-e--團隊共享腦-目標-v200)
+8. [完整依賴關係圖](#8-完整依賴關係圖)
+9. [模型選擇速查表](#9-模型選擇速查表)
+10. [品質門檻](#10-品質門檻)
+11. [歸檔文件索引](#11-歸檔文件索引)
 
 ---
 
@@ -30,10 +31,10 @@
 |------|------|------|
 | `docs/ROADMAP.md` | **本文件**：規劃、設計、實作、測試全覽 | 主動維護 |
 | `docs/ARCHITECTURE_REVIEW.md` | 系統缺陷審計報告（v1.2）；各項缺陷的根因、驗證方法、修法細節 | 審計存檔（規劃已遷移至本文件） |
-| `docs/AUTO_KNOWLEDGE_PIPELINE.md` | Pipeline Layer 1-5 設計文件（v0.3.4）；Prompt 設計、資料模型、可靠性策略 | 技術參考（Layer 1-4 已實作） |
+| `docs/AUTO_KNOWLEDGE_PIPELINE.md` | Pipeline Layer 1-5 設計文件（v0.3.4）；Prompt 設計、資料模型、可靠性策略 | 技術參考（Layer 1-5 已實作） |
 | `docs/EXPERIMENT_REPORT.md` | REV-01/02、KRB 效果的數據記錄範本 | 待填寫 |
 | `CHANGELOG.md` | 各版本變更歷史 | 主動維護 |
-| `tests/TEST_PLAN.md` | 測試套件全覽與真實數據量測計劃 | 需更新至 v0.34 |
+| `tests/TEST_PLAN.md` | 測試套件全覽與真實數據量測計劃 | 需更新至 v0.40 |
 | `COMMANDS.md` | CLI 命令使用者參考 | 主動維護 |
 | `docs/archive/` | 過時文件歸檔 | 唯讀 |
 
@@ -45,55 +46,58 @@
 
 | 指標 | 數值 |
 |------|------|
-| 版本 | v0.34.0 |
-| Unit tests | 684 passed（含 chaos/benchmark marker 測試） |
+| 版本 | v0.40.0 |
+| Unit tests | 1367 passed（含 chaos/benchmark marker 測試） |
 | 測試覆蓋率 | ≥ 50%（`fail_under = 50` in pyproject.toml） |
 | 基準 recall@3 | ≥ 60%（baseline.json） |
 | 基準 avg 查詢延遲 | ≤ 500ms |
+| Schema 版本 | v28（feedback_log 表） |
 
 ### 2.2 模組完成度
 
 ```
 project_brain/
 ├── core/
-│   ├── brain_db.py          [STABLE] _execute_write 統一入口，WAL+lock
+│   ├── brain_db.py          [STABLE] Schema v28，_execute_write 統一入口，WAL+lock
 │   ├── session_store.py     [STABLE] TTL + cleanup daemon
 │   └── constants.py         [STABLE] sys.modules 別名，monkey-patch 安全
 │
 ├── pipeline/
-│   ├── signal.py            [STABLE] Layer 1+2：Signal/SignalKind/SignalQueue
+│   ├── signal.py            [STABLE] Layer 1+2：Signal/SignalKind（含 MCP_TOOL_CALL/TEST_FAILURE/KNOWLEDGE_CONFLICT）
 │   ├── executor.py          [STABLE] Layer 4：KnowledgeExecutor（確定性寫入）
-│   ├── llm_judgment.py      [STABLE] Layer 3：LLMJudgmentEngine（Ollama+fallback）
+│   ├── llm_judgment.py      [STABLE] Layer 3：LLMJudgmentEngine（統一 LLMClient + signal hints）
 │   └── worker.py            [STABLE] Layer 3.5：PipelineWorker daemon
 │
 ├── engines/
-│   ├── context.py           [STABLE] ContextEngineer，向量搜尋 + synonym 展開
+│   ├── context.py           [STABLE] ContextEngineer，向量搜尋 + synonym 展開（無 lru_cache）
 │   ├── nudge_engine.py      [STABLE] effective_confidence 排序，零 LLM 費用
-│   ├── decay_engine.py      [STABLE] F1-F7 多因子衰減，BUG-B02 已修
-│   ├── review_board.py      [STABLE] KRB staging + cleanup_expired_staging
+│   ├── decay_engine.py      [STABLE] F1-F7 多因子衰減
+│   ├── review_board.py      [STABLE] KRB staging（C-01 簡化為單 graph.add_node）
 │   ├── memory_synthesizer.py [STABLE] L2 合成
 │   ├── conflict_resolver.py  [STABLE]
-│   └── knowledge_validator.py [STABLE]
+│   └── knowledge_validator.py [STABLE] ValidationReport.to_dict()
 │
 ├── interfaces/
-│   ├── mcp_server.py        [STABLE] 22 MCP tools，_validate_workdir 全覆蓋
+│   ├── mcp_server.py        [STABLE] BrainServer class，22 MCP tools，feedback_log 整合
 │   ├── api_server.py        [STABLE]
-│   ├── cli*.py              [STABLE]
-│   └── web_ui/              [PARTIAL] 零測試覆蓋（ARCH-05）
+│   ├── cli*.py              [STABLE] brain validate --ci/--json 已加入
+│   └── web_ui/              [PARTIAL] 零測試覆蓋（D-02）
 │
 └── integrations/
+    ├── llm_client.py        [STABLE] LLMClient Protocol + Ollama/Anthropic/Fallback/Noop
     ├── federation.py        [TESTED] 75 tests（PII/dedup/subscription）
     └── graphiti_adapter.py  [STABLE]
 ```
 
-### 2.3 已知未完成項目（各 Phase 詳述）
+### 2.3 各 Phase 完成狀態
 
-| Phase | 版本目標 | 未完成項目數 | 核心目標 |
-|-------|----------|-------------|---------|
-| Phase A | v0.31~v0.34 | 0 | 止血 + 架構深化 ✅ 完成 |
-| Phase B | v0.35 | 0 | 可觀測性、資料同步、維護性 ✅ 完成 |
-| Phase C | v0.40 | 0 | 架構統一、LLM 介面、Pipeline 擴展 ✅ 完成 |
-| Phase D | v1.0 | 5 | 生產就緒、LoRA 蒸餾、CI 全覆蓋 |
+| Phase | 版本目標 | 狀態 | 核心目標 |
+|-------|----------|------|---------|
+| Phase A | v0.31~v0.34 | ✅ **DONE** | 止血 + 架構深化（11 項） |
+| Phase B | v0.35 | ✅ **DONE** | 可觀測性、資料同步、維護性（7 項） |
+| Phase C | v0.40 | ✅ **DONE** | 架構統一、LLM 介面、Pipeline 擴展（5 項） |
+| Phase D | v1.0 | 🔄 **進行中** | 生產就緒、LoRA 蒸餾、CI 全覆蓋（5 項） |
+| Phase E | v2.0 | 📋 **規劃中** | 團隊共享腦、HTTP MCP、集中知識庫（6 項） |
 
 ---
 
@@ -207,809 +211,242 @@ project_brain/
 >
 > **核心目標**：解決 KG/BrainDB 資料不一致根因、提供運行健康診斷、降低技術債。
 >
-> **總估計工作量**：~20h（Haiku 4h / Sonnet 12h / Opus 0h）
+> **實際結果**：+235 tests（684 → 919 passed）
 
 ### B-01 KRB Cleanup Daemon 整合 [DONE v0.35.0]
 
-**ID**：來自 MEDIUM-04「待做」項目
-**優先**：P2 — 搭配既有 decay daemon，低成本完成 MEDIUM-04 後半
+**設計**：`cleanup_expired_staging()` 已實作（A-10），在 decay daemon 啟動流程中呼叫。每次 decay daemon 觸發（預設每 24h）順帶清理 KRB staging。
 
-#### 設計
+**實作**：`mcp_server.py` 的 `_run_maintenance_cycle` 中加入 KRB cleanup 呼叫，含 try/except 容錯。
 
-`cleanup_expired_staging()` 已實作（A-10），只需要在 decay daemon 啟動流程中呼叫一次。
+**測試**：16 tests（`test_krb_daemon_integration.py`）
 
-目標：每次 decay daemon 觸發（預設每 24h）順帶清理 KRB staging。
-
-#### 實作步驟
-
-1. **讀取** `project_brain/engines/decay_engine.py`，找到 daemon loop 位置
-2. **確認** `KnowledgeReviewBoard` import 方式（避免循環依賴）
-3. **在 decay daemon loop 末尾** 呼叫 `krb.cleanup_expired_staging()`，結果記入 structured log
-4. **若 decay daemon 不存在統一入口**：在 `mcp_server.py` 啟動流程加入定時任務（仿 `_start_cleanup_daemon`）
-
-#### 測試計劃
-
-```python
-# tests/unit/test_krb_daemon_integration.py
-class TestCleanupDaemonIntegration:
-    def test_cleanup_called_during_decay_cycle(self, monkeypatch):
-        """decay daemon 執行一輪後，cleanup_expired_staging 被呼叫"""
-    def test_cleanup_error_does_not_stop_decay(self):
-        """cleanup 拋出例外時，decay daemon 繼續運作（容錯）"""
-    def test_cleanup_log_entry_on_success(self, caplog):
-        """成功清理後有 structured log（含 pending_skipped, rejected_archived 計數）"""
-```
-
-#### 驗收條件
-
+**驗收**：
 - [x] decay daemon 每輪執行後，過期 staging 被自動清理
-- [x] cleanup 失敗不中斷 decay（有 try/except + log）
-- [x] `pytest tests/unit/test_krb_daemon_integration.py` 全通過（16/16）
-
-**推薦模型**：Haiku 4.5（單檔小改 + 3 個測試）
-**估計工作量**：1h
+- [x] cleanup 失敗不中斷 decay（try/except + log）
 
 ---
 
 ### B-02 MEDIUM-02：KG/BrainDB 事件驅動同步 [DONE v0.35.0]
 
-**ID**：MEDIUM-02
-**優先**：P1（Phase B 最重要項目）— 解決雙 DB 不一致根因
+**設計**：Observer pattern — `KnowledgeGraph._listeners: list[Callable]`，`add_node()` / `update_node()` 成功後 emit `"node_upserted"` 事件。`ProjectBrain.__init__` 連線：`graph.add_listener(brain_db.sync_from_graph_node)`。
 
-#### 設計
+**實作**：
+1. `graph.py`：新增 `_listeners`、`add_listener`、`remove_listener`、`_emit`
+2. `brain_db.py`：新增 `sync_from_graph_node(event, data)`
+3. `engine.py`：`__init__` 中掛接 listener
 
-選擇**方案 C：事件驅動同步**（最小侵入，4h）。
+**測試**：9 tests（`test_kg_braindb_sync.py`）
 
-```
-graph.add_node()  ──emit NodeAdded──▶  BrainDB.on_node_added()
-graph.update_node() ─emit NodeUpdated─▶ BrainDB.on_node_updated()
-```
-
-架構決策：
-- `graph.py` 維持不依賴 `BrainDB`（避免循環依賴）
-- 改用 Observer pattern：`KnowledgeGraph._listeners: list[Callable]`
-- `ProjectBrain.__init__` 負責連線：`graph.add_listener(brain_db.sync_node)`
-- **同步語意**：listener 在同一 call stack 內執行（非異步），保持 ACID 屬性
-- **失敗策略**：listener 拋出例外時，graph 寫入仍成功，但記 `WARNING` 讓 `brain health` 偵測
-
-#### 實作步驟
-
-1. **`project_brain/graph.py`**：
-   - 新增 `_listeners: list[Callable[[str, dict], None]] = []`（事件 payload 為 node dict）
-   - 新增 `add_listener(fn)` / `remove_listener(fn)` 方法
-   - 在 `add_node()` 和 `update_node()` 成功寫入後呼叫 `self._emit("node_upserted", node_data)`
-   - `_emit()` 迭代 listeners，每個 try/except，失敗 `logger.warning`
-
-2. **`project_brain/core/brain_db.py`**：
-   - 新增 `sync_from_graph_node(event: str, data: dict)` 方法
-   - event = `"node_upserted"` → 呼叫既有 `add_node()`（upsert 語意）
-
-3. **`project_brain/engine.py`**（ProjectBrain 主入口）：
-   - `__init__` 中：`self.graph.add_listener(self._db.sync_from_graph_node)`
-
-4. **`review_board.py`**：
-   - 確認 `approve()` 中的 KG 寫入會觸發 listener → BrainDB 同步自動發生
-   - 移除原有的手動 `bdb.add_node()` 呼叫（改由事件觸發）
-
-#### 測試計劃
-
-```python
-# tests/unit/test_kg_braindb_sync.py
-class TestEventSync:
-    def test_add_node_syncs_to_braindb(self):
-        """graph.add_node() 後，brain_db.search_nodes(title) 能找到"""
-    def test_update_node_syncs_to_braindb(self):
-        """graph.update_node() 後，brain_db 中的內容同步更新"""
-    def test_listener_failure_does_not_rollback_graph(self):
-        """listener 拋出例外時，graph 寫入成功，有 WARNING log"""
-    def test_add_remove_listener(self):
-        """add_listener / remove_listener 正確管理 listener list"""
-    def test_multiple_listeners(self):
-        """多個 listener 都被呼叫，其中一個失敗不影響其他"""
-    def test_approve_triggers_sync(self, tmp_path):
-        """review_board.approve() 後，search_nodes 能找到該節點"""
-    def test_no_duplicate_sync_on_double_approve(self, tmp_path):
-        """同一節點 approve 兩次，brain_db 中只有一份（upsert 冪等）"""
-
-class TestSyncConsistency:
-    def test_50_concurrent_adds_all_synced(self):
-        """50 threads 並發 add_node，brain_db 最終節點數一致"""
-```
-
-#### 驗收條件
-
-- [ ] `graph.add_node()` 後 `brain_db.search_nodes()` 能找到節點（不需手動同步）
-- [ ] `review_board.approve()` 移除手動 BrainDB 寫入，改由事件觸發
-- [ ] listener 失敗不中斷 graph 寫入
-- [ ] 50 threads 並發測試通過
-
-**推薦模型**：Sonnet 4.6（事務邊界 + Observer 設計，需確認循環依賴）
-**估計工作量**：4h
+**驗收**：
+- [x] `graph.add_node()` 後 `brain_db.search_nodes()` 能找到節點
+- [x] listener 失敗不中斷 graph 寫入
+- [x] 50 threads 並發測試通過
 
 ---
 
 ### B-03 `brain health` 診斷命令 [DONE v0.35.0]
 
-**ID**：新功能（§8.4 列出）
-**優先**：P2（依賴 B-02 讓 health check 有意義）
-**依賴**：B-02 完成後 KG/BrainDB 差異可被可靠偵測
-
-#### 設計
+**設計**：
 
 ```bash
 $ brain health
-Project Brain Health Check — v0.35.0
+Project Brain Health Check — v0.40.0
 ======================================
-[OK]  brain.db          accessible (684 nodes, 231 edges)
-[OK]  knowledge_graph.db accessible (231 nodes)
-[WARN] KG/BrainDB sync   12 nodes in KG not found in brain.db FTS5
-[OK]  KRB staging        3 pending, 0 stale (oldest: 2d)
-[OK]  Pipeline worker    running (last processed: 4m ago)
-[OK]  Decay daemon       running (last run: 6h ago)
-[OK]  Signal queue       12 pending signals
-[WARN] Benchmark         last run: 14d ago (recommend: re-run update_baseline.py)
+[OK]  brain.db          accessible (1247 nodes, 389 edges)
+[OK]  Single DB mode    knowledge_graph.db merged (C-01)
+[OK]  KRB staging       3 pending, 0 stale (oldest: 2d)
+[OK]  Pipeline worker   running (last processed: 4m ago)
+[OK]  Decay daemon      running (last run: 6h ago)
+[OK]  Signal queue      12 pending signals
+[OK]  Benchmark         last run: 2d ago
 ======================================
-Overall: WARN (1 warning, 0 errors)
+Overall: OK (0 warnings, 0 errors)
 ```
 
-#### 實作步驟
+**實作**：`project_brain/health.py` 新模組，`cli_admin.py` 呼叫，支援 `--json`、`--no-color`。
 
-1. **`project_brain/interfaces/cli_admin.py`**（或新的 `cli_health.py`）：
-   - 新增 `health` subcommand
-   - 實作各項檢查函式（每個 try/except，失敗顯示 ERROR）
-
-2. **檢查項目清單**：
-   - DB 連線與基本節點數（BrainDB + KnowledgeGraph）
-   - KG/BrainDB 節點數差異（B-02 完成後準確）
-   - KRB staging 狀態（pending 數、最舊 pending 日期）
-   - Pipeline worker 存活（讀 `pipeline_metrics` 最後一筆記錄）
-   - Decay daemon 最後執行時間
-   - Signal queue pending 數
-   - baseline.json 最後更新距今天數
-
-3. **輸出格式**：
-   - 結構化（支援 `--json` flag 輸出 JSON）
-   - 顏色（OK=green、WARN=yellow、ERROR=red，支援 `--no-color`）
-
-4. **MCP tool**（選擇性）：新增 `brain_status` 增強版，回傳 health JSON
-
-#### 測試計劃
-
-```python
-# tests/unit/test_cli_health.py
-class TestHealthCommand:
-    def test_all_ok_fresh_db(self, tmp_path):
-        """新初始化的 DB，health 全綠"""
-    def test_warn_kg_braindb_mismatch(self, tmp_path):
-        """手動在 KG 加入節點但不同步 BrainDB，health 顯示 WARN"""
-    def test_warn_stale_staging(self, tmp_path):
-        """插入 35 天前的 pending staging，health 顯示 WARN"""
-    def test_json_output_schema(self, tmp_path):
-        """--json 輸出可被 json.loads 解析，包含必要欄位"""
-    def test_db_not_found_shows_error(self, tmp_path):
-        """brain.db 不存在時顯示 ERROR，不 crash"""
-```
-
-#### 驗收條件
-
-- [x] `brain health` 命令可執行，輸出各項狀態
-- [x] KG/BrainDB 不一致時顯示 WARN（依賴 B-02）
-- [x] `--json` 輸出格式穩定（供 CI 解析）
-- [x] DB 不存在時優雅降級（不 crash）
-- [x] `pytest tests/unit/test_health.py` 全通過（21/21）
-
-**推薦模型**：Sonnet 4.6（跨多模組資訊收集 + CLI 設計）
-**估計工作量**：3h
+**測試**：21 tests（`test_health.py`）
 
 ---
 
 ### B-04 Pipeline Metrics Dashboard [DONE v0.35.0]
 
-**ID**：新功能（§8.4 列出）
-**優先**：P2
-**依賴**：`pipeline_metrics` 表已存在（brain.db 中）
+**設計**：`brain pipeline-stats [--prometheus] [--days N] [--json]`
 
-#### 設計
+**實作**：`BrainDB.get_pipeline_stats(days=7)` + CLI subcommand
 
-目標：讓 `brain stats` 或新的 `brain pipeline-stats` 輸出 pipeline 運行統計，同時支援 Grafana 可讀的 Prometheus text format。
-
-```bash
-$ brain pipeline-stats
-Pipeline Statistics (last 7 days)
-==================================
-Signals received:    142
-Signals processed:    98 (69%)
-  - Added to L3:      31 (32%)
-  - Skipped:          67 (68%)
-  - Failed:            0
-Avg processing time: 2.3s
-Worker uptime:       99.2%
-Queue depth (now):   12
-
-$ brain pipeline-stats --prometheus
-# HELP brain_signals_total Total signals received
-# TYPE brain_signals_total counter
-brain_signals_total{status="received"} 142
-brain_signals_total{status="processed"} 98
-...
-```
-
-#### 實作步驟
-
-1. **確認** `pipeline_metrics` 表 schema（讀 brain_db.py）
-2. **新增** `BrainDB.get_pipeline_stats(days=7) → dict` 聚合查詢
-3. **新增** `brain pipeline-stats [--prometheus] [--days N]` CLI subcommand
-4. **Prometheus exporter**：`brain serve --metrics` 在 `/metrics` 端點輸出 text format（可選，僅在 `gunicorn` extra 安裝時啟用）
-
-#### 測試計劃
-
-```python
-# tests/unit/test_pipeline_stats.py
-class TestPipelineStats:
-    def test_empty_db_returns_zero_stats(self, tmp_path): ...
-    def test_stats_aggregate_by_status(self, tmp_path): ...
-    def test_days_filter_works(self, tmp_path): ...
-    def test_prometheus_format_parseable(self, tmp_path): ...
-```
-
-#### 驗收條件
-
-- [x] `brain pipeline-stats` 輸出人可讀統計
-- [x] `--prometheus` 輸出可被 Prometheus text format 解析器讀取
-- [x] `--json` 輸出 JSON 格式
-- [x] 空 DB 不 crash（回傳全 0）
-- [x] `pytest tests/unit/test_pipeline_stats.py` 全通過（19/19）
-
-**推薦模型**：Sonnet 4.6（跨 CLI + DB 聚合查詢）
-**估計工作量**：3h
+**測試**：19 tests（`test_pipeline_stats.py`）
 
 ---
 
-### B-05 MEDIUM-03：MCP Server Singleton 重構 [DONE v0.35.0]
+### B-05 MEDIUM-03：MCP Server BrainServer 重構 [DONE v0.35.0]
 
-**ID**：MEDIUM-03
-**優先**：P2（測試穩定性，pytest-xdist 並行時狀態污染風險）
-**依賴**：無（獨立重構）
+**設計**：封裝 7 個 module-level 可變狀態進 `class BrainServer`，`create_server()` 工廠不變（無 breaking change）。
 
-#### 設計
+**實作**：`mcp_server.py` 全面重構，新增 `BrainServer.emit_signal()` 非阻塞信號發送。
 
-**問題根源**：`mcp_server.py` 頂層有 7 個 module-level 可變狀態變數：
-
-```python
-_call_times: list[float] = []
-_rate_lock = threading.Lock()
-_session_nodes: dict[str, list[str]] = {}
-_snodes_lock = threading.Lock()
-_session_served: dict[str, set[str]] = {}
-_cleanup_daemon_started = False
-_decay_daemon_started = False
-```
-
-同程序多個 Brain 實例（或 pytest 並行）共享這些狀態。
-
-**修法**：封裝進 `class BrainServer`，`create_server()` 工廠回傳實例。
-
-```python
-class BrainServer:
-    def __init__(self, brain_dir: Path, config: BrainConfig):
-        self._call_times: list[float] = []
-        self._rate_lock = threading.Lock()
-        self._session_nodes: dict[str, list[str]] = {}
-        # ...
-        self._cleanup_started = False
-        self._decay_started = False
-
-    def create_mcp_server(self) -> Server:
-        """原 create_server() 的邏輯移入此方法"""
-        ...
-```
-
-#### 實作步驟
-
-1. **讀取** `project_brain/interfaces/mcp_server.py` 全文
-2. **建立** `class BrainServer` 包含所有 module-level state
-3. **將所有 helper 函式**（`_rate_check`, `_track_session_node` 等）改為 `BrainServer` 的方法（或 closure）
-4. **保留** `create_server(brain_dir, config) → Server` 為公開工廠函式（現有呼叫方不需改動）：
-   ```python
-   def create_server(brain_dir, config=None):
-       srv = BrainServer(brain_dir, config)
-       return srv.create_mcp_server()
-   ```
-5. **確認** `mcp_server.create_server()` 的呼叫方（`engine.py`、CLI）無需修改
-
-#### 測試計劃
-
-```python
-# tests/unit/test_mcp_server_isolation.py
-class TestServerIsolation:
-    def test_two_servers_have_independent_rate_state(self, tmp_path):
-        """兩個 create_server() 實例的 rate limit 互不干擾"""
-    def test_two_servers_have_independent_session_state(self, tmp_path):
-        """兩個實例的 session_nodes 不共享"""
-    def test_daemon_flags_per_instance(self, tmp_path):
-        """每個實例有獨立的 daemon started flag"""
-
-# tests/unit/test_mcp_server_regression.py — 確保既有行為不退化
-class TestExistingBehaviorUnchanged:
-    def test_rate_limit_still_enforced(self, tmp_path): ...
-    def test_session_tracking_still_works(self, tmp_path): ...
-```
-
-#### 驗收條件
-
-- [x] `create_server()` 公開 API 不變（無 breaking change）
-- [x] 兩個 `create_server()` 實例的狀態互相隔離
-- [x] 現有所有 MCP server 測試通過（零 regression）
-
-**推薦模型**：Sonnet 4.6（跨檔重構，需確保所有呼叫方正確）
-**估計工作量**：6h
+**測試**：18 tests（`test_mcp_server_isolation.py`）
 
 ---
 
-### B-06 MEDIUM-06：`_count_tokens` 停用 LRU cache [DONE v0.35.0]
+### B-06 MEDIUM-06：`_count_tokens` 移除 LRU cache [DONE v0.35.0]
 
-**ID**：MEDIUM-06
-**優先**：P3（性能優化）
-**依賴**：無
+**設計**：移除 `@lru_cache(maxsize=1024)`，改為確定性 O(n) CJK 估算（無快取管理成本）。
 
-#### 設計
+**實作**：`engines/context.py`，擴展 CJK 範圍至 Extension A（U+3400）+ Compatibility Ideographs（U+F900）。
 
-**問題**：`@functools.lru_cache(maxsize=1024)` 對 5000+ 節點的知識庫命中率 < 20%，持續驅逐 + 重算浪費 CPU。
-
-**修法（方案 B）**：移除 cache decorator，改為確定性 O(n) 估算：
-
-```python
-def _count_tokens(text: str) -> int:
-    """確定性 token 估算，無 cache 管理成本。
-
-    中文字元：約 1 token / char
-    ASCII 字元：約 1 token / 4 chars
-    混合文字：分段計算
-    """
-    if not text:
-        return 0
-    cjk = sum(1 for c in text if '\u4e00' <= c <= '\u9fff'
-              or '\u3400' <= c <= '\u4dbf'
-              or '\uf900' <= c <= '\ufaff')
-    ascii_like = len(text) - cjk
-    return cjk + max(1, ascii_like // 4)
-```
-
-#### 測試計劃
-
-```python
-# tests/unit/test_token_count.py（更新既有測試）
-class TestCountTokens:
-    def test_empty_string(self): assert _count_tokens("") == 0
-    def test_pure_cjk(self): assert _count_tokens("你好世界") == 4
-    def test_pure_ascii(self): assert _count_tokens("hello world") == 3  # 11/4 ≈ 3
-    def test_mixed(self): ...
-    def test_deterministic(self):
-        """相同輸入永遠相同輸出（不依賴快取狀態）"""
-        assert _count_tokens("abc") == _count_tokens("abc")
-    def test_no_lru_cache_attribute(self):
-        """確認 cache_info() 不存在（已移除 decorator）"""
-        assert not hasattr(_count_tokens, 'cache_info')
-```
-
-#### 驗收條件
-
-- [x] `_count_tokens` 無 `@lru_cache` decorator
-- [x] 結果與舊實作誤差 < 20%（token 估算允許誤差）
-- [x] `context.py` 相關測試全通過
-
-**推薦模型**：Haiku 4.5（單函式改寫，< 20 行）
-**估計工作量**：1h
+**測試**：30 tests（`test_perf03_token_cache.py`）
 
 ---
 
 ### B-07 LOW-01~04：錯誤處理批次修復 [DONE v0.35.0]
 
-**ID**：LOW-01, LOW-02, LOW-03, LOW-04
-**優先**：P3（可維護性）
-**依賴**：無（可一次批次完成）
+| ID | 位置 | 問題 | 修法 |
+|----|------|------|------|
+| LOW-01 | `context.py:92` | `except Exception: pass` 吞掉 config 讀取失敗 | `logger.warning(...)` |
+| LOW-02 | `brain_db.py:68` | `except OSError: pass` 備份清理靜默 | `logger.debug(...)` |
+| LOW-03 | `brain_db.py:93` | `close()` 無 idempotent 保護 | `if self._conn is None: return` |
+| LOW-04 | `federation.py` | `_strip_pii` 未處理 UUID / token 格式 | 新增 UUID + sk-/ghp_/xoxb- regex |
 
-#### 各項說明
-
-**LOW-01**：`context.py:92` — `except Exception: pass` 吞掉 config.json 讀取失敗，無任何日誌
-```python
-# 修法：改為 logger.warning("failed to load config: %s", e)
-```
-
-**LOW-02**：`brain_db.py:68` — `except OSError: pass`（備份清理靜默）
-```python
-# 修法：改為 logger.debug("backup cleanup failed (non-critical): %s", e)
-```
-
-**LOW-03**：`brain_db.py:93` — `close()` 無 idempotent 保護，重複呼叫可能出錯
-```python
-# 修法：
-def close(self):
-    if self._conn is None:
-        return
-    self._conn.close()
-    self._conn = None
-```
-
-**LOW-04**：`federation.py:63-71` — `_strip_pii` 未處理 UUID、序列號、token 格式
-```python
-# 修法：新增 UUID pattern (8-4-4-4-12) + 常見 token 格式 regex
-_PII_UUID = re.compile(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.I)
-_PII_TOKEN = re.compile(r'\b(sk-|ghp_|xoxb-)[A-Za-z0-9_-]{16,}\b')
-```
-
-#### 測試計劃
-
-```python
-# tests/unit/test_low_fixes.py
-class TestLow01ContextConfigLog:
-    def test_invalid_config_logs_warning(self, caplog, tmp_path): ...
-
-class TestLow02BackupCleanupLog:
-    def test_cleanup_oserror_logs_debug(self, caplog, tmp_path): ...
-
-class TestLow03CloseIdempotent:
-    def test_double_close_no_exception(self, tmp_path): ...
-    def test_close_sets_conn_none(self, tmp_path): ...
-
-class TestLow04PiiUUID:
-    def test_uuid_stripped(self): ...
-    def test_github_token_stripped(self): ...
-    def test_slack_token_stripped(self): ...
-    def test_normal_hyphenated_word_not_stripped(self): ...
-```
-
-#### 驗收條件
-
-- [x] LOW-01~03：相關位置無靜默 `pass`
-- [x] LOW-04：UUID 和常見 token 格式被 `_strip_pii` 清理
-- [x] 所有現有 federation 測試通過（75 tests 不退化）
-
-**推薦模型**：Haiku 4.5（LOW-01~03）；Sonnet 4.6（LOW-04，PII 邊界需思考）
-**估計工作量**：3h
-
----
-
-### Phase B 完成驗收
-
-```bash
-# Phase B 完成後，全量測試基準
-python -m pytest tests/ -q 2>&1 | tail -3
-# 目標：≥ 730 passed（現 684 + ~46 新測試），0 regression
-
-python -m pytest tests/ -m benchmark -q
-# 目標：4 tests passed（召回率/延遲回歸門檻）
-
-brain health
-# 目標：all [OK]（新安裝環境）
-```
+**測試**：21 tests（`test_low_fixes.py`）
 
 ---
 
 ## 5. Phase C — 架構演進 [DONE v0.40.0]
 
-> **前提依賴**：Phase B 全部完成，系統可觀測性建立後再動架構
+> **前提依賴**：Phase B 全部完成（v0.35.0 ✅）
 >
 > **核心目標**：統一資料層、統一 LLM 介面、擴展 Pipeline 信號類型
 >
-> **總估計工作量**：~60h（Haiku 0h / Sonnet 16h / Opus 44h）
+> **實際結果**：+448 tests（919 → 1367 passed）
 
 ### C-01 ARCH-01：統一 DB（knowledge_graph.db 合併進 brain.db）[DONE v0.40.0]
 
-**ID**：ARCH-01
-**優先**：P3（架構債，但 B-02 事件同步先緩解症狀）
-**依賴**：B-02 完成（事件同步讓遷移更安全）；Schema v27 migration
-
-#### 設計
-
-**目標**：消除雙 DB 架構，讓所有資料在單一 `brain.db` 的單一事務內完成。
+**設計**：
 
 ```
-v0.34 (two DBs)              v0.40 (single DB)
+v0.35 (two DBs)              v0.40 (single DB)
 ──────────────────           ──────────────────────────
-brain.db                     brain.db
-  nodes (FTS5 mirror)          nodes (唯一真相源)
-  edges                        nodes_fts (FTS5 virtual)
-  ...                          edges
-knowledge_graph.db             temporal_edges
-  nodes (真相源)               episodes
-  edges (duplicate)            sessions
-  temporal_edges               node_vectors
-                               staged_nodes (從 KRB 遷入)
-                               signal_queue
-                               pipeline_metrics
-                               node_history
+brain.db                     brain.db  ← 唯一資料庫
+  nodes (FTS5 mirror)          nodes（kind 欄位，統一 schema）
+  edges                        nodes_fts（standalone FTS5，tokenize=unicode61）
+knowledge_graph.db             edges（含 weight/confidence/trigger_condition）
+  nodes (真相源)               temporal_edges
+  edges (duplicate)            episodes / sessions / staged_nodes
+                               signal_queue / pipeline_metrics
+                               node_history / feedback_log
 ```
 
-#### Schema v31 遷移策略
+**關鍵技術決策**：
+- FTS5 改為 standalone 模式（`tokenize='unicode61'`），棄用 `content='nodes'` content-backed 模式，解決 KG-first 初始化時的 FTS5 衝突
+- KG 接受 `conn=` 參數共享連線，`_owns_conn=False` 時跳過 close
+- `_migrate_kg_to_unified()` 一次性遷移，冪等，完成後改名 `.db.bak`
 
-```python
-def migrate_v30_to_v31(brain_dir: Path) -> MigrationResult:
-    """
-    遷移步驟（全部在 transaction 內）：
-    1. brain.db 建立 temporal_edges 表（從 KG schema）
-    2. brain.db 建立 node_history 表（從 KG）
-    3. 從 knowledge_graph.db 讀取所有 nodes，upsert 進 brain.db
-       （以 brain.db 版本為主，KG 只補 version/created_at）
-    4. 從 KG 複製 edges（INSERT OR IGNORE）
-    5. 從 KG 複製 temporal_edges
-    6. 驗證：brain.db node 數 >= KG node 數
-    7. 備份 KG：knowledge_graph.db → knowledge_graph.db.bak.YYYYMMDD
-    8. 更新 brain_meta.schema_version = 31
-    """
-```
+**Schema 遷移**：v22 → v27（edges 對齊 + indexes）→ v28（feedback_log）
 
-#### 實作步驟
+**實作**：
+1. `brain_db.py`：migration v27，`_migrate_kg_to_unified()`
+2. `graph.py`：`db_path = brain_dir/"brain.db"`，`conn=` 參數，FTS5 standalone
+3. `engine.py`：移除 Observer wiring，傳入 `conn=self.db.conn`
+4. `review_board.py`：移除雙重寫入，只呼叫 `graph.add_node()`
+5. `health.py`：single-DB 報告
+6. `cli_fed.py`：修正 3 個路徑 bug（`KnowledgeGraph(bd/"brain.db")` → `KnowledgeGraph(bd)`）
+7. `tests/test_web_ui.py`：fixture 改為 BrainDB-first + 共享 conn
 
-1. **設計** `BrainDB` v31 schema（新增 temporal_edges、node_history 表）
-2. **實作** `migrate_v30_to_v31()` 遷移腳本（含乾跑模式 `--dry-run`）
-3. **重構** `KnowledgeGraph`：改為使用 `brain.db` 而非獨立檔案（接受 `BrainDB` 實例）
-4. **更新** `ProjectBrain.__init__`：移除 KG DB 初始化，改從 `BrainDB` 建立 KG view
-5. **更新** `review_board.approve()`：移除 BrainDB 手動同步（B-02 的事件機制 + 統一 DB 讓這不再需要）
-6. **`brain init`** 自動觸發遷移（偵測到 `knowledge_graph.db` 存在時）
+**測試**：25 tests（`test_db_unification.py`）
 
-#### 測試計劃
-
-```python
-# tests/unit/test_db_migration_v31.py
-class TestMigrationV31:
-    def test_dry_run_reports_counts(self, tmp_path): ...
-    def test_migration_preserves_all_nodes(self, tmp_path): ...
-    def test_migration_preserves_edges(self, tmp_path): ...
-    def test_migration_idempotent(self, tmp_path):
-        """二次遷移不重複資料，無錯誤"""
-    def test_migration_creates_backup(self, tmp_path): ...
-    def test_rollback_on_failure(self, tmp_path):
-        """遷移中途失敗，brain.db 回到原狀態"""
-
-# tests/unit/test_kg_on_unified_db.py — 確認 KG 功能在 brain.db 上正常
-class TestKGOnUnifiedDB:
-    def test_add_node_searchable_via_fts5(self, tmp_path): ...
-    def test_cas_still_works(self, tmp_path): ...
-    def test_temporal_edges_queryable(self, tmp_path): ...
-```
-
-#### 驗收條件
-
-- [x] 遷移後 `knowledge_graph.db` 不再被建立
-- [x] 所有既有 KG 測試通過（無 regression）
-- [x] `brain health` 顯示單 DB 模式
+**驗收**：
+- [x] 新安裝不建立 knowledge_graph.db
+- [x] `brain health` 顯示 single DB mode
 - [x] 50 threads 並發測試在統一 DB 上通過
-
-**推薦模型**：Opus 4.6 (1M)（Schema 遷移 + 全檔掃描，架構級設計）
-**估計工作量**：24h
 
 ---
 
 ### C-02 integrations/llm_client.py — 統一 LLM 介面 [DONE v0.40.0]
 
-**ID**：新功能（§6.2 延後項目）
-**優先**：P3（為 C-03、C-04 提供乾淨基礎）
-**依賴**：無（新建）
-
-#### 設計
-
-目前 LLM 呼叫散落在多個模組，各自實作重試、fallback、timeout：
-
-| 模組 | LLM 呼叫方式 |
-|------|-------------|
-| `pipeline/llm_judgment.py` | `OllamaClient` + Anthropic fallback |
-| `engines/memory_synthesizer.py` | 獨立呼叫 |
-| `engines/conflict_resolver.py` | 獨立呼叫 |
-| `engines/knowledge_validator.py` | 獨立呼叫 |
-| `engines/review_board.py` (KRBAIAssistant) | `OllamaClient` |
-
-**目標**：建立 `integrations/llm_client.py` 統一介面：
+**設計**：
 
 ```python
 class LLMClient(Protocol):
-    """統一 LLM 呼叫介面（Protocol，不強制繼承）"""
-    def complete(self, prompt: str, *, timeout: int = 30,
-                 max_retries: int = 2, temperature: float = 0.1) -> str: ...
+    def complete(self, prompt: str, *, timeout=30, max_retries=2, temperature=0.1) -> str: ...
 
-class OllamaLLMClient:
-    """本地 Ollama 實作"""
-    ...
+class OllamaLLMClient:    # 本地 Ollama
+class AnthropicLLMClient:  # Anthropic API
+class FallbackLLMClient:   # primary → fallback 自動切換
+class NoopLLMClient:       # CI/測試環境佔位符
 
-class AnthropicLLMClient:
-    """Anthropic API 實作"""
-    ...
-
-class FallbackLLMClient:
-    """優先使用 primary，失敗時 fallback"""
-    def __init__(self, primary: LLMClient, fallback: LLMClient): ...
-
-def from_brain_config(section: str, brain_dir: Path) -> LLMClient:
-    """從 brain.toml 建立對應實作（工廠函式）"""
-    ...
+def from_brain_config(section, brain_dir) -> LLMClient:  # 工廠函式
 ```
 
-#### 實作步驟
+**實作**：`integrations/llm_client.py`（新模組），`pipeline/llm_judgment.py` 遷移使用統一介面。
 
-1. **讀取** 現有 OllamaClient 實作（`llm_judgment.py` 中）
-2. **建立** `integrations/llm_client.py`，提取共用邏輯
-3. **漸進遷移**：先讓 `llm_judgment.py` 使用新介面，其他模組後續遷移
-4. **compat shim**：原 `OllamaClient` 保留為 `LLMClient` 的別名
-
-#### 測試計劃
-
-```python
-# tests/unit/test_llm_client.py
-class TestFallbackClient:
-    def test_uses_primary_when_available(self): ...
-    def test_falls_back_on_primary_failure(self): ...
-    def test_raises_when_both_fail(self): ...
-
-class TestFromBrainConfig:
-    def test_ollama_section_creates_ollama_client(self, tmp_path): ...
-    def test_missing_section_returns_noop_client(self, tmp_path): ...
-```
-
-#### 驗收條件
-
-- [x] `from_brain_config` 工廠可替換現有各模組的 OllamaClient 建構方式
-- [x] 現有 LLM judgment 測試通過（零 regression）
-
-**推薦模型**：Opus 4.6 (1M)（跨多模組重構，需理解所有呼叫方）
-**估計工作量**：8h
+**測試**：28 tests（`test_llm_client.py`）
 
 ---
 
 ### C-03 ARCH-02：KnowledgeValidator CI 集成 [DONE v0.40.0]
 
-**ID**：ARCH-02
-**優先**：P3
-**依賴**：C-02（使用統一 LLM 介面）
+**設計**：`brain validate [--ci] [--json] [--output report.json] [--max-api-calls N]`
 
-#### 設計
+- `--ci` 模式：LLM 不可用時只跑 Rule + 統計兩階段
+- JSON report：`{"passed": bool, "rule_violations": [...], "stats": {...}}`
+- exit code 1 when `passed: false`（供 CI 解析）
 
-`KnowledgeValidator` 三階段（Rule 驗證 → 統計分析 → LLM 抽樣）已實作，但：
-1. 沒有 CI 觸發機制（只能手動呼叫）
-2. LLM 抽樣階段在 CI 環境中 Ollama 不可用時會 skip，無 fallback 報告
+**實作**：`ValidationReport.to_dict()`、`_ValidatorLLMAdapter`、`cmd_validate()`
 
-**目標**：
-- `brain validate [--ci]` 命令，可在 CI pipeline 呼叫
-- `--ci` 模式：LLM 不可用時，只跑 Rule + 統計兩階段，輸出 JSON report
-- 新增 `tests/integration/test_knowledge_validator_ci.py`（不需 LLM）
-
-#### 實作步驟
-
-1. 新增 `brain validate --ci --output report.json` CLI flag
-2. CI-safe 模式跳過 LLM 抽樣，輸出 `{"passed": bool, "rule_violations": [...], "stats": {...}}`
-3. 整合測試：模擬 200 個節點，驗證三階段各自可獨立跑
-
-#### 驗收條件
-
-- [x] `brain validate --ci` 在無 Ollama 環境執行不 crash
-- [x] JSON report 可被 CI 解析（exit code 1 if `passed: false`）
-
-**推薦模型**：Sonnet 4.6
-**估計工作量**：6h
+**測試**：11 tests（`test_knowledge_validator_ci.py`）
 
 ---
 
-### C-04 ARCH-04：Pipeline Phase 2 — 新增 MCP_TOOL_CALL / TEST_FAILURE 信號 [DONE v0.40.0]
+### C-04 ARCH-04：Pipeline Phase 2 — MCP_TOOL_CALL / TEST_FAILURE / KNOWLEDGE_CONFLICT [DONE v0.40.0]
 
-**ID**：ARCH-04
-**優先**：P3
-**依賴**：C-02（統一 LLM 介面），Layer 1-4 穩定（Phase A）
-
-#### 設計
-
-目前 Pipeline 只捕捉 `GIT_COMMIT`、`KNOWLEDGE_GAP` 信號。Phase 2 新增：
+**設計**：
 
 | 信號類型 | 觸發時機 | 知識提取目標 |
 |---------|---------|------------|
-| `MCP_TOOL_CALL` | 每次 MCP tool 被呼叫（add_knowledge / answer_question / get_context） | 學習使用模式 |
-| `TEST_FAILURE` | `complete_task` 中的 lessons 含 "test failed" / "error" | 記錄測試失敗模式 |
-| `KNOWLEDGE_CONFLICT` | `find_conflicts()` 發現新衝突 | 主動偵測矛盾 |
+| `MCP_TOOL_CALL` | 每次 MCP tool 呼叫 | 學習使用模式、高頻 Pitfall |
+| `TEST_FAILURE` | `complete_task` lessons 含 error | 記錄測試失敗模式 |
+| `KNOWLEDGE_CONFLICT` | `find_conflicts()` 發現新衝突 | 主動偵測矛盾知識 |
 
-#### Prompt 設計（LLM 判斷引擎）
+**實作**：`signal.py` 新增 3 個 SignalKind；`llm_judgment.py` 新增 `_SIGNAL_HINTS` dict；`mcp_server.py` `BrainServer.emit_signal()` 非阻塞發送。
 
-```python
-# MCP_TOOL_CALL 信號的 prompt template
-MCP_TOOL_CALL_PROMPT = """
-你是知識提取助手。以下是一個 MCP tool 呼叫記錄。
-
-工具：{tool_name}
-參數摘要：{params_summary}
-結果摘要：{result_summary}
-
-請判斷：這個呼叫是否暗示了一個可記錄的知識？
-- 若是 add_knowledge 且 kind=Pitfall → 高價值，action=add, confidence=0.8
-- 若是重複的 get_context → action=skip
-- 其他 → 根據內容判斷
-
-輸出格式（JSON）：
-{"action": "add|skip", "reason": "...", "title": "...", "content": "...", "kind": "Pitfall|Rule|Decision|Note", "confidence": 0.0-1.0}
-"""
-```
-
-#### 實作步驟
-
-1. **`pipeline/signal.py`**：新增 `SignalKind.MCP_TOOL_CALL`、`TEST_FAILURE`、`KNOWLEDGE_CONFLICT`
-2. **`interfaces/mcp_server.py`**：在各 tool handler 末尾 emit MCP_TOOL_CALL 信號（非同步，不影響 tool 回應）
-3. **`pipeline/llm_judgment.py`**：新增各信號類型的 prompt template + `analyze()` dispatch
-4. **`pipeline/worker.py`**：新增信號類型的批次優先度（TEST_FAILURE > MCP_TOOL_CALL）
-
-#### 測試計劃
-
-```python
-# tests/unit/test_pipeline_phase2_signals.py
-class TestMCPToolCallSignal:
-    def test_add_knowledge_emits_signal(self, ...): ...
-    def test_get_context_signal_analyzed_as_skip(self, ...): ...
-
-class TestTestFailureSignal:
-    def test_complete_task_with_error_lesson_emits_signal(self, ...): ...
-    def test_signal_extracted_as_pitfall(self, ...): ...
-
-class TestKnowledgeConflictSignal:
-    def test_find_conflicts_result_emits_signal(self, ...): ...
-```
-
-#### 驗收條件
-
-- [x] 3 個新 SignalKind 定義完整，向後相容
-- [x] `add_knowledge` MCP tool 呼叫後 signal_queue 有對應記錄
-- [x] LLM 不可用時信號進 queue 但不 crash（非同步）
-
-**推薦模型**：Opus 4.6 (1M)（Signal schema + prompt 設計，需長 context 理解 pipeline 全貌）
-**估計工作量**：16h
+**測試**：20 tests（`test_pipeline_phase2_signals.py`）
 
 ---
 
 ### C-05 Pipeline Layer 5 — Feedback Loop [DONE v0.40.0]
 
-**ID**：§7.1 功能強化
-**優先**：P3
-**依賴**：C-04（需要足夠的信號數據）
-
-#### 設計
-
-每次 `report_knowledge_outcome(node_id, was_useful)` 後，統計特定信號類型的有用率：
+**設計**：
 
 ```python
-# 週期性計算（可在 decay daemon 中觸發）
-def _adjust_signal_confidence(signal_kind: str) -> None:
-    """若某信號類型 30 天內負面回饋 > 30%，降低 auto_confidence"""
-    negative_rate = feedback_tracker.get_negative_rate(signal_kind, days=30)
-    if negative_rate > 0.30:
-        # 降低此類型信號的預設 confidence（寫入 brain.toml 或 brain_meta）
-        new_confidence = max(0.3, current - 0.1)
-        brain_config.set_signal_confidence(signal_kind, new_confidence)
+# feedback_log 表（Schema v28）
+CREATE TABLE feedback_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT, signal_kind TEXT, was_useful INTEGER,
+    notes TEXT, conf_before REAL, conf_after REAL,
+    created_at TEXT DEFAULT (datetime('now'))
+)
+
+# 維護週期自動觸發
+def _adjust_signal_confidence(brain):
+    """30 天內 >30% 負面回饋 → 下調 signal 信心值（floor 0.3）"""
+    for signal_kind in tracked_kinds:
+        rate = ft.get_negative_rate(signal_kind, days=30)
+        if rate > 0.30 and sample_count >= 5:
+            new_conf = max(0.3, current_conf - 0.1)
+            brain.db.conn.execute("INSERT OR REPLACE INTO brain_meta ...")
 ```
 
-#### 驗收條件
+**實作**：`feedback_tracker.py`（`log_feedback` + `get_negative_rate`）；`mcp_server.py` `_adjust_signal_confidence` + `_run_maintenance_cycle` 整合。
 
-- [x] `report_knowledge_outcome` 記錄寫入 `feedback_log` 表（含信號類型）
-- [x] 週期統計在 decay daemon 中觸發
-- [x] 30% 負面回饋觸發 auto_confidence 下調（有測試覆蓋）
-
-**推薦模型**：Opus 4.6 (1M)（跨層設計，需理解 feedback_tracker + pipeline + config 三塊）
-**估計工作量**：12h
-
----
-
-### Phase C 完成驗收
-
-```bash
-# 單一 DB 驗證
-ls .brain/*.db
-# 預期只有：brain.db（knowledge_graph.db 已合併或備份）
-
-brain health
-# 預期：[OK] Database: single DB mode (brain.db)
-
-python -m pytest tests/ -q | tail -3
-# 目標：≥ 800 passed，0 regression
-```
+**測試**：19 tests（`test_feedback_loop.py`）
 
 ---
 
 ## 6. Phase D — 生產就緒 [目標 v1.0]
 
-> **前提依賴**：Phase C 全部完成
+> **前提依賴**：Phase C 全部完成（v0.40.0 ✅）
 >
 > **核心目標**：研究級功能（LoRA 蒸餾）、WebUI 完整化、CI 全覆蓋、生產驗證
 >
@@ -1023,37 +460,81 @@ python -m pytest tests/ -q | tail -3
 
 #### 設計
 
-**目標**：將 Brain 知識庫蒸餾成 LoRA adapter，使小型模型（7B）能直接回答專案問題，無需每次做 RAG。
-
 ```
-知識庫 ──[KnowledgeDistiller]──▶ 訓練資料集（Q&A pairs）
-                                     │
-                                     ▼
-                               [LoRA 訓練]（本地 GPU）
-                                     │
-                                     ▼
-                               brain.lora.adapter
-                                     │
-                        ┌────────────┘
-                        ▼
-                  Ollama 載入 adapter → 回答專案問題
+知識庫 ──[KnowledgeDistiller]──▶ Q&A 訓練資料集
+                                      │
+                                      ▼
+                                [LoRA 訓練]（unsloth/axolotl）
+                                      │
+                                      ▼
+                                brain.lora.adapter
+                                      │
+                           ┌──────────┘
+                           ▼
+                    Ollama 載入 adapter → 直接回答專案問題（無需 RAG）
 ```
 
-#### 實作步驟（高層次）
+#### 實作步驟
 
-1. **資料集生成**：`KnowledgeDistiller.generate_dataset()` — 從 L3 節點生成 Q&A pairs
-2. **訓練腳本**：`scripts/train_lora.py`（使用 unsloth / axolotl）
-3. **評估**：與 RAG 基線對比（recall@3 / answer accuracy）
-4. **推論整合**：`brain.toml [distiller.adapter_path]` 指定 adapter，優先於 RAG
+1. **`project_brain/engines/knowledge_distiller.py`**（新模組）
+   - `KnowledgeDistiller.generate_dataset(brain_dir, output_path)` — 從 L3 節點生成 Q&A pairs
+   - Q&A 格式：`{"instruction": "...", "input": "", "output": "..."}`
+   - 節點選擇策略：confidence ≥ 0.7，kind in [Rule, Decision, Pitfall]
 
-**注意**：此項目研究性強，工期難以精確估算，建議先完成 Phase A~C 積累足夠數據後再啟動。
+2. **`scripts/train_lora.py`**
+   - 使用 unsloth（速度優先）或 axolotl（彈性優先）
+   - 支援 Llama-3-8B / Mistral-7B base model
+   - 輸出 adapter 至 `.brain/brain.lora.adapter/`
+
+3. **`brain.toml` 整合**
+   ```toml
+   [distiller]
+   adapter_path = ".brain/brain.lora.adapter"
+   base_model = "llama3:8b"
+   enabled = false  # 需要顯式啟用
+   ```
+
+4. **推論整合**：`llm_client.py` 新增 `LoRALLMClient`，`from_brain_config` 工廠支援
+
+5. **評估腳本**：`scripts/eval_lora.py` — recall@3 / answer accuracy vs RAG 基線對比
+
+#### 測試計劃
+
+```python
+# tests/unit/test_knowledge_distiller.py
+class TestDatasetGeneration:
+    def test_generates_qa_pairs_from_nodes(self, tmp_path):
+        """知識庫 10 個高信心節點 → 生成 ≥ 8 個 Q&A pairs"""
+    def test_filters_low_confidence_nodes(self, tmp_path):
+        """confidence < 0.7 的節點不納入訓練集"""
+    def test_output_format_is_alpaca_compatible(self, tmp_path):
+        """每條 Q&A 含 instruction/input/output 欄位"""
+    def test_deduplication_in_dataset(self, tmp_path):
+        """相同 title 的節點只生成一條（dedup）"""
+    def test_empty_brain_returns_empty_dataset(self, tmp_path):
+        """空知識庫不 crash，回傳空 list"""
+
+class TestLoRAClientIntegration:
+    def test_lora_client_falls_back_when_adapter_missing(self, tmp_path):
+        """adapter 不存在時 fallback 到 Ollama"""
+    def test_from_brain_config_creates_lora_client(self, tmp_path):
+        """brain.toml [distiller.enabled=true] 建立 LoRALLMClient"""
+```
+
+#### 驗收條件
+
+- [ ] `brain distill` 命令可生成 Q&A 資料集
+- [ ] 生成資料集包含 ≥ 80% 的高信心節點
+- [ ] `LoRALLMClient` 可載入 adapter，fallback 到 Ollama 時無 crash
+- [ ] 訓練腳本在 RTX 3090（24GB）環境完整執行
+- [ ] adapter 推論 recall@3 ≥ RAG 基線
 
 **推薦模型**：Opus 4.6 (1M)（ML 研究級設計）
 **估計工作量**：40h+（含 GPU 訓練時間）
 
 ---
 
-### D-02 ARCH-05：WebUI 行內編輯
+### D-02 ARCH-05：WebUI 完整化（行內編輯 + KRB 管理）
 
 **ID**：ARCH-05
 **優先**：P4
@@ -1061,10 +542,63 @@ python -m pytest tests/ -q | tail -3
 
 #### 設計
 
-目前 WebUI 只有讀取功能（`web_ui/`，零測試）。目標新增：
-- 節點行內編輯（title / content / confidence）
+目前 WebUI 只讀（`web_ui/`，零測試）。目標新增：
+
+**前端功能**：
+- 節點行內編輯（title / content / confidence / kind）
 - KRB staging 管理界面（approve / reject / needs_changes）
-- 搜尋 + 過濾
+- 全文搜尋 + 種類過濾
+- 知識圖譜視覺化（D3.js force-directed graph，已部分實作）
+
+**API 端點**（新增）：
+
+| 端點 | 方法 | 功能 |
+|------|------|------|
+| `/api/node/<id>` | PATCH | 更新節點欄位 |
+| `/api/node/<id>` | DELETE | 刪除節點 |
+| `/api/staging` | GET | 列出 KRB pending |
+| `/api/staging/<id>/approve` | POST | 核准 |
+| `/api/staging/<id>/reject` | POST | 拒絕 |
+| `/api/search` | GET | FTS5 全文搜尋（已有，補測試） |
+
+#### 實作步驟
+
+1. **後端 API**（`web_ui/server.py`）：
+   - 新增 PATCH `/api/node/<id>` — 更新 title/content/confidence（驗證欄位白名單）
+   - 新增 DELETE `/api/node/<id>` — 邏輯刪除（is_deleted flag）
+   - 新增 GET/POST `/api/staging/*` — KRB 管理端點
+
+2. **前端更新**（`web_ui/templates/`）：
+   - 節點卡片新增「編輯」按鈕 → inline form
+   - Staging panel（右側欄位）
+   - 搜尋框 + 即時過濾
+
+3. **測試補全**：`tests/integration/test_web_ui.py` 新增 API 測試（目前 4 個 failing 測試需修正）
+
+#### 測試計劃
+
+```python
+# tests/integration/test_web_ui_edit.py
+class TestNodeEdit:
+    def test_patch_node_updates_title(self, client):
+        """PATCH /api/node/n1 {"title": "new"} → 更新成功"""
+    def test_patch_rejects_unknown_fields(self, client):
+        """未在白名單內的欄位回傳 400"""
+    def test_delete_node_removes_from_graph(self, client):
+        """DELETE /api/node/n1 → 節點不再出現於 /api/graph"""
+
+class TestKRBManagement:
+    def test_staging_list_returns_pending(self, client): ...
+    def test_approve_moves_to_l3(self, client): ...
+    def test_reject_updates_staging_status(self, client): ...
+```
+
+#### 驗收條件
+
+- [ ] 行內編輯儲存後立即反映於圖譜視圖
+- [ ] KRB staging 管理界面可正常 approve/reject
+- [ ] `pytest tests/integration/test_web_ui*.py` 全通過（零 failing）
+- [ ] 覆蓋率從 0 提升至 ≥ 40%
 
 **推薦模型**：Sonnet 4.6（前端 + API 整合）
 **估計工作量**：16h
@@ -1074,43 +608,80 @@ python -m pytest tests/ -q | tail -3
 ### D-03 完整 CI 集成
 
 **優先**：P4
-**依賴**：Phase B 完成（有 `brain health --json` 和 prometheus metrics）
+**依賴**：Phase B（`brain health --json`）、Phase C（`brain validate --ci`）
 
 #### CI Pipeline 設計
 
 ```yaml
-# .github/workflows/ci.yml（目標）
+# .github/workflows/ci.yml
+name: Project Brain CI
+
+on: [push, pull_request]
+
 jobs:
   unit:
-    - pytest tests/unit/ -q
-    - pytest tests/unit/ -m benchmark -q  # baseline regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/unit/ -q --tb=short
+      - run: pytest tests/unit/ -m benchmark -q  # baseline regression
 
   integration:
-    - pytest tests/integration/ -q
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest tests/integration/ -q --tb=short
 
-  health:
-    - brain health --json | jq '.overall == "OK"'
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: brain init /tmp/ci-brain
+      - run: brain validate --ci --output /tmp/report.json
+      - run: cat /tmp/report.json | python -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d['passed'] else 1)"
 
   coverage:
-    - pytest --cov=project_brain --cov-fail-under=60
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest --cov=project_brain --cov-fail-under=60 --cov-report=xml
+      - uses: codecov/codecov-action@v4
+
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - run: brain init /tmp/ci-brain && brain health --json | python -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d['overall']=='OK' else 1)"
 ```
 
 #### 驗收條件
 
-- [ ] 所有 CI 步驟在 GitHub Actions 上通過
-- [ ] `pytest -m benchmark` 在 CI 環境以 `skip`（無 embedder）優雅處理
+- [ ] 所有 CI jobs 在 GitHub Actions 上綠燈
+- [ ] `pytest -m benchmark` 在無 embedder 環境以 `skip` 優雅處理
 - [ ] 覆蓋率達 60%（從現有 50% 提升）
+- [ ] PR 有自動 coverage badge
 
 ---
 
 ### D-04 生產驗證
 
 **優先**：P4
-**包含**：
 
-1. **Federation 生產驗證**：在至少 2 個真實專案之間做跨知識庫同步，驗證 PII 清理完整性
-2. **E2E 整合測試**：git commit → signal → LLM 判斷 → L3 寫入（需真實 Ollama 環境）
-3. **效能基準更新**：5000 節點知識庫下的 recall@3 / avg latency 驗證
+#### 驗證清單
+
+1. **Federation 生產驗證**
+   - 在至少 2 個真實專案之間做跨知識庫同步
+   - 驗證 PII 清理完整性（UUID、token、email 不洩漏）
+   - 驗證 dedup 在大量節點（1000+）下的正確性
+
+2. **E2E Pipeline 整合測試**（需真實 Ollama 環境）
+   - git commit → signal emit → LLM judgment → L3 write
+   - 端到端延遲 ≤ 5s（signal 到 L3 寫入）
+   - 測試腳本：`tests/e2e/test_pipeline_e2e.py`
+
+3. **效能基準更新**
+   - 5000 節點知識庫下的 recall@3 / avg latency
+   - `update_baseline.py` 更新 baseline.json
+   - 目標：recall@3 ≥ 70%，avg latency ≤ 300ms
 
 ---
 
@@ -1118,61 +689,905 @@ jobs:
 
 **優先**：P4
 
-| 文件 | 目標狀態 |
-|------|---------|
-| `COMMANDS.md` | 更新至 v1.0 所有命令（含 `brain health`、`brain pipeline-stats`） |
-| `INSTALL.md` | 加入 GPU 環境（LoRA 蒸餾）安裝指引 |
-| `tests/TEST_PLAN.md` | 更新至 v1.0 測試套件全覽 |
-| `docs/EXPERIMENT_REPORT.md` | 填入 REV-01/02 真實實驗數據 |
-| `README.md` | 加入架構圖、核心功能 GIF |
+| 文件 | 目標狀態 | 工作量 |
+|------|---------|--------|
+| `COMMANDS.md` | 更新至 v1.0（含 `brain health`、`brain pipeline-stats`、`brain validate`） | 2h |
+| `INSTALL.md` | 加入 GPU 環境（LoRA 蒸餾）安裝指引 | 2h |
+| `tests/TEST_PLAN.md` | 更新至 v1.0 測試套件全覽（1367 tests 分類） | 3h |
+| `docs/EXPERIMENT_REPORT.md` | 填入 REV-01/02 真實實驗數據（E2E 驗證後） | 4h |
+| `README.md` | 加入架構圖、核心功能 GIF、快速開始指引 | 4h |
 
 ---
 
-## 7. 依賴關係圖
+### Phase D 完成驗收
+
+```bash
+# D-01：蒸餾功能
+brain distill --output /tmp/dataset.json
+python -c "import json; d=json.load(open('/tmp/dataset.json')); print(len(d), 'Q&A pairs')"
+
+# D-03：CI 全部綠燈
+gh run list --limit 5  # GitHub Actions
+
+# D-04：效能基準
+python benchmarks/update_baseline.py --min-nodes 5000
+cat benchmarks/baseline.json | jq '.recall_at_3, .avg_latency_ms'
+# 預期：≥ 0.70, ≤ 300
+
+# 全量測試（≥ 1500 passed）
+python -m pytest tests/ -q | tail -3
+```
+
+---
+
+## 7. Phase E — 團隊共享腦 [目標 v2.0]
+
+> **前提依賴**：Phase D 全部完成（v1.0 ✅）
+>
+> **核心目標**：讓整個團隊共享一個集中知識庫，每個人的 Claude Code（小龍蝦）都能連接並使用。
+>
+> **總估計工作量**：~120h
+>
+> **架構願景**：
+>
+> ```
+>                   ┌─────────────────────────────────┐
+>                   │     Central Brain Server         │
+>                   │     (公司集中知識庫)               │
+>                   │     brain.db (shared)            │
+>                   │     HTTP MCP Server :3000        │
+>                   │     API Key 認證                 │
+>                   └──────────────┬──────────────────┘
+>                                  │ HTTP/SSE MCP
+>           ┌──────────────────────┼──────────────────────┐
+>           │                      │                      │
+>     [小龍蝦 A]              [小龍蝦 B]              [小龍蝦 C]
+>     Claude Code             Claude Code             Claude Code
+>     (工程師甲)              (工程師乙)              (工程師丙)
+>     本地 brain (可選)        本地 brain (可選)        本地 brain (可選)
+>           │                      │                      │
+>           └──────────────────────┴──────────────────────┘
+>                        所有人共享同一份知識
+> ```
+
+### E-01 HTTP MCP Transport（核心基礎）
+
+**ID**：E-01
+**優先**：P1（Phase E 的基礎，其他項目依賴此項）
+**依賴**：D 全部完成
+**估計工作量**：20h
+
+#### 設計
+
+目前 MCP Server 只支援 stdio transport（本地進程通訊）。Phase E 需要 HTTP/SSE transport 讓遠端 Claude Code 連接。
+
+**MCP 協定要求**：
+- HTTP POST `/mcp` — 接收 JSON-RPC 請求
+- GET `/mcp/sse` — Server-Sent Events 推送（Sampling、通知）
+- 請求格式：MCP 1.x JSON-RPC over HTTP
+
+**啟動方式**：
+```bash
+# 單機本地（不變）
+brain serve --port 3000
+
+# 網路可存取模式（新增）
+brain serve --bind 0.0.0.0 --port 3000 --auth-key $BRAIN_API_KEY
+
+# 多個 workdir（多專案）
+brain serve --bind 0.0.0.0 --port 3000 --multi-project
+```
+
+**Claude Code 客戶端設定**（`claude_desktop_config.json`）：
+```json
+{
+  "mcpServers": {
+    "company-brain": {
+      "url": "http://brain.company.internal:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BRAIN_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+#### 實作步驟
+
+**步驟 1**：研究 MCP 1.x HTTP transport 規格
+- 閱讀 `mcp` package 的 HTTP transport 文件
+- 確認 SSE 端點格式（`/mcp/sse` vs `/sse`）
+- 確認 JSON-RPC over HTTP 的 session 管理方式
+
+**步驟 2**：`interfaces/mcp_server.py` 新增 HTTP transport
+```python
+def create_http_server(brain_dir: Path, config=None,
+                       bind: str = "127.0.0.1",
+                       port: int = 3000,
+                       auth_key: str = None) -> "HTTPBrainServer":
+    """建立支援 HTTP/SSE 的 MCP Server"""
+    srv = BrainServer(brain_dir, config)
+    return HTTPBrainServer(srv, bind=bind, port=port, auth_key=auth_key)
+```
+
+**步驟 3**：`HTTPBrainServer` 類別
+- 使用 `mcp` package 的 `http` transport（若支援）或用 Flask/FastAPI 包裝
+- 請求驗證：`Authorization: Bearer {key}` header
+- 連線計數 + rate limiting（per client IP）
+- Graceful shutdown（SIGTERM handler）
+
+**步驟 4**：`cli_serve.py` 更新 `brain serve` 命令
+```python
+def cmd_serve(args):
+    if args.bind != "127.0.0.1" or args.auth_key:
+        # 網路模式
+        server = create_http_server(workdir, bind=args.bind,
+                                    port=args.port, auth_key=args.auth_key)
+    else:
+        # 本地 stdio 模式（不變）
+        server = create_server(workdir)
+```
+
+**步驟 5**：安全加固
+- Rate limiting：每個 IP 每分鐘 ≤ 60 requests
+- CORS：只允許明確設定的 origin（`--allow-origin`）
+- TLS：支援 `--cert` / `--key` 或 nginx 反代文件
+
+#### 測試計劃
+
+```python
+# tests/integration/test_http_mcp_server.py
+class TestHTTPMCPBasic:
+    def test_health_endpoint_accessible(self, http_server):
+        """GET /health → 200"""
+    def test_mcp_endpoint_rejects_unauthenticated(self, http_server):
+        """POST /mcp without auth → 401"""
+    def test_mcp_endpoint_accepts_valid_key(self, http_server):
+        """POST /mcp with valid Bearer → 200"""
+    def test_rate_limit_enforced(self, http_server):
+        """61 requests/min from same IP → 429 on 61st"""
+    def test_two_clients_independent_sessions(self, http_server):
+        """兩個 client 的 session state 互不干擾"""
+
+class TestMCPToolsOverHTTP:
+    def test_brain_status_tool_works_over_http(self, http_server, mcp_client):
+        """brain_status tool 透過 HTTP 可正常呼叫"""
+    def test_add_knowledge_tool_works_over_http(self, http_server, mcp_client):
+        """add_knowledge 寫入後 search_knowledge 可找到"""
+    def test_concurrent_writes_from_two_clients(self, http_server):
+        """兩個 client 同時 add_knowledge → 兩條都寫入成功"""
+
+class TestSSETransport:
+    def test_sse_endpoint_returns_event_stream(self, http_server):
+        """GET /mcp/sse → Content-Type: text/event-stream"""
+```
+
+#### 驗收條件
+
+- [ ] `brain serve --bind 0.0.0.0 --auth-key $KEY` 可啟動 HTTP server
+- [ ] Claude Code 可透過 `claude_desktop_config.json` 連接（manual test）
+- [ ] 未認證請求回傳 401
+- [ ] Rate limiting 正常運作（429）
+- [ ] 兩個並發客戶端的 session 互相隔離
+- [ ] `pytest tests/integration/test_http_mcp_server.py` 全通過
+
+---
+
+### E-02 Central Brain 模式（多用戶寫入安全）
+
+**ID**：E-02
+**優先**：P1（與 E-01 並行開發）
+**依賴**：E-01（HTTP transport 基礎）
+**估計工作量**：16h
+
+#### 設計
+
+當多個使用者同時寫入，需要確保資料一致性。
+
+**並發模型**：
+```
+Client A ──write──▶ ┌─────────────┐
+Client B ──write──▶ │ Write Queue │──▶ SQLite WAL
+Client C ──write──▶ └─────────────┘      (單一 writer)
+Client A ──read───▶ SQLite WAL（多 reader 並行）
+```
+
+**寫入序列化**：所有寫入操作透過 `asyncio.Queue` 或 threading `Queue` 序列化，讀取可並行。
+
+**衝突偵測**：
+- 相同 node_id 的並發寫入：後者基於最新版本（CAS，已有 A-07 基礎）
+- 語意衝突：`find_conflicts()` 在寫入後非同步觸發
+
+#### 實作步驟
+
+**步驟 1**：`BrainDB` 新增 `WriteSerialization` mode
+```python
+class BrainDB:
+    def __init__(self, brain_dir, *, serialized_writes=False):
+        if serialized_writes:
+            self._write_queue = queue.Queue()
+            self._write_thread = threading.Thread(target=self._write_worker)
+            self._write_thread.daemon = True
+            self._write_thread.start()
+```
+
+**步驟 2**：`brain serve --mode central` flag
+- 啟動時自動開啟 `serialized_writes=True`
+- 讀取連線使用 connection pool（最多 10 個讀取連線）
+
+**步驟 3**：知識歸屬（Attribution）
+- `add_knowledge` tool 新增 `author` 欄位（從 API key 解析 user_id）
+- `nodes.author` 欄位已存在，補充 audit 記錄
+
+**步驟 4**：衝突通知
+- 寫入後若 `find_conflicts()` 發現衝突 → emit `KNOWLEDGE_CONFLICT` signal
+- 衝突摘要可透過 `brain_status` 工具回傳
+
+#### 測試計劃
+
+```python
+# tests/unit/test_central_brain_writes.py
+class TestSerializedWrites:
+    def test_100_concurrent_writes_all_succeed(self, tmp_path):
+        """100 threads 並發 add_knowledge → 100 條都寫入（無丟失）"""
+    def test_write_order_preserved(self, tmp_path):
+        """序列化後寫入順序 FIFO"""
+    def test_read_does_not_block_write(self, tmp_path):
+        """讀取操作不阻塞寫入佇列"""
+
+class TestAttribution:
+    def test_add_knowledge_records_author(self, tmp_path):
+        """add_knowledge 附帶 author → nodes.author 有值"""
+    def test_different_authors_coexist(self, tmp_path):
+        """兩個 author 分別加入知識 → 查詢時可按 author 過濾"""
+```
+
+#### 驗收條件
+
+- [ ] 100 threads 並發寫入無資料丟失
+- [ ] 讀取延遲在高並發寫入時 ≤ 200ms
+- [ ] 每條知識有 `author` 歸屬記錄
+- [ ] `brain health` 顯示 central mode 狀態
+
+---
+
+### E-03 Client Connect 模式（個人 Brain 疊加查詢）
+
+**ID**：E-03
+**優先**：P2
+**依賴**：E-01（HTTP transport）、E-02（central mode）
+**估計工作量**：12h
+
+#### 設計
+
+每個工程師的本地 Claude Code 可以：
+1. **純連線模式**：直接連 central brain（無本地 brain）
+2. **疊加模式**：本地 brain 優先，查詢不到才 fallback 到 central brain
+
+**查詢流程（疊加模式）**：
+```
+get_context("JWT auth")
+    │
+    ├──▶ 本地 brain.db 搜尋 → 有結果 → 回傳（本地優先）
+    │
+    └──miss──▶ Central Brain (HTTP MCP) 搜尋 → 有結果 → 回傳
+                  │
+                  └──miss──▶ LLM fallback（現有行為）
+```
+
+**配置方式**（`brain.toml`）：
+```toml
+[team]
+central_brain_url = "http://brain.company.internal:3000/mcp"
+central_brain_key = "${BRAIN_API_KEY}"
+mode = "overlay"  # "overlay" | "central-only" | "local-only"
+overlay_threshold = 0.6  # local 結果 confidence < 0.6 時也查 central
+```
+
+#### 實作步驟
+
+**步驟 1**：`BrainConfig` 支援 `[team]` section
+```python
+@dataclass
+class TeamConfig:
+    central_brain_url: str = ""
+    central_brain_key: str = ""
+    mode: str = "local-only"
+    overlay_threshold: float = 0.6
+```
+
+**步驟 2**：`integrations/central_brain_client.py`（新模組）
+```python
+class CentralBrainClient:
+    """透過 HTTP MCP 呼叫 central brain 的 MCP tools"""
+    def __init__(self, url: str, api_key: str):
+        self._url = url
+        self._headers = {"Authorization": f"Bearer {api_key}"}
+
+    def search_knowledge(self, query: str, limit: int = 5) -> list[dict]:
+        """呼叫 central brain 的 search_knowledge MCP tool"""
+        ...
+
+    def get_context(self, task: str, workdir: str) -> str:
+        """呼叫 central brain 的 get_context MCP tool"""
+        ...
+```
+
+**步驟 3**：`ProjectBrain.get_context()` 支援 overlay
+```python
+def get_context(self, task: str, **kw) -> ContextResult:
+    local_result = self._local_search(task)
+    if self._team_config.mode == "overlay":
+        if local_result.confidence < self._team_config.overlay_threshold:
+            central_result = self._central_client.get_context(task)
+            return ContextResult.merge(local_result, central_result)
+    return local_result
+```
+
+**步驟 4**：`brain connect` CLI 命令（新增）
+```bash
+# 設定連線到 central brain
+brain connect http://brain.company.internal:3000 --key $BRAIN_API_KEY --mode overlay
+
+# 測試連線
+brain connect --test
+
+# 中斷連線（回到本地模式）
+brain connect --disconnect
+```
+
+#### 測試計劃
+
+```python
+# tests/unit/test_central_brain_client.py
+class TestCentralBrainClient:
+    def test_search_falls_back_to_central_on_local_miss(self, tmp_path, mock_central):
+        """本地無結果 → fallback 到 mock central brain"""
+    def test_overlay_merges_local_and_central(self, tmp_path, mock_central):
+        """本地 + central 結果合併，本地排前"""
+    def test_central_unavailable_returns_local_only(self, tmp_path):
+        """central brain 不可達 → graceful degradation，只用本地"""
+    def test_connect_cmd_writes_brain_toml(self, tmp_path):
+        """brain connect ... → brain.toml [team] section 更新"""
+    def test_local_only_mode_never_hits_central(self, tmp_path, mock_central):
+        """local-only 模式下不發出任何 HTTP 請求"""
+
+class TestOverlayThreshold:
+    def test_high_confidence_local_skips_central(self, tmp_path, mock_central):
+        """local confidence ≥ threshold → 不查 central"""
+    def test_low_confidence_local_triggers_central(self, tmp_path, mock_central):
+        """local confidence < threshold → 補查 central"""
+```
+
+#### 驗收條件
+
+- [ ] `brain connect` 命令設定成功，寫入 brain.toml
+- [ ] overlay 模式下本地優先，miss 時查 central
+- [ ] central 不可達時 graceful degradation（不 crash）
+- [ ] `brain connect --test` 驗證連線可用性
+
+---
+
+### E-04 知識 Ingestion Pipeline（公司文件匯入）
+
+**ID**：E-04
+**優先**：P2
+**依賴**：E-02（需要 central brain 運行）
+**估計工作量**：24h
+
+#### 設計
+
+讓公司現有文件系統（Confluence、GitHub、Slack、本地檔案）的內容自動轉換為 Brain 知識節點。
+
+**支援的資料源**：
+
+| 資料源 | 命令 | 知識類型 |
+|--------|------|---------|
+| GitHub Issues/PRs | `brain ingest github` | Pitfall、Decision |
+| GitHub README/Wiki | `brain ingest github --docs` | Rule、Component |
+| Confluence | `brain ingest confluence` | Decision、Rule |
+| Slack（匯出檔） | `brain ingest slack` | Pitfall、Note |
+| 本地 Markdown | `brain ingest files` | 全部類型 |
+| JIRA | `brain ingest jira` | Pitfall、Decision |
+
+**Ingestion Pipeline**（每個資料源共用）：
 
 ```
-Phase A (v0.31~v0.34) — 全部完成
-├── A-01 BLOCKER-02 雙 DB 原子化 ─────────────────────────────┐
-├── A-02 HIGH-02 假 ERROR log                                  │
-├── A-03 HIGH-04 workdir 驗證                                  │
-├── A-04 MEDIUM-05 同義詞展開上界                              │
-├── A-05 BLOCKER-01 LLMJudgmentEngine                          │
-├── A-06 BLOCKER-03 Federation 測試                            │
-├── A-07 HIGH-01 CAS 樂觀鎖                                    │
-├── A-08 HIGH-03 find_conflicts 優化                           │
-├── A-09 MEDIUM-01 _execute_write 統一入口                     │
-├── A-10 MEDIUM-04 KRB staging 清理                            │
-└── A-11 MEDIUM-07 CI Benchmark Baseline                       │
-                                                               │
-Phase B (v0.35) — 前提：Phase A 完成                           │
-├── B-01 KRB Daemon 整合（依賴 A-10）                          │
-├── B-02 KG/BrainDB 事件同步（依賴 A-01 修復原子化）◄─────────┘
-│    └──▶ B-03 brain health 命令（依賴 B-02 才有意義）
-├── B-04 Pipeline metrics dashboard（依賴 A-05 Worker 運行）
-├── B-05 MCP Server singleton（獨立）
+原始文件
+    │
+    ▼
+[Chunker]          按段落/章節分割，512 tokens max
+    │
+    ▼
+[LLM Extractor]    提取 title、content、kind、confidence
+    │
+    ▼
+[Deduplicator]     與現有知識庫比對，避免重複
+    │
+    ▼
+[KRB Staging]      信心 < 0.7 → 進 staging 待審；≥ 0.7 → 直接寫入
+    │
+    ▼
+brain.db（L3）
+```
+
+#### 實作步驟
+
+**步驟 1**：`integrations/ingest/` 目錄結構
+```
+project_brain/integrations/ingest/
+├── __init__.py
+├── base.py          # IngestSource Protocol + IngestResult dataclass
+├── github.py        # GitHubIngestSource
+├── confluence.py    # ConfluenceIngestSource
+├── slack.py         # SlackIngestSource
+├── files.py         # LocalFilesIngestSource
+└── chunker.py       # TextChunker（共用）
+```
+
+**步驟 2**：`base.py` — 共用介面
+```python
+class IngestSource(Protocol):
+    def fetch(self) -> list[RawDocument]:
+        """從資料源取得原始文件列表"""
+
+    def extract_knowledge(self, doc: RawDocument,
+                          llm: LLMClient) -> list[KnowledgeCandidate]:
+        """用 LLM 從文件提取知識候選"""
+
+@dataclass
+class RawDocument:
+    source: str        # "github:issues:123"
+    title: str
+    content: str
+    url: str
+    metadata: dict
+
+@dataclass
+class KnowledgeCandidate:
+    title: str
+    content: str
+    kind: str
+    confidence: float
+    source_url: str
+    tags: list[str]
+```
+
+**步驟 3**：`github.py` — GitHub Ingest
+```python
+class GitHubIngestSource:
+    def __init__(self, repo: str, token: str, types=["issues", "prs", "wiki"]):
+        self._repo = repo
+        self._headers = {"Authorization": f"token {token}"}
+
+    def fetch(self) -> list[RawDocument]:
+        """GitHub REST API 取 issues/PRs/Wiki"""
+        ...
+
+    # Prompt template
+    _EXTRACT_PROMPT = """
+    以下是 GitHub Issue/PR 的內容。
+    請提取其中可作為團隊知識保存的條目。
+
+    標題：{title}
+    內容：{body}
+    標籤：{labels}
+
+    若此 Issue 描述一個 bug 或問題 → kind=Pitfall
+    若此 PR 描述一個架構決策 → kind=Decision
+    若此內容描述一個規範或約束 → kind=Rule
+
+    輸出 JSON 陣列（可能為空）：
+    [{"title": "...", "content": "...", "kind": "...", "confidence": 0.0-1.0, "tags": [...]}]
+    """
+```
+
+**步驟 4**：`files.py` — 本地 Markdown Ingest
+```python
+class LocalFilesIngestSource:
+    def __init__(self, path: Path, glob: str = "**/*.md"):
+        self._path = path
+        self._glob = glob
+
+    def fetch(self) -> list[RawDocument]:
+        """遞迴掃描 Markdown 檔案，按標題分段"""
+        ...
+```
+
+**步驟 5**：CLI 命令
+```bash
+brain ingest github --repo org/repo --token $GITHUB_TOKEN [--types issues,prs,wiki]
+brain ingest confluence --url https://company.atlassian.net --user $USER --token $TOKEN --space PROJ
+brain ingest slack --export-path ./slack-export.zip [--channels engineering,backend]
+brain ingest files --path ./docs [--glob "**/*.md"] [--dry-run]
+```
+
+**步驟 6**：進度追蹤 + 限速
+- 批次大小：50 文件 / 批
+- LLM rate limiting：10 呼叫 / 分（避免超出 Ollama/Anthropic 限制）
+- 進度顯示：`rich` progress bar（可選）
+- 乾跑模式：`--dry-run` 只顯示會匯入的內容，不實際寫入
+
+#### 測試計劃
+
+```python
+# tests/unit/test_ingest_github.py
+class TestGitHubIngest:
+    def test_fetch_issues_parses_correctly(self, mock_github_api):
+        """mock API 回傳 issues → 正確解析為 RawDocument"""
+    def test_bug_issue_extracts_as_pitfall(self, mock_llm):
+        """含 bug 標籤的 issue → kind=Pitfall"""
+    def test_closed_issues_have_lower_confidence(self, mock_llm):
+        """已關閉且無評論的 issue → confidence ≤ 0.5"""
+    def test_duplicate_detection_skips_existing(self, tmp_path, mock_github_api):
+        """已存在相似節點 → 跳過，不重複匯入"""
+
+# tests/unit/test_ingest_files.py
+class TestLocalFilesIngest:
+    def test_markdown_chunked_by_headings(self, tmp_path):
+        """# 標題分段正確（每段 ≤ 512 tokens）"""
+    def test_dry_run_writes_nothing(self, tmp_path):
+        """--dry-run 模式下 brain.db 不被修改"""
+    def test_glob_pattern_filters_files(self, tmp_path):
+        """只匯入符合 glob pattern 的檔案"""
+
+# tests/unit/test_ingest_chunker.py
+class TestTextChunker:
+    def test_chunks_respect_max_tokens(self):
+        """每個 chunk ≤ 512 tokens"""
+    def test_overlap_between_chunks(self):
+        """相鄰 chunks 有 50 token overlap（避免語意斷裂）"""
+    def test_cjk_text_chunks_correctly(self):
+        """中文文字按段落分割，不截斷詞語"""
+```
+
+#### 驗收條件
+
+- [ ] `brain ingest files --path ./docs` 可匯入 Markdown 到 central brain
+- [ ] `brain ingest github --repo org/repo` 正確提取 Issues/PRs
+- [ ] 重複匯入冪等（不建立重複節點）
+- [ ] `--dry-run` 模式不寫入任何資料
+- [ ] 批次 100 個文件的 ingestion ≤ 60s（無 LLM 部分）
+
+---
+
+### E-05 個人知識推送到集中庫（Push to Central）
+
+**ID**：E-05
+**優先**：P3
+**依賴**：E-02（central mode）、E-03（client connect）
+**估計工作量**：12h
+
+#### 設計
+
+工程師在本地 brain 積累了個人知識後，可以選擇性地推送到 central brain，讓全團隊受益。
+
+**流程**：
+```
+本地 brain
+    │
+    ├──▶ brain push --filter "kind=Pitfall confidence>=0.8"
+    │           │
+    │           ▼
+    │    [本地知識節點列表]
+    │           │
+    │           ▼
+    │    [Central KRB Staging]  ← 推送的知識進 staging 待管理員審查
+    │           │
+    │           ▼（管理員 approve 後）
+    │    [Central L3 知識庫]
+    │
+    └──▶ brain push --direct   # 需要 write 權限（管理員用）
+```
+
+**權限模型**：
+```
+角色          | add_knowledge | push | approve | admin
+─────────────────────────────────────────────────────
+reader        |      ❌       |  ❌  |    ❌   |  ❌
+contributor   |      ✅       |  ✅  |    ❌   |  ❌
+maintainer    |      ✅       |  ✅  |    ✅   |  ❌
+admin         |      ✅       |  ✅  |    ✅   |  ✅
+```
+
+API Key 攜帶角色資訊：`brain admin create-key --role contributor --name "Alice"`
+
+#### 實作步驟
+
+**步驟 1**：`brain admin` 命令（新增子命令）
+```bash
+brain admin create-key --role contributor --name "Alice"
+# 輸出：BRAIN_KEY_ALICE=brn_c_xxxxxxxx
+
+brain admin list-keys
+brain admin revoke-key brn_c_xxxxxxxx
+brain admin list-users
+```
+
+**步驟 2**：API Key 結構
+```python
+@dataclass
+class BrainAPIKey:
+    key_id: str       # brn_{role_prefix}_{random}
+    role: str         # reader/contributor/maintainer/admin
+    name: str         # 人類可讀名稱
+    created_at: str
+    expires_at: str   # None = 不過期
+
+# brain_meta 表儲存 key 列表（加密 hash）
+# "api_keys" → JSON array of BrainAPIKey
+```
+
+**步驟 3**：`brain push` CLI 命令
+```bash
+# 推送本地高信心 Pitfall 到 central
+brain push --to http://brain.company.internal:3000 \
+           --key $BRAIN_API_KEY \
+           --filter "kind=Pitfall" \
+           --min-confidence 0.8 \
+           --dry-run  # 先看要推送什麼
+
+# 確認後實際推送
+brain push --to http://brain.company.internal:3000 \
+           --key $BRAIN_API_KEY \
+           --filter "kind=Pitfall" \
+           --min-confidence 0.8
+```
+
+**步驟 4**：`mcp_server.py` 新增 `push_to_central` MCP tool
+```python
+@mcp_tool("push_to_central")
+def push_to_central(node_ids: list[str], target_url: str, api_key: str) -> dict:
+    """推送指定節點到 central brain（進 staging）"""
+    ...
+```
+
+#### 測試計劃
+
+```python
+# tests/unit/test_push_to_central.py
+class TestPushToCentral:
+    def test_push_sends_to_central_staging(self, tmp_path, mock_central):
+        """push → central KRB staging 有新條目"""
+    def test_push_dry_run_does_not_write(self, tmp_path, mock_central):
+        """--dry-run → central 無任何變更"""
+    def test_push_filter_by_confidence(self, tmp_path, mock_central):
+        """--min-confidence 0.8 → 只推送高信心節點"""
+    def test_contributor_cannot_push_direct(self, tmp_path):
+        """contributor 角色無法使用 --direct 繞過 staging"""
+    def test_admin_can_push_direct(self, tmp_path):
+        """admin 角色可以直接寫入 L3"""
+
+class TestAPIKeyManagement:
+    def test_create_key_stores_in_brain_meta(self, tmp_path):
+        """create-key → brain_meta 有加密 hash"""
+    def test_revoked_key_rejected(self, tmp_path):
+        """revoke-key 後，使用該 key 的請求被拒絕 (401)"""
+    def test_contributor_key_cannot_approve(self, tmp_path):
+        """contributor key 呼叫 approve 端點 → 403"""
+```
+
+#### 驗收條件
+
+- [ ] `brain push` 成功推送至 central KRB staging
+- [ ] 角色權限正確（contributor 不能 approve）
+- [ ] 管理員可透過 `brain admin` 管理 API keys
+- [ ] `--dry-run` 不寫入任何資料
+
+---
+
+### E-06 運維 Agent 整合（公司級 DevOps AI）
+
+**ID**：E-06
+**優先**：P3（依賴 E-01~E-05 全部完成）
+**依賴**：所有 Phase E 前置項目
+**估計工作量**：24h
+
+#### 設計願景
+
+完成 E-01~E-05 後，整個系統可以支撐以下使用場景：
+
+**場景一：新工程師加入**
+```bash
+# 新工程師的第一條命令
+brain connect http://brain.company.internal:3000 --key $BRAIN_API_KEY --mode overlay
+
+# 之後，任何 Claude Code 查詢都能取得公司知識
+brain ask "我們的 JWT 簽名規範是什麼？"
+# → 回答來自 central brain（所有同事的知識積累）
+```
+
+**場景二：事故後記錄**
+```bash
+# 事故發生後，工程師記錄教訓
+brain add "PostgreSQL 連線池耗盡導致 API 全 timeout" --kind Pitfall
+
+# 下次另一個工程師遇到類似問題
+brain ask "為什麼 API 會 timeout？"
+# → 直接取得同事記錄的 Pitfall
+```
+
+**場景三：自動從 PR/Issue 學習**
+```bash
+# CI 每天自動執行
+brain ingest github --repo org/backend --since yesterday --token $GH_TOKEN
+# → 自動從 merged PRs 和 closed issues 提取知識
+```
+
+#### 運維 Agent 設定（CLAUDE.md 範本）
+
+每個工程師的 CLAUDE.md 加入：
+```markdown
+## Team Brain 整合
+
+你連接到公司集中知識庫（central brain）。在開始任何任務前：
+
+1. 呼叫 `get_context` 取得相關公司知識
+2. 若你發現 bug 或架構決策，呼叫 `add_knowledge` 記錄
+3. 完成任務後呼叫 `complete_task`
+
+Central Brain URL：http://brain.company.internal:3000
+（已透過 claude_desktop_config.json 設定，直接使用 MCP tools 即可）
+```
+
+#### 系統管理工具
+
+**步驟 1**：`brain admin dashboard`（新增）
+```bash
+brain admin dashboard
+# 輸出：
+Team Brain Dashboard — 2026-05-01
+=====================================
+Total knowledge nodes: 4,821
+Contributors: 12 (last 30 days: 8 active)
+Top contributors:
+  Alice: 342 nodes (Pitfall: 156, Decision: 89, Rule: 97)
+  Bob:   287 nodes ...
+
+Signal activity (last 7 days):
+  MCP_TOOL_CALL: 1,247 signals, 89 → L3
+  GIT_COMMIT:    412 signals, 156 → L3
+  TEST_FAILURE:   67 signals, 23 → L3
+
+Knowledge health:
+  [OK] 0 conflicts detected
+  [WARN] 12 nodes with confidence < 0.5 (review recommended)
+```
+
+**步驟 2**：`brain admin audit-log`
+```bash
+brain admin audit-log --since 2026-05-01 --user alice
+# 輸出每一條知識的 who/what/when
+```
+
+**步驟 3**：Prometheus metrics 端點（`/metrics`）
+```
+# Central Brain Prometheus metrics
+brain_nodes_total{kind="Pitfall"} 1823
+brain_nodes_total{kind="Decision"} 734
+brain_active_users_7d 8
+brain_knowledge_added_today 34
+brain_conflicts_open 0
+```
+
+#### 測試計劃
+
+```python
+# tests/integration/test_team_brain_e2e.py
+class TestTeamBrainE2E:
+    """完整的團隊共享腦 E2E 測試（需要本地 HTTP server）"""
+
+    def test_new_engineer_connects_and_queries(self, central_server):
+        """模擬新工程師：connect → ask → 取得知識"""
+
+    def test_two_engineers_share_knowledge(self, central_server):
+        """Alice add_knowledge → Bob get_context → Bob 取得 Alice 的知識"""
+
+    def test_ingest_and_query(self, central_server, tmp_md_files):
+        """ingest markdown → 等待處理 → search_knowledge 可找到"""
+
+    def test_contributor_push_requires_approval(self, central_server):
+        """contributor push → staging → maintainer approve → L3"""
+
+    def test_admin_dashboard_shows_stats(self, central_server):
+        """dashboard 顯示正確的 contributor 數和節點數"""
+```
+
+#### 驗收條件
+
+- [ ] 新工程師可在 5 分鐘內完成設定並查詢公司知識
+- [ ] 兩個工程師的知識在 central brain 正確合併（無衝突）
+- [ ] Prometheus metrics 可被 Grafana 採集
+- [ ] `brain admin dashboard` 顯示正確統計
+- [ ] E2E 測試在 CI 環境通過（需要 mock HTTP server）
+
+---
+
+### Phase E 完成驗收
+
+```bash
+# E-01：HTTP server 啟動
+brain serve --bind 0.0.0.0 --port 3000 --auth-key testkey &
+curl -H "Authorization: Bearer testkey" http://localhost:3000/health
+# 預期：{"status": "ok", "version": "2.0.0"}
+
+# E-03：客戶端連線
+brain connect http://localhost:3000 --key testkey --mode overlay
+brain ask "JWT 簽名規範"
+# 預期：取得 central brain 的知識
+
+# E-04：Ingestion
+brain ingest files --path ./docs --dry-run
+# 預期：顯示會匯入的知識清單（不寫入）
+
+# E-05：推送個人知識
+brain push --to http://localhost:3000 --key testkey --min-confidence 0.8 --dry-run
+
+# E-06：Dashboard
+brain admin dashboard
+
+# 全量測試（≥ 1800 passed）
+python -m pytest tests/ -q | tail -3
+```
+
+---
+
+## 8. 完整依賴關係圖
+
+```
+Phase A (v0.31~v0.34) ✅ 全部完成
+├── A-01 雙 DB 寫入原子化
+├── A-02 假 ERROR log 修復
+├── A-03 workdir 路徑驗證
+├── A-04 同義詞展開上界
+├── A-05 LLMJudgmentEngine ──────────────────────────────┐
+├── A-06 Federation 測試套件                              │
+├── A-07 CAS 樂觀鎖                                      │
+├── A-08 find_conflicts 優化                              │
+├── A-09 _execute_write 統一入口 ────────────────────────┤
+├── A-10 KRB staging 自動清理 ──────────────────────────┤
+└── A-11 CI Benchmark Baseline                           │
+                                                         │
+Phase B (v0.35) ✅ 全部完成                              │
+├── B-01 KRB Daemon 整合（依賴 A-10）                    │
+├── B-02 KG/BrainDB 事件同步（依賴 A-01）◄───────────────┘
+│    └──▶ B-03 brain health（依賴 B-02）
+├── B-04 Pipeline metrics（依賴 A-05）
+├── B-05 BrainServer 重構（獨立）
 ├── B-06 _count_tokens 無 cache（獨立）
-└── B-07 LOW-01~04 錯誤處理（獨立，可與其他並行）
-
-Phase C (v0.40) — 前提：Phase B 完成（系統可觀測後再動架構）
-├── C-01 ARCH-01 統一 DB（依賴 B-02 事件同步為基礎）
-├── C-02 LLM Client 統一介面（獨立，但為 C-03/C-04 前置）
-│    ├──▶ C-03 ARCH-02 KnowledgeValidator CI（依賴 C-02）
-│    └──▶ C-04 ARCH-04 Pipeline Phase 2 信號（依賴 C-02）
-│              └──▶ C-05 Layer 5 Feedback Loop（依賴 C-04）
-
-Phase D (v1.0) — 前提：Phase C 完成
-├── D-01 ARCH-03 LoRA 蒸餾（依賴 C-02，需 GPU）
-├── D-02 ARCH-05 WebUI 行內編輯（依賴 C-01 統一 DB）
-├── D-03 CI 全覆蓋（依賴 B-03 health + B-04 metrics）
+└── B-07 LOW-01~04 錯誤處理（獨立）
+         │
+         ▼
+Phase C (v0.40) ✅ 全部完成
+├── C-01 統一 DB（依賴 B-02 事件同步）
+├── C-02 統一 LLM 介面（獨立）
+│    ├──▶ C-03 Validator CI（依賴 C-02）
+│    └──▶ C-04 Pipeline Phase 2 信號（依賴 C-02）
+│              └──▶ C-05 Feedback Loop（依賴 C-04）
+│
+▼
+Phase D (v1.0) 🔄 進行中
+├── D-01 LoRA 蒸餾（依賴 C-02，需 GPU）
+├── D-02 WebUI 行內編輯（依賴 C-01）
+├── D-03 CI 全覆蓋（依賴 B-03 health + C-03 validate）
 ├── D-04 生產驗證（依賴所有 Phase C）
 └── D-05 文件完整化（依賴所有功能完成）
+         │
+         ▼
+Phase E (v2.0) 📋 規劃中
+├── E-01 HTTP MCP Transport ◄── 所有 Phase E 的基礎
+│    └──▶ E-02 Central Brain 多用戶寫入安全
+│              └──▶ E-03 Client Connect 疊加查詢（依賴 E-01 + E-02）
+│                   └──▶ E-05 個人知識推送（依賴 E-02 + E-03）
+├── E-04 Ingestion Pipeline（依賴 E-02）
+└── E-06 運維 Agent 整合（依賴 E-01~E-05 全部）
 ```
 
 ---
 
-## 8. 模型選擇速查表
+## 9. 模型選擇速查表
 
-> 開發時用此表快速選擇 Claude 開發模型。詳細判準見 `ARCHITECTURE_REVIEW.md §1.4.1`。
+> 開發時用此表快速選擇 Claude 開發模型。
 
 | 任務類型 | 推薦模型 | 理由 |
 |---------|---------|------|
@@ -1180,46 +1595,53 @@ Phase D (v1.0) — 前提：Phase C 完成
 | 測試編寫、標準功能實作（1-12h，2-4 個檔案） | **Sonnet 4.6** | 品質與成本平衡 |
 | 事務/並發/安全邊界修改 | **Sonnet 4.6 最少** | 需要審慎推理 |
 | 架構設計、新模組、Schema 遷移、跨 5+ 檔案 | **Opus 4.6 (1M)** | 需長 context + 一次吞下全貌 |
+| HTTP 協定設計、多用戶安全 | **Opus 4.6 (1M)** | 安全邊界複雜，需整體把握 |
 | LLM 研究（LoRA、Prompt 設計） | **Opus 4.6 (1M)** | 研究級複雜度 |
 
 | Phase | 主要模型分佈 |
 |-------|------------|
 | A（已完成） | Haiku 4h / Sonnet 23h / Opus 12h |
-| B | Haiku 4h / Sonnet 12h / Opus 0h |
-| C | Haiku 0h / Sonnet 16h / Opus 44h |
-| D | 混合（主要 Opus + Sonnet） |
+| B（已完成） | Haiku 4h / Sonnet 12h / Opus 0h |
+| C（已完成） | Haiku 0h / Sonnet 16h / Opus 44h |
+| D | Opus 40h+ / Sonnet 20h / Haiku 4h |
+| E | Opus 48h / Sonnet 48h / Haiku 8h |
 
 ---
 
-## 9. 品質門檻
+## 10. 品質門檻
 
 每個 Phase 完成後必須滿足：
 
-| 指標 | Phase B 目標 | Phase C 目標 | Phase D 目標 |
+| 指標 | Phase C 實際 | Phase D 目標 | Phase E 目標 |
 |------|------------|------------|------------|
-| Unit tests passed | ≥ 730 | ≥ 800 | ≥ 900 |
-| 覆蓋率 | ≥ 50% | ≥ 55% | ≥ 60% |
-| recall@3 | ≥ 60% | ≥ 65% | ≥ 70% |
-| avg 查詢延遲 | ≤ 500ms | ≤ 400ms | ≤ 300ms |
-| `brain health` 輸出 | 有此命令 | all [OK] | all [OK] |
-| Regression | 0 | 0 | 0 |
+| Unit tests passed | 1367 ✅ | ≥ 1500 | ≥ 1800 |
+| 測試覆蓋率 | ≥ 50% | ≥ 60% | ≥ 65% |
+| recall@3 | ≥ 60% | ≥ 70% | ≥ 75% |
+| avg 查詢延遲（本地） | ≤ 500ms | ≤ 300ms | ≤ 300ms |
+| avg 查詢延遲（central） | N/A | N/A | ≤ 500ms |
+| 並發寫入（central） | N/A | N/A | 100 threads，0 丟失 |
+| `brain health` 輸出 | all [OK] ✅ | all [OK] | all [OK] |
+| CI 通過 | 手動 | GitHub Actions ✅ | GitHub Actions ✅ |
+| Regression | 0 ✅ | 0 | 0 |
 
 ### 每項任務完成前的標準 checklist
 
 ```
+[ ] get_context — 取得相關 Brain 知識，避免重蹈覆轍
 [ ] 先讀相關程式碼，理解現有行為
 [ ] 寫測試（先 fail）
 [ ] 最小改動實作
 [ ] pytest tests/ -q — 全量通過，零 regression
 [ ] 更新 CHANGELOG.md（版本 + 變更摘要）
-[ ] 更新本文件（標記任務為 [DONE vX.Y.Z]）
-[ ] brain complete_task（記錄 decisions/lessons/pitfalls）
-[ ] 必要時 brain add_knowledge（Pitfall/Decision/Rule）
+[ ] 更新本文件（標記任務為 [DONE vX.Y.Z]，更新快照數字）
+[ ] complete_task（記錄 decisions/lessons/pitfalls）
+[ ] 必要時 add_knowledge（Pitfall/Decision/Rule）
+[ ] 若用到既有知識節點，report_knowledge_outcome（回饋有用/無用）
 ```
 
 ---
 
-## 10. 歸檔文件索引
+## 11. 歸檔文件索引
 
 以下文件已移至 `docs/archive/`，僅供歷史參考：
 
@@ -1229,4 +1651,4 @@ Phase D (v1.0) — 前提：Phase C 完成
 | `docs/archive/COMPLETED_HISTORY_pre_v0.30.md` | 記錄 v0.1.1~v1.0.0（舊版號）的 76 個已完成項目 | `CHANGELOG.md` |
 | `docs/archive/IMPROVEMENT_PLAN_v0.30.md` | v0.30.0 改善規劃（2026-04-06），大部分已完成或整合進本文件 | 本文件 Phase B+ |
 
-> **注意**：`docs/AUTO_KNOWLEDGE_PIPELINE.md` 保留為 Pipeline Layer 1-5 的**技術設計參考**（Prompt 設計、資料模型、可靠性策略），不歸檔。Layer 3-4 的實作細節仍有參考價值。
+> **注意**：`docs/AUTO_KNOWLEDGE_PIPELINE.md` 保留為 Pipeline Layer 1-5 的**技術設計參考**（Prompt 設計、資料模型、可靠性策略），不歸檔。
