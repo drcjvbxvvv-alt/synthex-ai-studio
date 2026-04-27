@@ -25,11 +25,12 @@
 > **為 AI Agent 設計的工程記憶基礎設施。**
 > 讓每次對話都能承接上一次的決策、規則與踩坑。
 
-[![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/your-org/project-brain/releases)
+[![Version](https://img.shields.io/badge/version-v0.46.0-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
-[![Zero Dependencies](https://img.shields.io/badge/runtime_deps-flask_only-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1219_passed-brightgreen.svg)]()
+[![Zero Dependencies](https://img.shields.io/badge/runtime_deps-sqlite_only-brightgreen.svg)]()
 
 ---
 
@@ -364,39 +365,94 @@ brain add "React Hook 規則"       --scope user_profile
 
 ---
 
+## 團隊共享（v0.46.0 新增）
+
+### AI Agent + Telegram（推薦，零基礎設施）
+
+```
+公司機器上運行：
+  Brain MCP Server ←→ AI Agent（小龍蝦 / OpenClaw）←→ Telegram
+
+同事透過 Telegram：
+  上傳文件 → AI 提取知識 → 自動寫入 Brain
+  問問題 → AI 查詢 Brain → 回覆知識
+```
+
+不需要公網 IP、不需要 VPN。AI Agent 負責 Telegram 介面，Brain 負責知識儲存。
+
+### HTTP MCP Server（直連模式）
+
+```bash
+brain serve --mcp --auth-key $BRAIN_API_KEY --bind 0.0.0.0 --port 3000
+```
+
+安全機制：Bearer token 認證 + 每 IP 限流 + CORS 白名單。
+
+### 多用戶安全
+
+- **知識來源追蹤**：`add_knowledge(source="telegram:@alice")`
+- **並發安全**：SQLite WAL + 寫入序列化
+- **按 author 搜尋**：`search_knowledge(query, author="telegram:@alice")`
+
+---
+
 ## 架構概覽
+
+### 單一檔案知識庫
 
 ```
 .brain/
-├── brain.db              主記憶庫（SQLite）
+├── brain.db              主記憶庫（SQLite，統一 DB）
 │   ├── nodes             L3 語意記憶（Rule/Decision/Pitfall/ADR）
+│   ├── nodes_fts         FTS5 全文搜尋索引
 │   ├── edges             因果關係邊（PREVENTS/CAUSES/REQUIRES）
 │   ├── episodes          L2 情節記憶（git commits）
 │   ├── temporal_edges    時序關係（時光機查詢）
-│   └── sessions          L1a 工作記憶（當前任務）
-├── review_board.db       KRB 暫存區（自動提取的候選知識）
-└── config.json           Brain 設定
+│   ├── sessions          L1a 工作記憶（當前任務）
+│   ├── staged_nodes      KRB 暫存區（自動提取的候選知識）
+│   ├── signal_queue      Pipeline 信號佇列
+│   ├── pipeline_metrics  Pipeline 運行統計
+│   ├── feedback_log      知識回饋記錄（C-05）
+│   └── node_history      節點修改歷史
+└── brain.toml            Brain 設定（可選）
 ```
+
+### 多種接入方式
+
+```
+brain.db（單一真相源）
+     │
+     ├── CLI               brain add / brain ask / brain review
+     ├── MCP Server        Claude Code / 小龍蝦 / 任何 MCP Agent（stdio）
+     ├── HTTP MCP Server   遠端 Agent 透過網路連接（E-01，auth + rate-limit）
+     ├── Telegram          透過 AI Agent 轉接（解決網路問題）
+     ├── WebUI             D3.js 瀏覽器視覺化 + 行內編輯 + KRB 管理
+     └── REST API          CI / 腳本 / 自動化
+```
+
+### 系統架構
 
 ```
 ┌──────────────────────────────────────────────────┐
 │                   AI Agent                        │
-│              (Claude / Cursor / 任何 MCP 工具)    │
+│    (Claude Code / 小龍蝦 / Cursor / 任何 MCP)    │
 └──────────────┬───────────────────────────────────┘
-               │  MCP / REST API / Python SDK
+               │  MCP (stdio / HTTP) / REST API
 ┌──────────────▼───────────────────────────────────┐
-│              Project Brain                        │
+│              Project Brain (22 MCP tools)          │
 │                                                   │
 │  ┌──────────┐  ┌──────────┐  ┌─────────────────┐ │
 │  │ L1a      │  │ L2       │  │ L3              │ │
 │  │ Working  │  │ Episodic │  │ Semantic        │ │
 │  │ Memory   │  │ Memory   │  │ Memory          │ │
 │  └──────────┘  └──────────┘  └─────────────────┘ │
-│                      ↑                            │
-│              DecayEngine（每 7 天）                │
+│       ↑              ↑              ↑             │
+│  SessionStore   SignalQueue    KnowledgeGraph     │
+│                 PipelineWorker  DecayEngine       │
+│                 LLMJudgment    ReviewBoard(KRB)   │
 └──────────────────────────────────────────────────┘
                ↑
-    git hook（自動）+ brain add（手動）
+    git hook（自動）+ brain add（手動）+ Agent（MCP）
 ```
 
 ---
@@ -489,6 +545,10 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 | `brain review`      | 審查 KRB 暫存區    | `brain review list`            |
 | `brain serve`       | 啟動 REST API      | `brain serve --port 7891`      |
 | `brain serve --mcp` | 啟動 MCP Server    | `brain serve --mcp`            |
+| `brain serve --mcp --auth-key` | 啟動 HTTP MCP Server（E-01）| `brain serve --mcp --auth-key $KEY` |
+| `brain health`      | 一鍵健康診斷（JSON） | `brain health --json`         |
+| `brain validate`    | 三階段知識驗證      | `brain validate --ci`          |
+| `brain pipeline-stats` | Pipeline 統計   | `brain pipeline-stats --json`  |
 | `brain webui`       | D3.js 視覺化       | `brain webui --port 7890`      |
 | `brain index`       | 建立向量索引（含進度條）| `brain index`             |
 | `brain optimize`    | VACUUM + ANALYZE + FTS5 重建 | `brain optimize`   |
@@ -522,13 +582,18 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 brain serve --mcp
 ```
 
-可用 MCP 工具：
+可用 MCP 工具（22 個，列出常用）：
 
 | 工具                                                     | 說明                                    |
 | -------------------------------------------------------- | --------------------------------------- |
 | `get_context(task, current_file, scope)`                 | 取得任務相關知識（含因果鏈 + 主動警告） |
-| `add_knowledge(title, content, kind, scope, confidence)` | Agent 寫入新知識                        |
-| `search_knowledge(query)`                                | 直接語意搜尋                            |
+| `add_knowledge(title, content, kind, source, confidence)` | Agent 寫入新知識（E-02: 支援 source 追蹤）|
+| `batch_add_knowledge(items)`                             | 批次寫入（最多 50 條）                  |
+| `search_knowledge(query, author)`                        | 語意搜尋（E-02: 支援 author 過濾）     |
+| `complete_task(task_description, decisions, lessons)`     | 記錄任務完成 + 學到的東西               |
+| `report_knowledge_outcome(node_id, was_useful)`          | 回饋知識是否有用（C-05 Feedback Loop）  |
+| `krb_pre_screen(limit)`                                  | AI 預審待審知識                         |
+| `impact_analysis(component)`                             | 元件影響範圍分析                        |
 | `temporal_query(at_time, git_branch)`                    | 時光機——讀取指定時間點的知識狀態        |
 | `brain_status()`                                         | 記憶庫統計                              |
 
@@ -763,28 +828,46 @@ MemGovern 有 quality gate，MemCoder 有 commit 提取，但沒有任何系統�
 
 ```
 project-brain/
-├── project_brain/          核心套件
-│   ├── brain_db.py         統一資料庫入口（BrainDB）
-│   ├── graph.py            L3 知識圖譜（KnowledgeGraph）
-│   ├── context.py          Context 組裝引擎
-│   ├── engine.py           ProjectBrain 主引擎
-│   ├── extractor.py        LLM 知識提取
-│   ├── decay_engine.py     多因子知識衰減
-│   ├── consolidation.py    L1a → L3 記憶整合
-│   ├── memory_synthesizer.py  三層融合（opt-in）
-│   ├── review_board.py     KRB 人工審查委員會
-│   ├── nudge_engine.py     主動警告引擎
-│   ├── session_store.py    L1a 工作記憶
-│   ├── mcp_server.py       MCP Server
-│   ├── api_server.py       REST API（Flask）
-│   └── cli.py              CLI 入口
+├── project_brain/
+│   ├── core/
+│   │   ├── brain_db.py          統一資料庫（BrainDB，Schema v28）
+│   │   ├── session_store.py     L1a 工作記憶
+│   │   └── constants.py         共用常數
+│   ├── pipeline/
+│   │   ├── signal.py            信號定義（6 種 SignalKind）
+│   │   ├── executor.py          知識執行器（Layer 4）
+│   │   ├── llm_judgment.py      LLM 判斷引擎（Layer 3）
+│   │   └── worker.py            背景 daemon（Layer 3.5）
+│   ├── engines/
+│   │   ├── context.py           Context 組裝（synonym 展開）
+│   │   ├── decay_engine.py      六因子衰減
+│   │   ├── nudge_engine.py      主動警告（零 LLM 費用）
+│   │   ├── review_board.py      KRB 人工審查
+│   │   └── knowledge_validator.py  三階段知識驗證
+│   ├── interfaces/
+│   │   ├── mcp_server.py        MCP Server（22 tools + HTTP transport）
+│   │   ├── http_transport.py    HTTP MCP（Auth/RateLimit/CORS/Health）
+│   │   ├── api_server.py        REST API
+│   │   ├── cli.py               CLI 入口
+│   │   └── web_ui/              D3.js 視覺化 + KRB 管理
+│   ├── integrations/
+│   │   ├── llm_client.py        統一 LLM 介面（Ollama/Claude/Fallback）
+│   │   └── federation.py        跨專案同步（PII 清理 + 去重）
+│   ├── engine.py                ProjectBrain 主引擎
+│   └── graph.py                 L3 知識圖譜（CAS 樂觀鎖）
 ├── docs/
-│   ├── BRAIN_MASTER.md     設計主文件（唯一事實來源）
-│   └── BRAIN_INTEGRATION.md  整合指南
+│   ├── USER_GUIDE.md            使用者指南（入門必讀）
+│   ├── PHASE_E_PLAN.md          Phase E 團隊共享腦規劃
+│   ├── ROADMAP.md               開發路線圖（Phase A~E）
+│   └── EXPERIMENT_REPORT.md     實驗驗證報告
 ├── tests/
-│   ├── unit/               單元測試
-│   ├── integration/        整合測試
-│   └── chaos/              壓力測試
+│   ├── unit/                    單元測試（~1050）
+│   ├── integration/             整合測試（~100）
+│   ├── e2e/                     端到端測試（~14）
+│   └── benchmarks/              效能基準（5K nodes）
+├── COMMANDS.md                  命令參考
+├── INSTALL.md                   安裝指南
+├── CHANGELOG.md                 版本歷史
 └── pyproject.toml
 ```
 
@@ -793,10 +876,10 @@ project-brain/
 ## 安裝選項
 
 ```bash
-# 標準安裝（含向量語意搜尋）
+# 最小安裝（純 FTS5 全文搜尋）
 pip install project-brain
 
-# 含 MCP Server（Claude Code / Cursor）
+# 推薦安裝（含 MCP Server，Claude Code / Cursor / 小龍蝦）
 pip install "project-brain[mcp]"
 
 # 含 Anthropic SDK（AI 知識提取）
@@ -806,7 +889,7 @@ pip install "project-brain[anthropic]"
 pip install "project-brain[all]"
 ```
 
-**核心相依**：`flask`、`flask-cors`、`sqlite-vec`（向量搜尋 C 擴充，PyPI 有預編譯 wheels）
+**核心相依**：`sqlite-vec`（向量搜尋 C 擴充，PyPI 有預編譯 wheels）
 
 **系統需求：** Python 3.10+，無需外部服務
 
@@ -858,11 +941,14 @@ Layer 2 失敗時系統自動回退至純 Python cosine similarity，功能完�
 
 ## 設計文件
 
-| 文件                                                   | 說明                                   |
-| ------------------------------------------------------ | -------------------------------------- |
-| [docs/BRAIN_MASTER.md](docs/BRAIN_MASTER.md)           | 唯一設計主文件：架構、缺陷清單、路線圖 |
-| [docs/BRAIN_INTEGRATION.md](docs/BRAIN_INTEGRATION.md) | 整合指南（SDK / API / MCP 詳細說明）   |
-| [INSTALL.md](INSTALL.md)                               | 安裝與驗證步驟                         |
+| 文件                                                                               | 說明                                   |
+| ---------------------------------------------------------------------------------- | -------------------------------------- |
+| [project-brain/docs/USER_GUIDE.md](project-brain/docs/USER_GUIDE.md)              | **使用者指南**（入門必讀）             |
+| [project-brain/COMMANDS.md](project-brain/COMMANDS.md)                             | 所有命令詳細說明                       |
+| [project-brain/docs/ROADMAP.md](project-brain/docs/ROADMAP.md)                    | 開發路線圖（Phase A~E）               |
+| [project-brain/docs/PHASE_E_PLAN.md](project-brain/docs/PHASE_E_PLAN.md)          | Phase E 團隊共享腦規劃                 |
+| [project-brain/INSTALL.md](project-brain/INSTALL.md)                               | 安裝與驗證步驟                         |
+| [project-brain/CHANGELOG.md](project-brain/CHANGELOG.md)                           | 版本歷史                               |
 
 ---
 
@@ -872,6 +958,6 @@ MIT License — 詳見 [LICENSE](LICENSE)
 
 ---
 
-_v0.1.0 · Project Brain · 為 AI Agent 設計的工程記憶基礎設施_
+_v0.46.0 · Project Brain · 為 AI Agent 設計的工程記憶基礎設施_
 
 _相關學術文獻：CoALA (arXiv:2309.02427) · MemCoder (arXiv:2603.13258) · MemGovern (arXiv:2601.06789) · Lore (arXiv:2603.15566)_

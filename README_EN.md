@@ -25,11 +25,12 @@
 > **Engineering memory infrastructure for AI Agents.**
 > Every conversation picks up where the last one left off — decisions, rules, and hard-won lessons included.
 
-[![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/your-org/project-brain/releases)
+[![Version](https://img.shields.io/badge/version-v0.46.0-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
-[![Zero Dependencies](https://img.shields.io/badge/runtime_deps-flask_only-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1219_passed-brightgreen.svg)]()
+[![Zero Dependencies](https://img.shields.io/badge/runtime_deps-sqlite_only-brightgreen.svg)]()
 
 ---
 
@@ -364,39 +365,94 @@ Queries are automatically filtered: an Agent operating in the `user_profile` con
 
 ---
 
+## Team Sharing (v0.46.0)
+
+### AI Agent + Telegram (Recommended, Zero Infrastructure)
+
+```
+On company machine:
+  Brain MCP Server ←→ AI Agent (OpenClaw / any MCP agent) ←→ Telegram
+
+Colleagues via Telegram:
+  Upload docs → AI extracts knowledge → Auto-writes to Brain
+  Ask questions → AI queries Brain → Returns knowledge
+```
+
+No public IP needed, no VPN required. The AI Agent handles the Telegram interface, Brain handles knowledge storage.
+
+### HTTP MCP Server (Direct Connect)
+
+```bash
+brain serve --mcp --auth-key $BRAIN_API_KEY --bind 0.0.0.0 --port 3000
+```
+
+Security: Bearer token auth + per-IP rate limiting + CORS whitelist.
+
+### Multi-User Safety
+
+- **Source tracking**: `add_knowledge(source="telegram:@alice")`
+- **Concurrent safety**: SQLite WAL + write serialization
+- **Author filtering**: `search_knowledge(query, author="telegram:@alice")`
+
+---
+
 ## Architecture Overview
+
+### Single-File Knowledge Store
 
 ```
 .brain/
-├── brain.db              Primary memory store (SQLite)
+├── brain.db              Primary memory store (SQLite, unified DB)
 │   ├── nodes             L3 semantic memory (Rule/Decision/Pitfall/ADR)
-│   ├── edges             Causal relationship edges (PREVENTS/CAUSES/REQUIRES)
+│   ├── nodes_fts         FTS5 full-text search index
+│   ├── edges             Causal edges (PREVENTS/CAUSES/REQUIRES)
 │   ├── episodes          L2 episodic memory (git commits)
 │   ├── temporal_edges    Temporal relationships (time-machine queries)
-│   └── sessions          L1a working memory (current task)
-├── review_board.db       KRB staging area (auto-extracted candidate knowledge)
-└── config.json           Brain configuration
+│   ├── sessions          L1a working memory (current task)
+│   ├── staged_nodes      KRB staging area (auto-extracted candidates)
+│   ├── signal_queue      Pipeline signal queue
+│   ├── pipeline_metrics  Pipeline run statistics
+│   ├── feedback_log      Knowledge feedback records (C-05)
+│   └── node_history      Node modification history
+└── brain.toml            Brain configuration (optional)
 ```
+
+### Multiple Access Points
+
+```
+brain.db (single source of truth)
+     │
+     ├── CLI               brain add / brain ask / brain review
+     ├── MCP Server        Claude Code / OpenClaw / any MCP Agent (stdio)
+     ├── HTTP MCP Server   Remote Agents via network (E-01, auth + rate-limit)
+     ├── Telegram          Via AI Agent relay (solves network issues)
+     ├── WebUI             D3.js browser visualization + inline editing + KRB
+     └── REST API          CI / scripts / automation
+```
+
+### System Architecture
 
 ```
 ┌──────────────────────────────────────────────────┐
 │                   AI Agent                        │
-│          (Claude / Cursor / any MCP tool)         │
+│    (Claude Code / OpenClaw / Cursor / any MCP)   │
 └──────────────┬───────────────────────────────────┘
-               │  MCP / REST API / Python SDK
+               │  MCP (stdio / HTTP) / REST API
 ┌──────────────▼───────────────────────────────────┐
-│              Project Brain                        │
+│              Project Brain (22 MCP tools)          │
 │                                                   │
 │  ┌──────────┐  ┌──────────┐  ┌─────────────────┐ │
 │  │ L1a      │  │ L2       │  │ L3              │ │
 │  │ Working  │  │ Episodic │  │ Semantic        │ │
 │  │ Memory   │  │ Memory   │  │ Memory          │ │
 │  └──────────┘  └──────────┘  └─────────────────┘ │
-│                      ↑                            │
-│              DecayEngine (every 7 days)           │
+│       ↑              ↑              ↑             │
+│  SessionStore   SignalQueue    KnowledgeGraph     │
+│                 PipelineWorker  DecayEngine       │
+│                 LLMJudgment    ReviewBoard(KRB)   │
 └──────────────────────────────────────────────────┘
                ↑
-    git hook (automatic) + brain add (manual)
+    git hook (auto) + brain add (manual) + Agent (MCP)
 ```
 
 ---
@@ -489,6 +545,10 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 | `brain review`      | Review KRB staging area      | `brain review list`                |
 | `brain serve`       | Start REST API               | `brain serve --port 7891`          |
 | `brain serve --mcp` | Start MCP Server             | `brain serve --mcp`                |
+| `brain serve --mcp --auth-key` | Start HTTP MCP Server (E-01) | `brain serve --mcp --auth-key $KEY` |
+| `brain health`      | Health diagnostics (JSON)    | `brain health --json`              |
+| `brain validate`    | Three-stage knowledge validation | `brain validate --ci`          |
+| `brain pipeline-stats` | Pipeline statistics       | `brain pipeline-stats --json`      |
 | `brain webui`       | D3.js visualization          | `brain webui --port 7890`          |
 | `brain index`       | Build vector index (with progress bar) | `brain index`          |
 | `brain optimize`    | VACUUM + ANALYZE + FTS5 rebuild | `brain optimize`              |
@@ -522,15 +582,20 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 brain serve --mcp
 ```
 
-Available MCP tools:
+Available MCP tools (22 total, key tools listed):
 
-| Tool                                                     | Description                                                               |
-| -------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `get_context(task, current_file, scope)`                 | Retrieve task-relevant knowledge (with causal chain + proactive warnings) |
-| `add_knowledge(title, content, kind, scope, confidence)` | Agent writes new knowledge                                                |
-| `search_knowledge(query)`                                | Direct semantic search                                                    |
-| `temporal_query(at_time, git_branch)`                    | Time-machine — read knowledge state at a given point in time              |
-| `brain_status()`                                         | Memory store statistics                                                   |
+| Tool                                                      | Description                                                               |
+| --------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `get_context(task, current_file, scope)`                  | Retrieve task-relevant knowledge (with causal chain + proactive warnings) |
+| `add_knowledge(title, content, kind, source, confidence)` | Agent writes new knowledge (E-02: supports source tracking)               |
+| `batch_add_knowledge(items)`                              | Batch write (up to 50 items)                                              |
+| `search_knowledge(query, author)`                         | Semantic search (E-02: supports author filtering)                         |
+| `complete_task(task_description, decisions, lessons)`      | Record task completion + lessons learned                                  |
+| `report_knowledge_outcome(node_id, was_useful)`           | Feedback on knowledge usefulness (C-05 Feedback Loop)                     |
+| `krb_pre_screen(limit)`                                   | AI pre-review of staged knowledge                                         |
+| `impact_analysis(component)`                              | Component impact scope analysis                                           |
+| `temporal_query(at_time, git_branch)`                     | Time-machine — read knowledge state at a given point in time              |
+| `brain_status()`                                          | Memory store statistics                                                   |
 
 ### Python SDK
 
@@ -763,28 +828,46 @@ Honestly listing the boundaries of this version is a basic form of respect for u
 
 ```
 project-brain/
-├── project_brain/          Core package
-│   ├── brain_db.py         Unified database entry point (BrainDB)
-│   ├── graph.py            L3 knowledge graph (KnowledgeGraph)
-│   ├── context.py          Context assembly engine
-│   ├── engine.py           ProjectBrain main engine
-│   ├── extractor.py        LLM knowledge extraction
-│   ├── decay_engine.py     Multi-factor knowledge decay
-│   ├── consolidation.py    L1a → L3 memory consolidation
-│   ├── memory_synthesizer.py  Three-layer fusion (opt-in)
-│   ├── review_board.py     KRB human review committee
-│   ├── nudge_engine.py     Proactive warning engine
-│   ├── session_store.py    L1a working memory
-│   ├── mcp_server.py       MCP Server
-│   ├── api_server.py       REST API (Flask)
-│   └── cli.py              CLI entry point
+├── project_brain/
+│   ├── core/
+│   │   ├── brain_db.py          Unified database (BrainDB, Schema v28)
+│   │   ├── session_store.py     L1a working memory
+│   │   └── constants.py         Shared constants
+│   ├── pipeline/
+│   │   ├── signal.py            Signal definitions (6 SignalKinds)
+│   │   ├── executor.py          Knowledge executor (Layer 4)
+│   │   ├── llm_judgment.py      LLM judgment engine (Layer 3)
+│   │   └── worker.py            Background daemon (Layer 3.5)
+│   ├── engines/
+│   │   ├── context.py           Context assembly (synonym expansion)
+│   │   ├── decay_engine.py      Six-factor decay
+│   │   ├── nudge_engine.py      Proactive warnings (zero LLM cost)
+│   │   ├── review_board.py      KRB human review
+│   │   └── knowledge_validator.py  Three-stage validation
+│   ├── interfaces/
+│   │   ├── mcp_server.py        MCP Server (22 tools + HTTP transport)
+│   │   ├── http_transport.py    HTTP MCP (Auth/RateLimit/CORS/Health)
+│   │   ├── api_server.py        REST API
+│   │   ├── cli.py               CLI entry point
+│   │   └── web_ui/              D3.js visualization + KRB management
+│   ├── integrations/
+│   │   ├── llm_client.py        Unified LLM interface (Ollama/Claude/Fallback)
+│   │   └── federation.py        Cross-project sync (PII cleanup + dedup)
+│   ├── engine.py                ProjectBrain main engine
+│   └── graph.py                 L3 knowledge graph (CAS optimistic locking)
 ├── docs/
-│   ├── BRAIN_MASTER.md     Master design document (single source of truth)
-│   └── BRAIN_INTEGRATION.md  Integration guide
+│   ├── USER_GUIDE.md            User guide (start here)
+│   ├── PHASE_E_PLAN.md          Phase E team brain planning
+│   ├── ROADMAP.md               Development roadmap (Phase A–E)
+│   └── EXPERIMENT_REPORT.md     Experiment validation report
 ├── tests/
-│   ├── unit/               Unit tests
-│   ├── integration/        Integration tests
-│   └── chaos/              Stress tests
+│   ├── unit/                    Unit tests (~1050)
+│   ├── integration/             Integration tests (~100)
+│   ├── e2e/                     End-to-end tests (~14)
+│   └── benchmarks/              Performance benchmarks (5K nodes)
+├── COMMANDS.md                  Command reference
+├── INSTALL.md                   Installation guide
+├── CHANGELOG.md                 Version history
 └── pyproject.toml
 ```
 
@@ -806,7 +889,7 @@ pip install "project-brain[anthropic]"
 pip install "project-brain[all]"
 ```
 
-**Core dependencies:** `flask`, `flask-cors`, `sqlite-vec` (vector search C extension — pre-compiled wheels available on PyPI)
+**Core dependencies:** `sqlite-vec` (vector search C extension — pre-compiled wheels available on PyPI)
 
 **System requirements:** Python 3.10+, no external services required
 
@@ -858,11 +941,14 @@ For core design questions and architecture discussions, please open a Discussion
 
 ## Design Documents
 
-| Document                                               | Description                                                |
-| ------------------------------------------------------ | ---------------------------------------------------------- |
-| [docs/BRAIN_MASTER.md](docs/BRAIN_MASTER.md)           | Master design document: architecture, defect list, roadmap |
-| [docs/BRAIN_INTEGRATION.md](docs/BRAIN_INTEGRATION.md) | Integration guide (SDK / API / MCP details)                |
-| [INSTALL.md](INSTALL.md)                               | Installation and verification steps                        |
+| Document                                                                          | Description                                |
+| --------------------------------------------------------------------------------- | ------------------------------------------ |
+| [project-brain/docs/USER_GUIDE.md](project-brain/docs/USER_GUIDE.md)             | **User Guide** (start here)                |
+| [project-brain/COMMANDS.md](project-brain/COMMANDS.md)                            | All commands reference                     |
+| [project-brain/docs/ROADMAP.md](project-brain/docs/ROADMAP.md)                   | Development roadmap (Phase A–E)            |
+| [project-brain/docs/PHASE_E_PLAN.md](project-brain/docs/PHASE_E_PLAN.md)         | Phase E team brain planning                |
+| [project-brain/INSTALL.md](project-brain/INSTALL.md)                              | Installation and verification steps        |
+| [project-brain/CHANGELOG.md](project-brain/CHANGELOG.md)                          | Version history                            |
 
 ---
 
@@ -872,6 +958,6 @@ MIT License — see [LICENSE](LICENSE) for details
 
 ---
 
-_v0.1.0 · Project Brain · Engineering memory infrastructure for AI Agents_
+_v0.46.0 · Project Brain · Engineering memory infrastructure for AI Agents_
 
 _Related academic literature: CoALA (arXiv:2309.02427) · MemCoder (arXiv:2603.13258) · MemGovern (arXiv:2601.06789) · Lore (arXiv:2603.15566)_
