@@ -1763,3 +1763,118 @@ def cmd_doctor(args):
         print(f"\n  {D}執行 brain doctor --fix 嘗試自動修復{R}")
 
     print()
+
+
+# ── brain eval — 檢索品質評估 ──────────────────────────────────
+
+def cmd_eval(args):
+    """檢索品質評估：brain eval generate / brain eval run / brain eval report"""
+    wd = Path(_workdir(args))
+    bd = wd / ".brain"
+    sub = getattr(args, "eval_sub", None) or (args.args[0] if hasattr(args, 'args') and args.args else None)
+
+    if not bd.exists():
+        _err("找不到 .brain/ 目錄。請先執行 brain init")
+        return
+
+    eval_dir = bd / "eval"
+    dataset_path = eval_dir / "queries.jsonl"
+    report_path = eval_dir / "report.json"
+
+    from project_brain.eval import RecallEvaluator, save_eval_dataset
+
+    if sub == "generate":
+        min_conf = getattr(args, "min_confidence", 0.7)
+        max_q = getattr(args, "max_queries", 100)
+        ev = RecallEvaluator(bd)
+        count = ev.generate_dataset(min_confidence=min_conf, max_queries=max_q)
+        if count == 0:
+            _err("知識庫中沒有符合條件的節點（confidence ≥ {:.1f}）".format(min_conf))
+            return
+        save_eval_dataset(ev.queries, dataset_path)
+        _ok(f"已產生 {count} 筆 eval queries → {dataset_path}")
+        _info("可手動編輯 queries.jsonl 調整 query / expected，再執行 brain eval run")
+
+    elif sub == "run":
+        ev = RecallEvaluator(bd)
+        if dataset_path.exists():
+            count = ev.load_dataset(dataset_path)
+            _info(f"載入 {count} 筆 eval queries")
+        else:
+            _info("找不到 queries.jsonl，自動生成...")
+            count = ev.generate_dataset()
+            if count == 0:
+                _err("知識庫為空，無法執行 eval")
+                return
+            save_eval_dataset(ev.queries, dataset_path)
+            _info(f"已自動產生 {count} 筆 queries")
+
+        _hybrid = getattr(args, "hybrid", False)
+        _mode = "hybrid (FTS5 + vector)" if _hybrid else "FTS5"
+        with _Spinner(f"執行檢索評估（{_mode}）"):
+            report = ev.run(k=3, search_limit=10, use_hybrid=_hybrid)
+
+        # Save report
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+
+        # Display results
+        m = report["metrics"]
+        s = report["summary"]
+        print(f"\n  {B}📊 檢索品質評估結果{R}\n")
+        print(f"  Queries:        {s['total_queries']}")
+        print(f"  Hits@3:         {s['hits_at_3']} / {s['total_queries']}")
+        print()
+        print(f"  {G}Recall@1{R}:       {m['recall_at_1']:.1%}")
+        print(f"  {G}Recall@3{R}:       {m['recall_at_3']:.1%}")
+        print(f"  {G}Recall@5{R}:       {m['recall_at_5']:.1%}")
+        print(f"  {G}Recall@10{R}:      {m['recall_at_10']:.1%}")
+        print(f"  {G}MRR{R}:            {m['mrr']:.4f}")
+        print(f"  {G}nDCG@3{R}:         {m['ndcg_at_3']:.4f}")
+        print(f"  {Y}Noise@3{R}:        {m['noise_rate_at_3']:.1%}")
+        print(f"  Avg tokens:     {m['avg_context_tokens']:.0f}")
+        print(f"  Avg latency:    {m['avg_latency_ms']:.1f}ms")
+        print(f"  Max latency:    {m['max_latency_ms']}ms")
+
+        # Tag breakdown
+        if report.get("by_tag"):
+            print(f"\n  {B}By tag:{R}")
+            for tag, info in sorted(report["by_tag"].items()):
+                print(f"    {tag}: {info['recall_at_3']:.0%} ({info['count']} queries)")
+
+        # Show misses
+        misses = [pq for pq in report["per_query"] if not pq["hit_at_3"]]
+        if misses:
+            print(f"\n  {Y}Misses (top 5):{R}")
+            for pq in misses[:5]:
+                print(f"    ✗ {pq['query'][:60]}")
+                print(f"      expected: {pq['expected']}")
+                print(f"      got:      {pq['retrieved_top3']}")
+
+        print(f"\n  報告已存到 {report_path}")
+
+        # CI exit code
+        if getattr(args, "ci", False):
+            threshold = getattr(args, "threshold", 0.5)
+            if m["recall_at_3"] < threshold:
+                print(f"\n  {RE}FAIL: recall@3 {m['recall_at_3']:.1%} < threshold {threshold:.0%}{R}")
+                sys.exit(1)
+
+    elif sub == "report":
+        if not report_path.exists():
+            _err("找不到 report.json。請先執行 brain eval run")
+            return
+        with open(report_path, encoding="utf-8") as f:
+            report = json.load(f)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+    else:
+        print(f"  {B}brain eval{R} — 檢索品質評估")
+        print()
+        print(f"  {G}brain eval generate{R}   從知識庫自動產生 eval dataset")
+        print(f"  {G}brain eval run{R}        執行評估（自動產生或載入已有 dataset）")
+        print(f"  {G}brain eval report{R}     輸出最近一次 JSON 報告")
+        print()
+        print(f"  eval dataset: .brain/eval/queries.jsonl")
+        print(f"  eval report:  .brain/eval/report.json")

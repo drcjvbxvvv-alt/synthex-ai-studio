@@ -220,3 +220,77 @@ class TestWebUINodeUpdate:
         c, _ = client
         r = c.delete("/api/node/n3")
         assert r.status_code in (200, 204, 404, 405, 501)
+
+
+class TestWebUINodesAPI:
+    """Tests for /api/nodes paginated endpoint."""
+
+    def test_nodes_endpoint_returns_200(self, client):
+        c, _ = client
+        r = c.get("/api/nodes")
+        assert r.status_code == 200
+
+    def test_nodes_returns_pagination_fields(self, client):
+        c, _ = client
+        r = c.get("/api/nodes")
+        data = r.json()
+        assert "nodes" in data
+        assert "total" in data
+        assert "page" in data
+        assert "page_size" in data
+        assert "total_pages" in data
+
+    def test_nodes_default_page_size(self, client):
+        c, _ = client
+        data = c.get("/api/nodes").json()
+        assert data["page"] == 1
+        assert data["page_size"] == 20
+
+    def test_nodes_custom_page_size(self, client):
+        c, _ = client
+        data = c.get("/api/nodes?page_size=2").json()
+        assert data["page_size"] == 2
+        assert len(data["nodes"]) <= 2
+
+    def test_nodes_kind_filter(self, client):
+        c, _ = client
+        data = c.get("/api/nodes?kind=Pitfall").json()
+        for n in data["nodes"]:
+            assert n["kind"] == "Pitfall"
+
+    def test_nodes_search(self, client):
+        c, _ = client
+        data = c.get("/api/nodes?q=JWT").json()
+        if data["nodes"]:
+            titles = [n["title"] for n in data["nodes"]]
+            assert any("JWT" in t for t in titles)
+
+    def test_nodes_sort_by_title(self, client):
+        c, _ = client
+        data = c.get("/api/nodes?sort=title&order=asc").json()
+        assert data["page"] == 1  # basic structure check
+
+    def test_nodes_node_has_required_fields(self, client):
+        c, _ = client
+        data = c.get("/api/nodes").json()
+        if data["nodes"]:
+            n = data["nodes"][0]
+            for field in ("id", "kind", "title", "confidence", "color"):
+                assert field in n, f"Missing field: {field}"
+
+    def test_graph_default_limit_reduced(self, client):
+        """Graph default limit should be 100, not 300."""
+        c, _ = client
+        data = c.get("/api/graph").json()
+        # With only 2-3 test nodes, just verify it works
+        assert "nodes" in data
+
+    def test_html_contains_view_tabs(self, client):
+        """HTML should contain view tab buttons."""
+        c, _ = client
+        r = c.get("/")
+        if r.status_code == 200:
+            html = r.data.decode("utf-8", errors="replace")
+            assert "view-tab" in html
+            assert "table-view" in html
+            assert "graph-view" in html

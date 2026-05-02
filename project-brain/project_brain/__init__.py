@@ -42,24 +42,27 @@ except ImportError:
 
 
 def _read_version() -> str:
-    # 1. pip-installed: read from package metadata (most reliable)
+    # 1. Source checkout: read pyproject.toml next to this package.
+    #    Prioritised because importlib.metadata may return a stale
+    #    *installed* version that differs from the source tree.
+    try:
+        import re as _re
+        from pathlib import Path as _Path
+        _toml = _Path(__file__).resolve().parent.parent / "pyproject.toml"
+        if _toml.is_file():
+            _text = _toml.read_text(encoding="utf-8")
+            _m = _re.search(r'^version\s*=\s*"([^"]+)"', _text, _re.MULTILINE)
+            if _m:
+                return _m.group(1)
+    except Exception:
+        pass
+    # 2. pip-installed (no source tree available): read package metadata
     try:
         from importlib.metadata import version as _pkg_version
         return _pkg_version("project-brain")
     except Exception:
         pass
-    # 2. dev/editable: read directly from pyproject.toml
-    try:
-        import re as _re
-        from pathlib import Path as _Path
-        _toml = _Path(__file__).parent.parent / "pyproject.toml"
-        _text = _toml.read_text(encoding="utf-8")
-        _m = _re.search(r'^version\s*=\s*"([^"]+)"', _text, _re.MULTILINE)
-        if _m:
-            return _m.group(1)
-    except Exception:
-        pass
-    return "0.22.0"  # last-resort hardcoded fallback
+    return "0.0.0"  # last-resort fallback (should never reach here)
 
 __version__ = _read_version()
 

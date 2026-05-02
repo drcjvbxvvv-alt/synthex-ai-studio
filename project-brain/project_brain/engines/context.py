@@ -437,11 +437,18 @@ class ContextEngineer:
         )
         # STB-05: 截斷提示，讓 Agent 知道有更多知識未顯示
         _skipped = getattr(self, "_budget_skipped", 0)
-        footer = (
+        _skip_note = (
             f"\n\n> ⚠ 另有 {_skipped} 筆相關知識因 context 長度限制未顯示，"
-            f"執行 `brain search \"{task[:30]}\"` 查看完整結果。\n---\n"
-            if _skipped > 0 else "\n---\n"
+            f"執行 `brain search \"{task[:30]}\"` 查看完整結果。\n"
+            if _skipped > 0 else "\n"
         )
+        # P2-1: structured sources block — lets agents call
+        # report_knowledge_outcome(node_id=...) without parsing markdown
+        _sources_block = ""
+        if _shown_node_ids:
+            _src_items = ", ".join(f'"{nid}"' for nid in _shown_node_ids)
+            _sources_block = f'\n> **Sources** (for `report_knowledge_outcome`): [{_src_items}]\n'
+        footer = _skip_note + _sources_block + "---\n"
 
         # A-3：輸出前語意去重（只在 scikit-learn 已安裝時啟用）
         # BUG-05 fix: pre-assign result so that any exception after this point
@@ -812,7 +819,11 @@ class ContextEngineer:
         if ic: meta += f"\n  🚫 失效條件：{ic[:120]}"
         # MEM-07: freshness note — uses updated_at (falls back to created_at)
         freshness = self._freshness_note(node)
-        return f"### {label}：{title} [{clabel}{stale_warning}]\n{content}{freshness}\n{tag_str}{meta}"
+        # P2-1: include node_id[:8] in full mode so agents can call
+        # report_knowledge_outcome(node_id=...) for feedback loop
+        nid = (node.get("id") or "")[:8]
+        nid_prefix = f"[{nid}] " if nid else ""
+        return f"### {nid_prefix}{label}：{title} [{clabel}{stale_warning}]\n{content}{freshness}\n{tag_str}{meta}"
 
     def _format_pitfalls(self, pitfalls: list) -> str:
         lines = ["## ⚠ 已知陷阱（務必先看）"]

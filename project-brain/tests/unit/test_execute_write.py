@@ -278,11 +278,12 @@ class TestRefactoredCallers(_BrainDBFixture):
         self.assertIsInstance(result, int)
 
     def test_W15_search_nodes_trace_insert_still_logged(self):
-        """search_nodes 內部的 trace INSERT 透過 _execute_write 寫入"""
+        """search_nodes 內部的 trace INSERT 透過 _execute_write 寫入（尊重採樣率）"""
         self.bd.add_node("n1", "Rule", "searchable term here", "body")
-        # 清空 traces
+        # 清空 traces + 重置 counter 確保下一次命中
         self.bd.conn.execute("DELETE FROM traces")
         self.bd.conn.commit()
+        self.bd._trace_counter = self.bd._trace_sample_rate - 1  # next search will write
         # 執行 search
         self.bd.search_nodes("searchable")
         # trace 應該有 1 筆

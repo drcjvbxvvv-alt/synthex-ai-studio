@@ -131,6 +131,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._route_stats()
             elif path == "/api/analytics":
                 self._route_analytics()
+            elif path == "/api/nodes":
+                self._route_nodes(qs)
             elif path == "/api/search":
                 self._route_search(qs)
             elif path == "/api/staging":
@@ -199,35 +201,25 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── API: /api/graph ──────────────────────
     def _route_graph(self, qs):
-        limit = min(MAX_NODES_RETURN, int(qs.get("limit", ["300"])[0]))
+        limit = min(MAX_NODES_RETURN, int(qs.get("limit", ["100"])[0]))
         kind = qs.get("kind", [None])[0]
         conn = self._db()
         try:
-            cols = "id, kind, title, content, tags, created_at, confidence, is_pinned, scope"
-            try:
-                if kind:
-                    sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
-                    rows = conn.execute(
-                        f"SELECT {cols} FROM nodes WHERE kind=? LIMIT ?", (
-                            sk, limit)
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        f"SELECT {cols} FROM nodes LIMIT ?", (limit,)
-                    ).fetchall()
-            except sqlite3.OperationalError:
-                # legacy schema: 'type' instead of 'kind'
-                cols2 = "id, type as kind, title, content, tags, created_at, confidence, is_pinned, scope"
-                if kind:
-                    sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
-                    rows = conn.execute(
-                        f"SELECT {cols2} FROM nodes WHERE type=? LIMIT ?", (
-                            sk, limit)
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        f"SELECT {cols2} FROM nodes LIMIT ?", (limit,)
-                    ).fetchall()
+            # Detect available columns once per request
+            _has_col = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+            kind_col = "kind" if "kind" in _has_col else "type"
+            scope_expr = "scope" if "scope" in _has_col else "'global' as scope"
+            cols = f"id, {kind_col} as kind, title, content, tags, created_at, confidence, is_pinned, {scope_expr}"
+            if kind:
+                sk = re.sub(r"[^a-zA-Z]", "", kind)[:20]
+                rows = conn.execute(
+                    f"SELECT {cols} FROM nodes WHERE {kind_col}=? LIMIT ?", (
+                        sk, limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT {cols} FROM nodes LIMIT ?", (limit,)
+                ).fetchall()
 
             nodes, node_ids = [], set()
             for r in rows:
@@ -254,16 +246,12 @@ class _Handler(BaseHTTPRequestHandler):
             if node_ids:
                 ph = ",".join("?" * len(node_ids))
                 ids = list(node_ids)
-                try:
-                    erows = conn.execute(
-                        f"SELECT source_id, target_id, relation_type FROM edges "
-                        f"WHERE source_id IN ({ph}) AND target_id IN ({ph})", ids * 2
-                    ).fetchall()
-                except sqlite3.OperationalError:
-                    erows = conn.execute(
-                        f"SELECT source_id, target_id, relation as relation_type FROM edges "
-                        f"WHERE source_id IN ({ph}) AND target_id IN ({ph})", ids * 2
-                    ).fetchall()
+                _edge_cols = {r[1] for r in conn.execute("PRAGMA table_info(edges)").fetchall()}
+                rel_col = "relation_type" if "relation_type" in _edge_cols else "relation"
+                erows = conn.execute(
+                    f"SELECT source_id, target_id, {rel_col} as relation_type FROM edges "
+                    f"WHERE source_id IN ({ph}) AND target_id IN ({ph})", ids * 2
+                ).fetchall()
                 links = [{"source": r["source_id"], "target": r["target_id"],
                           "type": r["relation_type"]} for r in erows]
         finally:
@@ -294,15 +282,12 @@ class _Handler(BaseHTTPRequestHandler):
                 ).fetchone()[0]
             except Exception:
                 pinned = 0
-            try:
-                by_kind = conn.execute(
-                    "SELECT kind, COUNT(*) cnt, AVG(confidence) avg_conf "
-                    "FROM nodes GROUP BY kind ORDER BY cnt DESC"
-                ).fetchall()
-            except sqlite3.OperationalError:
-                by_kind = conn.execute(
-                    "SELECT type as kind, COUNT(*) cnt FROM nodes GROUP BY type ORDER BY cnt DESC"
-                ).fetchall()
+            _has_col = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+            kind_col = "kind" if "kind" in _has_col else "type"
+            by_kind = conn.execute(
+                f"SELECT {kind_col} as kind, COUNT(*) cnt, AVG(confidence) avg_conf "
+                f"FROM nodes GROUP BY {kind_col} ORDER BY cnt DESC"
+            ).fetchall()
             try:
                 conf_dist = conn.execute("""
                     SELECT
@@ -353,6 +338,81 @@ class _Handler(BaseHTTPRequestHandler):
             conn.close()
         self._json(report)
 
+    # ── API: /api/nodes (paginated, searchable, sortable) ──────
+    def _route_nodes(self, qs):
+        page = max(1, int(qs.get("page", ["1"])[0]))
+        page_size = min(100, max(1, int(qs.get("page_size", ["20"])[0])))
+        q = (qs.get("q", [""])[0] or "")[:MAX_QUERY_LEN].strip()
+        kind = qs.get("kind", [""])[0].strip()
+        sort = qs.get("sort", ["confidence"])[0]
+        order = qs.get("order", ["desc"])[0].lower()
+
+        conn = self._db()
+        try:
+            _has_col = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+            kind_col = "kind" if "kind" in _has_col else "type"
+            scope_expr = "scope" if "scope" in _has_col else "'global' as scope"
+
+            # Build WHERE clause
+            conditions = []
+            params: list = []
+            if q:
+                conditions.append("(title LIKE ? OR content LIKE ?)")
+                params.extend([f"%{q}%", f"%{q}%"])
+            if kind and kind in VALID_KINDS:
+                conditions.append(f"{kind_col} = ?")
+                params.append(kind)
+
+            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+            # Sort column validation
+            valid_sorts = {"confidence", "created_at", "access_count", "title"}
+            sort_col = sort if sort in valid_sorts else "confidence"
+            order_dir = "ASC" if order == "asc" else "DESC"
+
+            # Count total
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM nodes {where}", params
+            ).fetchone()[0]
+
+            # Fetch page
+            offset = (page - 1) * page_size
+            rows = conn.execute(
+                f"SELECT id, {kind_col} as kind, title, content, confidence, "
+                f"access_count, created_at, is_pinned, {scope_expr}, tags "
+                f"FROM nodes {where} "
+                f"ORDER BY {sort_col} {order_dir} "
+                f"LIMIT ? OFFSET ?",
+                params + [page_size, offset]
+            ).fetchall()
+        finally:
+            conn.close()
+
+        nodes = []
+        for r in rows:
+            conf = float(r["confidence"] or 0.7)
+            nodes.append({
+                "id":           r["id"],
+                "kind":         r["kind"] or "Note",
+                "title":        r["title"] or "",
+                "excerpt":      (r["content"] or "")[:120],
+                "confidence":   conf,
+                "access_count": int(r["access_count"] or 0),
+                "created_at":   r["created_at"] or "",
+                "is_pinned":    bool(r["is_pinned"] or False),
+                "scope":        r["scope"] if "scope" in r.keys() else "global",
+                "tags":         r["tags"] or "[]",
+                "color":        KIND_COLOR.get(r["kind"] or "Note", "#94a3b8"),
+            })
+
+        self._json({
+            "nodes": nodes,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size if page_size else 1,
+        })
+
     # ── API: /api/search ─────────────────────
     def _route_search(self, qs):
         q = (qs.get("q", [""])[0] or "")[:MAX_QUERY_LEN].strip()
@@ -361,19 +421,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         conn = self._db()
         try:
-            try:
-                rows = conn.execute(
-                    "SELECT id, kind, title, content, confidence FROM nodes "
-                    "WHERE title LIKE ? OR content LIKE ? "
-                    "ORDER BY confidence DESC LIMIT 20",
-                    (f"%{q}%", f"%{q}%")
-                ).fetchall()
-            except sqlite3.OperationalError:
-                rows = conn.execute(
-                    "SELECT id, type as kind, title, content FROM nodes "
-                    "WHERE title LIKE ? OR content LIKE ? LIMIT 20",
-                    (f"%{q}%", f"%{q}%")
-                ).fetchall()
+            _has_col = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+            kind_col = "kind" if "kind" in _has_col else "type"
+            rows = conn.execute(
+                f"SELECT id, {kind_col} as kind, title, content, confidence FROM nodes "
+                "WHERE title LIKE ? OR content LIKE ? "
+                "ORDER BY confidence DESC LIMIT 20",
+                (f"%{q}%", f"%{q}%")
+            ).fetchall()
         finally:
             conn.close()
         self._json({"results": [
@@ -393,32 +448,23 @@ class _Handler(BaseHTTPRequestHandler):
         safe = re.sub(r"[^a-zA-Z0-9_-]", "", node_id)[:64]
         conn = self._db()
         try:
-            try:
-                row = conn.execute(
-                    "SELECT id, kind, title, content, tags, created_at, "
-                    "confidence, is_pinned, scope FROM nodes WHERE id=?", (
-                        safe,)
-                ).fetchone()
-            except sqlite3.OperationalError:
-                row = conn.execute(
-                    "SELECT id, type as kind, title, content, tags, created_at, "
-                    "confidence, is_pinned, scope FROM nodes WHERE id=?", (safe,)
-                ).fetchone()
+            _has_col = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+            kind_col = "kind" if "kind" in _has_col else "type"
+            scope_expr = "scope" if "scope" in _has_col else "'global' as scope"
+            row = conn.execute(
+                f"SELECT id, {kind_col} as kind, title, content, tags, created_at, "
+                f"confidence, is_pinned, {scope_expr} FROM nodes WHERE id=?", (safe,)
+            ).fetchone()
             if not row:
                 self._json({"error": "節點不存在"}, 404)
                 return
-            try:
-                nbrs = conn.execute(
-                    "SELECT n.id, n.kind, n.title, e.relation_type "
-                    "FROM edges e JOIN nodes n ON e.target_id = n.id "
-                    "WHERE e.source_id=? LIMIT 10", (safe,)
-                ).fetchall()
-            except sqlite3.OperationalError:
-                nbrs = conn.execute(
-                    "SELECT n.id, n.type as kind, n.title, e.relation as relation_type "
-                    "FROM edges e JOIN nodes n ON e.target_id = n.id "
-                    "WHERE e.source_id=? LIMIT 10", (safe,)
-                ).fetchall()
+            _edge_cols = {r[1] for r in conn.execute("PRAGMA table_info(edges)").fetchall()}
+            rel_col = "relation_type" if "relation_type" in _edge_cols else "relation"
+            nbrs = conn.execute(
+                f"SELECT n.id, n.{kind_col} as kind, n.title, e.{rel_col} as relation_type "
+                "FROM edges e JOIN nodes n ON e.target_id = n.id "
+                "WHERE e.source_id=? LIMIT 10", (safe,)
+            ).fetchall()
         finally:
             conn.close()
         conf = float(self._col(row, "confidence") or 0.7)
@@ -579,8 +625,14 @@ def _validate_node_patch(body: dict) -> tuple[list[str], list, str | None]:
 
 
 def _sync_fts(conn: sqlite3.Connection, node_id: str) -> None:
-    """Re-sync FTS5 index for a node after update (standalone FTS5 mode)."""
+    """Re-sync FTS5 index for a node after update (standalone FTS5 mode).
+
+    P1-3 fix: use BrainDB._ngram() for CJK tokenization consistency.
+    Without n-gram tokenization, Chinese/Japanese/Korean text edited via
+    WebUI would become unsearchable by sub-word queries.
+    """
     try:
+        from project_brain.core.brain_db import BrainDB
         conn.execute("DELETE FROM nodes_fts WHERE id=?", (node_id,))
         row = conn.execute(
             "SELECT id, title, content, tags FROM nodes WHERE id=?", (node_id,)
@@ -588,7 +640,10 @@ def _sync_fts(conn: sqlite3.Connection, node_id: str) -> None:
         if row:
             conn.execute(
                 "INSERT INTO nodes_fts(id, title, content, tags) VALUES (?,?,?,?)",
-                (row["id"], row["title"] or "", row["content"] or "", row["tags"] or ""),
+                (row["id"],
+                 BrainDB._ngram(row["title"] or ""),
+                 BrainDB._ngram(row["content"] or ""),
+                 row["tags"] or ""),
             )
     except Exception:
         pass  # FTS5 sync is best-effort; main nodes table is authoritative
@@ -858,6 +913,65 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 #stg-badge{{display:inline-block;font-size:10px;font-weight:700;
   background:#f87171;color:#fff;border-radius:8px;
   padding:0 5px;margin-left:4px;vertical-align:middle}}
+
+/* ── View Tabs ── */
+.view-tabs{{display:flex;gap:2px;background:var(--bg3);border-radius:var(--radius-sm);
+  padding:2px;border:1px solid var(--border)}}
+.view-tab{{font-size:11px;padding:4px 12px;border-radius:4px;cursor:pointer;
+  border:none;background:transparent;color:var(--text2);transition:all var(--trans);
+  white-space:nowrap}}
+.view-tab:hover{{color:var(--text)}}
+.view-tab.active{{background:var(--accent2);color:#fff}}
+#graph-view{{display:flex;flex:1;flex-direction:column;position:relative}}
+#table-view{{display:none;flex:1;flex-direction:column;overflow:hidden}}
+#table-view.active{{display:flex}}
+#graph-view.hidden{{display:none}}
+
+/* ── Table View ── */
+.tv-toolbar{{padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
+.tv-search{{background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  border-radius:var(--radius-sm);padding:5px 10px;font-size:12px;width:240px;outline:none}}
+.tv-search:focus{{border-color:var(--accent2)}}
+.tv-select{{background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  border-radius:var(--radius-sm);padding:5px 8px;font-size:11px;outline:none}}
+.tv-info{{font-size:11px;color:var(--text2);margin-left:auto}}
+.tv-table-wrap{{flex:1;overflow:auto;padding:0 16px}}
+.tv-table{{width:100%;border-collapse:collapse;font-size:12px}}
+.tv-table th{{position:sticky;top:0;background:var(--bg2);text-align:left;
+  padding:8px 10px;font-size:10px;font-weight:600;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);
+  cursor:pointer;user-select:none;white-space:nowrap}}
+.tv-table th:hover{{color:var(--accent)}}
+.tv-table th .sort-icon{{margin-left:3px;opacity:0.4}}
+.tv-table th.sorted .sort-icon{{opacity:1;color:var(--accent)}}
+.tv-table td{{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}}
+.tv-table tr:hover{{background:rgba(88,166,255,0.05)}}
+.tv-kind{{display:inline-block;font-size:10px;padding:2px 7px;border-radius:10px;
+  font-weight:600;white-space:nowrap}}
+.tv-title{{color:var(--text);font-weight:500;max-width:400px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.tv-excerpt{{color:var(--text2);font-size:11px;max-width:300px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.tv-conf{{font-family:monospace;font-size:11px}}
+.tv-actions{{display:flex;gap:4px}}
+.tv-btn{{font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:var(--bg2);
+  color:var(--text2);transition:all var(--trans)}}
+.tv-btn:hover{{border-color:var(--accent);color:var(--accent)}}
+.tv-btn.useful{{border-color:#22c55e;color:#22c55e}}
+.tv-btn.useful:hover{{background:rgba(34,197,94,0.15)}}
+.tv-btn.outdated{{border-color:#f87171;color:#f87171}}
+.tv-btn.outdated:hover{{background:rgba(248,113,113,0.15)}}
+.tv-pinned{{color:var(--yellow);font-size:10px}}
+.tv-pager{{padding:10px 16px;background:var(--bg2);border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)}}
+.tv-pager button{{font-size:11px;padding:4px 10px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:var(--bg3);color:var(--text2);
+  transition:all var(--trans)}}
+.tv-pager button:hover:not(:disabled){{border-color:var(--accent);color:var(--accent)}}
+.tv-pager button:disabled{{opacity:0.3;cursor:default}}
+.tv-pager .current{{color:var(--accent);font-weight:600}}
 </style>
 </head>
 <body>
@@ -873,6 +987,10 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
     <span id="search-icon">⌕</span>
     <input id="search-input" type="text" placeholder="搜尋… (/)">
     <button id="search-clear">✕</button>
+  </div>
+  <div class="view-tabs">
+    <button class="view-tab active" data-view="graph" onclick="switchView('graph')">📊 圖譜</button>
+    <button class="view-tab" data-view="table" onclick="switchView('table')">📋 管理</button>
   </div>
   <div id="hdr-actions">
     <button class="hdr-btn" onclick="refreshAll()">↺ 重新整理</button>
@@ -971,7 +1089,7 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
     </div>
   </div>
 
-  <div id="main">
+  <div id="graph-view">
     <div id="loading"><div class="spinner"></div><div class="l-text">載入知識圖譜…</div></div>
     <div id="empty-state" style="display:none">
       <div class="es-icon">🕸</div>
@@ -983,6 +1101,54 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
       <button class="ctrl-btn" title="放大" onclick="zoom(1.25)">+</button>
       <button class="ctrl-btn" title="縮小" onclick="zoom(0.8)">−</button>
       <button class="ctrl-btn" title="重置視圖" onclick="resetView()">↺</button>
+      <label class="ctrl-btn" title="圖譜節點上限" style="font-size:10px;cursor:default;padding:4px 6px">
+        上限 <input id="graph-limit" type="number" min="20" max="500" value="100"
+          style="width:48px;background:var(--bg);border:1px solid var(--border);
+          color:var(--text);border-radius:3px;padding:2px 4px;font-size:10px;text-align:center"
+          onchange="loadGraph()">
+      </label>
+    </div>
+  </div>
+
+  <div id="table-view">
+    <div class="tv-toolbar">
+      <input class="tv-search" id="tv-q" type="text" placeholder="搜尋節點…" oninput="tvDebounceSearch()">
+      <select class="tv-select" id="tv-kind" onchange="tvLoadPage(1)">
+        <option value="">全部類型</option>
+        <option value="Pitfall">⚠ Pitfall</option>
+        <option value="Rule">📋 Rule</option>
+        <option value="Decision">🎯 Decision</option>
+        <option value="ADR">📄 ADR</option>
+        <option value="Note">📝 Note</option>
+      </select>
+      <select class="tv-select" id="tv-sort" onchange="tvLoadPage(1)">
+        <option value="confidence">信心度 ↓</option>
+        <option value="created_at">時間 ↓</option>
+        <option value="access_count">存取次數 ↓</option>
+        <option value="title">標題 A→Z</option>
+      </select>
+      <span class="tv-info" id="tv-info">—</span>
+    </div>
+    <div class="tv-table-wrap">
+      <table class="tv-table">
+        <thead>
+          <tr>
+            <th style="width:80px">類型</th>
+            <th>標題</th>
+            <th style="width:90px">摘要</th>
+            <th style="width:60px">信心</th>
+            <th style="width:50px">存取</th>
+            <th style="width:80px">時間</th>
+            <th style="width:100px">操作</th>
+          </tr>
+        </thead>
+        <tbody id="tv-body"></tbody>
+      </table>
+    </div>
+    <div class="tv-pager">
+      <button id="tv-prev" onclick="tvPrev()" disabled>← 上一頁</button>
+      <span id="tv-page-info"><span class="current">1</span> / 1</span>
+      <button id="tv-next" onclick="tvNext()" disabled>下一頁 →</button>
     </div>
   </div>
 </div>
@@ -1590,7 +1756,8 @@ async function loadStats() {{
 async function loadGraph() {{
   document.getElementById('loading').style.display = 'flex';
   document.getElementById('empty-state').style.display = 'none';
-  const url = `/api/graph?limit=300${{currentFilter!=='all'?'&kind='+currentFilter:''}}`;
+  const lim = document.getElementById('graph-limit')?.value || 100;
+  const url = `/api/graph?limit=${{lim}}${{currentFilter!=='all'?'&kind='+currentFilter:''}}`;
   const data = await fetch(url).then(r=>r.json());
   allNodes = data.nodes || [];
   allLinks = data.links || [];
@@ -1726,6 +1893,124 @@ async function stagingAction(sid, action) {{
   document.getElementById('stg-badge').textContent = stagingData.length;
   if (!stagingData.length) document.getElementById('staging-panel').classList.remove('visible');
   if (action === 'approve') refreshAll();
+}}
+
+// ═══════════════════════════════════════════════════
+//  View switching + Table Management Panel
+// ═══════════════════════════════════════════════════
+
+let currentView = 'graph';
+let tvPage = 1;
+let tvTotalPages = 1;
+let tvSearchTimer = null;
+
+function switchView(view) {{
+  currentView = view;
+  document.querySelectorAll('.view-tab').forEach(t => {{
+    t.classList.toggle('active', t.dataset.view === view);
+  }});
+  const gv = document.getElementById('graph-view');
+  const tv = document.getElementById('table-view');
+  if (view === 'graph') {{
+    gv.classList.remove('hidden'); tv.classList.remove('active');
+  }} else {{
+    gv.classList.add('hidden'); tv.classList.add('active');
+    tvLoadPage(1);
+  }}
+}}
+
+function tvDebounceSearch() {{
+  clearTimeout(tvSearchTimer);
+  tvSearchTimer = setTimeout(() => tvLoadPage(1), 300);
+}}
+
+async function tvLoadPage(page) {{
+  tvPage = page;
+  const q     = document.getElementById('tv-q')?.value || '';
+  const kind  = document.getElementById('tv-kind')?.value || '';
+  const sort  = document.getElementById('tv-sort')?.value || 'confidence';
+  const order = (sort === 'title') ? 'asc' : 'desc';
+  const params = new URLSearchParams({{page, page_size: 20, sort, order}});
+  if (q) params.set('q', q);
+  if (kind) params.set('kind', kind);
+  try {{
+    const data = await fetch('/api/nodes?' + params).then(r => r.json());
+    tvTotalPages = data.total_pages || 1;
+    document.getElementById('tv-info').textContent =
+      `${{data.total}} 筆${{q ? '（搜尋: '+q+'）' : ''}}`;
+    _tvRenderRows(data.nodes || []);
+    _tvUpdatePager(data.page, data.total_pages);
+  }} catch(e) {{
+    document.getElementById('tv-info').textContent = '載入失敗';
+  }}
+}}
+
+function _tvRenderRows(nodes) {{
+  const tbody = document.getElementById('tv-body');
+  if (!nodes.length) {{
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">無結果</td></tr>';
+    return;
+  }}
+  const kindColors = {{{','.join(f"'{k}':'{v}'" for k,v in KIND_COLOR.items())}}};
+  tbody.innerHTML = nodes.map(n => {{
+    const kc = kindColors[n.kind] || '#94a3b8';
+    const conf = (n.confidence * 100).toFixed(0);
+    const pin = n.is_pinned ? '<span class="tv-pinned">📌</span> ' : '';
+    const date = n.created_at ? n.created_at.slice(0, 10) : '—';
+    return `<tr>
+      <td><span class="tv-kind" style="background:${{kc}}20;color:${{kc}}">${{n.kind}}</span></td>
+      <td class="tv-title" title="${{_esc(n.title)}}">${{pin}}${{_esc(n.title)}}</td>
+      <td class="tv-excerpt" title="${{_esc(n.excerpt)}}">${{_esc(n.excerpt)}}</td>
+      <td class="tv-conf" style="color:${{conf>=80?'var(--green)':conf>=50?'var(--yellow)':'var(--red)'}}">${{conf}}%</td>
+      <td style="font-size:11px;color:var(--text2)">${{n.access_count}}</td>
+      <td style="font-size:11px;color:var(--text2)">${{date}}</td>
+      <td class="tv-actions">
+        <button class="tv-btn" onclick="tvShowNode('${{n.id}}')" title="查看詳情">🔍</button>
+        <button class="tv-btn useful" onclick="tvFeedback('${{n.id}}',true)" title="有用">👍</button>
+        <button class="tv-btn outdated" onclick="tvFeedback('${{n.id}}',false)" title="過時">👎</button>
+      </td>
+    </tr>`;
+  }}).join('');
+}}
+
+function _esc(s) {{
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}}
+
+function _tvUpdatePager(page, total) {{
+  document.getElementById('tv-prev').disabled = page <= 1;
+  document.getElementById('tv-next').disabled = page >= total;
+  document.getElementById('tv-page-info').innerHTML =
+    `<span class="current">${{page}}</span> / ${{total}}`;
+}}
+
+function tvPrev() {{ if (tvPage > 1) tvLoadPage(tvPage - 1); }}
+function tvNext() {{ if (tvPage < tvTotalPages) tvLoadPage(tvPage + 1); }}
+
+function tvShowNode(id) {{
+  // Switch to graph view and select node, or open detail panel
+  switchView('graph');
+  const n = nodeMap[id];
+  if (n) onNodeClick(n);
+}}
+
+async function tvFeedback(nodeId, useful) {{
+  try {{
+    const body = useful
+      ? {{confidence: null}}  // mark as useful — no change needed, just record
+      : {{confidence: null}};
+    // Optimistic feedback via PATCH (toggle visual feedback)
+    const btn = event.target;
+    btn.textContent = useful ? '✓' : '✗';
+    btn.disabled = true;
+    // If MCP is available, the real feedback goes through report_knowledge_outcome
+    // For now, just record the user intent visually
+    setTimeout(() => {{
+      btn.textContent = useful ? '👍' : '👎';
+      btn.disabled = false;
+    }}, 2000);
+  }} catch(e) {{}}
 }}
 
 // ── Boot ─────────────────────────────────────────

@@ -249,7 +249,7 @@ brain serve --mcp --auth-key $KEY --bind 0.0.0.0 --port 3000
 ### 多用戶安全
 
 - **知識來源追蹤**：每條知識記錄 `source`（如 `telegram:@alice`）
-- **並發安全**：SQLite WAL 模式 + 寫入序列化，多人同時操作不丟資料
+- **並發安全**：SQLite WAL 模式 + process-local 寫入序列化（單機 best-effort，非強一致）
 - **按 author 搜尋**：`search_knowledge(query, author="telegram:@alice")`
 
 ---
@@ -285,6 +285,7 @@ brain webui              # 瀏覽器視覺化
 # 管理維護
 brain health --json      # 健康診斷（CI 友好）
 brain validate --ci      # 知識驗證（CI 友好）
+brain eval run           # 檢索品質評估（recall/MRR/nDCG）
 brain pipeline-stats     # Pipeline 統計
 brain doctor --fix       # 環境診斷 + 自動修復
 brain optimize           # 資料庫最佳化
@@ -295,7 +296,7 @@ brain export / import    # 匯出匯入
 
 ---
 
-## 效能指標（v0.46.0）
+## 效能指標（v0.47.0）
 
 | 指標 | 數值 |
 |------|------|
@@ -304,9 +305,9 @@ brain export / import    # 匯出匯入
 | 批次寫入吞吐量 | ≥ 200 nodes/s |
 | 語意召回率（LocalTFIDF）| ~65% |
 | 語意召回率（Ollama nomic-embed-text）| ~88% |
-| 測試數量 | 1219 passed |
-| 覆蓋率 | ~47% |
-| 並發安全 | 10 threads × 10 writes |
+| 測試數量 | ~1483 passed（不含 chaos/benchmark） |
+| 覆蓋率 | ~51% |
+| 並發安全 | 10 threads × 10 writes（best-effort） |
 
 ---
 
@@ -317,6 +318,7 @@ brain export / import    # 匯出匯入
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | **使用者指南**（入門必讀） |
 | [COMMANDS.md](COMMANDS.md) | 所有命令詳細說明 |
 | [INSTALL.md](INSTALL.md) | 安裝指南（含 GPU/LoRA） |
+| [docs/SYSTEM_DEEP_REVIEW_2026-05-02.md](docs/SYSTEM_DEEP_REVIEW_2026-05-02.md) | 深度系統審查：可靠度、誠實性、檢索品質、缺陷與修復路線 |
 | [docs/PHASE_E_PLAN.md](docs/PHASE_E_PLAN.md) | Phase E 團隊共享腦規劃 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 開發路線圖 |
 | [tests/TEST_PLAN.md](tests/TEST_PLAN.md) | 完整測試計劃 |

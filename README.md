@@ -29,7 +29,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/tests-1219_passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-~1483_passed-brightgreen.svg)]()
 [![Zero Dependencies](https://img.shields.io/badge/runtime_deps-sqlite_only-brightgreen.svg)]()
 
 ---
@@ -391,7 +391,7 @@ brain serve --mcp --auth-key $BRAIN_API_KEY --bind 0.0.0.0 --port 3000
 ### 多用戶安全
 
 - **知識來源追蹤**：`add_knowledge(source="telegram:@alice")`
-- **並發安全**：SQLite WAL + 寫入序列化
+- **並發安全**：SQLite WAL + process-local 寫入序列化（best-effort）
 - **按 author 搜尋**：`search_knowledge(query, author="telegram:@alice")`
 
 ---

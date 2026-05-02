@@ -1,5 +1,5 @@
 """
-tests/test_chaos_and_load.py — Chaos Testing + Load Testing
+tests/chaos/test_chaos_and_load.py — Chaos Testing + Load Testing
 
 工程健壯度評估：在錯誤注入和高負載下的系統穩定性。
 """
@@ -8,6 +8,9 @@ import threading
 import time
 import tempfile
 from pathlib import Path
+
+# Module-level marker: ensures -m 'not chaos' skips entire file
+pytestmark = pytest.mark.chaos
 
 
 # ════════════════════════════════════════════════════════════════

@@ -29,7 +29,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/tests-1219_passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-~1483_passed-brightgreen.svg)]()
 [![Zero Dependencies](https://img.shields.io/badge/runtime_deps-sqlite_only-brightgreen.svg)]()
 
 ---
