@@ -54,7 +54,7 @@ class AuthMiddleware:
     """
 
     # Paths that bypass authentication
-    EXEMPT_PATHS = frozenset({"/health", "/health/"})
+    EXEMPT_PATHS = frozenset({"/health", "/health/", "/metrics", "/metrics/"})
 
     def __init__(self, app: Any, auth_key: str | None = None,
                  brain_db: Any = None) -> None:
@@ -212,22 +212,27 @@ class RateLimitMiddleware:
 # ── Health Endpoint ───────────────────────────────────────────────
 
 class HealthEndpoint:
-    """ASGI app that handles /health requests and delegates everything else.
+    """ASGI app that handles /health and /metrics requests.
 
     Returns a simple JSON health check response for GET /health.
+    Returns Prometheus text format metrics for GET /metrics (E-06).
     All other requests pass through to the wrapped app.
     """
 
     def __init__(self, app: Any, version: str = "0.0.0",
-                 mode: str = "standalone") -> None:
+                 mode: str = "standalone",
+                 brain_dir: Any = None) -> None:
         self.app = app
         self._version = version
         self._mode = mode
+        self._brain_dir = brain_dir  # Path to .brain/ directory
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and scope.get("path") in ("/health", "/health/"):
+        if scope["type"] == "http":
+            path = scope.get("path", "")
             method = scope.get("method", "GET")
-            if method == "GET":
+
+            if path in ("/health", "/health/") and method == "GET":
                 payload = json.dumps({
                     "status": "ok",
                     "version": self._version,
@@ -245,7 +250,123 @@ class HealthEndpoint:
                 await send({"type": "http.response.body", "body": payload})
                 return
 
+            if path in ("/metrics", "/metrics/") and method == "GET":
+                payload = self._collect_metrics().encode("utf-8")
+                await send({
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        [b"content-type", b"text/plain; version=0.0.4; charset=utf-8"],
+                        [b"content-length", str(len(payload)).encode()],
+                    ],
+                })
+                await send({"type": "http.response.body", "body": payload})
+                return
+
         await self.app(scope, receive, send)
+
+    def _collect_metrics(self) -> str:
+        """Collect Prometheus-format metrics from brain.db."""
+        import sqlite3
+        lines: list[str] = []
+
+        lines.append("# HELP brain_info Project Brain version info")
+        lines.append("# TYPE brain_info gauge")
+        lines.append(f'brain_info{{version="{self._version}",mode="{self._mode}"}} 1')
+
+        if not self._brain_dir:
+            return "\n".join(lines) + "\n"
+
+        from pathlib import Path
+        brain_dir = Path(self._brain_dir) if not isinstance(self._brain_dir, Path) else self._brain_dir
+        db_path = brain_dir / "brain.db"
+        if not db_path.exists():
+            return "\n".join(lines) + "\n"
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+
+            # Nodes by kind
+            lines.append("# HELP brain_nodes_total Total knowledge nodes by kind")
+            lines.append("# TYPE brain_nodes_total gauge")
+            try:
+                # Try 'kind' column first, fall back to 'type'
+                try:
+                    rows = conn.execute(
+                        "SELECT kind, COUNT(*) cnt FROM nodes GROUP BY kind"
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    rows = conn.execute(
+                        "SELECT type as kind, COUNT(*) cnt FROM nodes GROUP BY type"
+                    ).fetchall()
+                for r in rows:
+                    k = r["kind"] or "Note"
+                    lines.append(f'brain_nodes_total{{kind="{k}"}} {r["cnt"]}')
+            except Exception:
+                lines.append("brain_nodes_total 0")
+
+            # KRB staging pending
+            lines.append("# HELP brain_staging_pending Pending KRB staging nodes")
+            lines.append("# TYPE brain_staging_pending gauge")
+            rb_path = brain_dir / "review_board.db"
+            if rb_path.exists():
+                try:
+                    rb = sqlite3.connect(str(rb_path))
+                    pending = rb.execute(
+                        "SELECT COUNT(*) FROM staged_nodes WHERE status='pending'"
+                    ).fetchone()[0]
+                    rb.close()
+                    lines.append(f"brain_staging_pending {pending}")
+                except Exception:
+                    lines.append("brain_staging_pending 0")
+            else:
+                lines.append("brain_staging_pending 0")
+
+            # API keys active
+            lines.append("# HELP brain_api_keys_active Active API keys")
+            lines.append("# TYPE brain_api_keys_active gauge")
+            try:
+                tables = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+                if "api_keys" in tables:
+                    active = conn.execute(
+                        "SELECT COUNT(*) FROM api_keys WHERE is_revoked=0"
+                    ).fetchone()[0]
+                    lines.append(f"brain_api_keys_active {active}")
+                else:
+                    lines.append("brain_api_keys_active 0")
+            except Exception:
+                lines.append("brain_api_keys_active 0")
+
+            # Signal queue pending
+            lines.append("# HELP brain_signal_queue_pending Pending signal queue items")
+            lines.append("# TYPE brain_signal_queue_pending gauge")
+            try:
+                if "signal_queue" in tables:
+                    sq = conn.execute(
+                        "SELECT COUNT(*) FROM signal_queue WHERE status='pending'"
+                    ).fetchone()[0]
+                    lines.append(f"brain_signal_queue_pending {sq}")
+                else:
+                    lines.append("brain_signal_queue_pending 0")
+            except Exception:
+                lines.append("brain_signal_queue_pending 0")
+
+            # DB size
+            lines.append("# HELP brain_db_size_bytes Database file size in bytes")
+            lines.append("# TYPE brain_db_size_bytes gauge")
+            try:
+                lines.append(f"brain_db_size_bytes {db_path.stat().st_size}")
+            except Exception:
+                lines.append("brain_db_size_bytes 0")
+
+            conn.close()
+        except Exception as e:
+            logger.warning("metrics collection failed: %s", e)
+
+        return "\n".join(lines) + "\n"
 
 
 # ── CORS Middleware ───────────────────────────────────────────────
@@ -414,8 +535,11 @@ class HTTPBrainServer:
         if self._allowed_origins:
             app = CORSMiddleware(app, allowed_origins=self._allowed_origins)
 
-        # 1. Health endpoint (outermost — accessible without auth)
-        app = HealthEndpoint(app, version=version, mode=self._mode)
+        # 1. Health + Metrics endpoint (outermost — accessible without auth)
+        # E-06: pass brain_dir so /metrics can read brain.db
+        brain_dir = getattr(getattr(self._srv, 'brain', None), 'brain_dir', None)
+        app = HealthEndpoint(app, version=version, mode=self._mode,
+                             brain_dir=brain_dir)
 
         self._app = app
         return app

@@ -4,6 +4,75 @@
 
 ---
 
+## v0.53.0（2026-05-02）— E-06 運維 Agent 整合：WebUI 管理面板 + Prometheus 監控
+
+> 非技術人員可在瀏覽器中新增知識、瀏覽儀表板、查閱審計日誌。
+> 系統管理���可透過 Prometheus /metrics 端點整合 Grafana 監控。
+> Phase E 全部完成。
+
+### WebUI 新增知識（免 CLI）
+
+- **`POST /api/node`** — 從 WebUI 新增知識節點（標題、內容、類型、信心度）
+- 自動產生 node ID（`webui-<hash>`），同步 FTS5 索引
+- 完整輸入��證（必填欄位、長度限制、信心度範圍、有效類型檢查）
+
+### 儀表板（Dashboard）
+
+- **`GET /api/admin/dashboard`** — 知識庫統計總覽
+  - 知識總量、關係數、類型分佈、低信心度統計
+  - 近期活動（今天/本週/本��新增數）
+  - KRB 待審數量、Signal 佇列���態
+  - 系統健康摘要（warnings/errors 計數）
+
+### 審計日誌（Audit Log）
+
+- **`GET /api/admin/audit-log`** — 知識變更追蹤
+  - 資料來源：`node_history`（修改紀錄）+ `staged_nodes`（KRB 審核紀錄）
+  - 支援篩選：天數範圍、操作者、動作類型
+  - 支援分頁
+
+### 系統設定面板（Settings）
+
+- **`GET /api/admin/settings`** — 系統設定與服務狀態
+  - 顯示運行模式、Embedding、LLM、Schema 版本
+  - 服務狀態檢查（brain.db、Central Brain）
+  - 儲存空間統計（DB 大小、備份數量）
+
+### Prometheus /metrics 端點
+
+- **`GET /metrics`** — Prometheus text format 指標
+  - `brain_nodes_total{kind="..."}` — 各類型知識節點��
+  - `brain_staging_pending` — KRB 待審數
+  - `brain_api_keys_active` — 活躍 API key 數
+  - `brain_signal_queue_pending` — Signal 佇列待處理數
+  - `brain_db_size_bytes` — 資料庫大小
+  - `brain_info` ��� 版本與模式資訊
+- `/metrics` 和 `/health` 免驗證（exempt from auth + rate limiting）
+
+### WebUI 前端
+
+- 新增 5 個檢視標籤：圖譜、管理、儀表板、審計、設定
+- 「+ 新增知識」按鈕：中文類型選單、信心度滑��、即時驗證
+- 儀表板：卡��式統計、類型分佈、近期活動、健康狀態
+- 審計日誌：表格展�� + 篩選 + 分頁
+- 系統設定：服務狀態指示燈、儲存空間統計
+
+### 測試
+
+- **`tests/unit/test_webui_admin.py`**（新建）— 24 tests：Add Knowledge 9, Dashboard 5, Audit Log 5, Settings 5
+- **`tests/unit/test_prometheus.py`**（新建）— 12 tests：Prometheus 格式驗證、指標正確性、向下相容
+
+### 修改的檔案
+
+| 檔案 | 修改類型 |
+|------|---------|
+| `project_brain/interfaces/web_ui/server.py` | 新增 API endpoints + 前端頁面 |
+| `project_brain/interfaces/http_transport.py` | /metrics Prometheus endpoint |
+| `tests/unit/test_webui_admin.py` | **新建** — 24 tests |
+| `tests/unit/test_prometheus.py` | **新建** — 12 tests |
+
+---
+
 ## v0.52.0（2026-05-02）— E-05 個人知識推送到集中庫 + API Key 管理
 
 > 本地知識可推送到 Central Brain（KRB staging 待審），admin 可用 `--direct` 直接寫入 L3。

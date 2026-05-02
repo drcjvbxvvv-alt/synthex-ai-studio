@@ -5,12 +5,15 @@ project_brain/web_ui/server.py — 知識圖譜視覺化 Web UI（v1.0）
 離線可用，零外部框架依賴。
 """
 from __future__ import annotations
+import hashlib
 import json
 import logging
 import os
 import re
 import sqlite3
+import time
 import urllib.parse
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -19,7 +22,7 @@ logger = logging.getLogger(__name__)
 MAX_QUERY_LEN = 200
 MAX_NODES_RETURN = 500
 HOST = "127.0.0.1"
-_VERSION = "1.1"
+_VERSION = "1.2"
 
 ALLOWED_EDIT_FIELDS = {"title", "content", "confidence", "kind"}
 VALID_KINDS = {"Pitfall", "Decision", "Rule", "ADR", "Component", "Architecture", "Note"}
@@ -137,6 +140,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._route_search(qs)
             elif path == "/api/staging":
                 self._route_staging()
+            elif path == "/api/admin/dashboard":
+                self._route_admin_dashboard()
+            elif path == "/api/admin/audit-log":
+                self._route_admin_audit_log(qs)
+            elif path == "/api/admin/settings":
+                self._route_admin_settings()
             elif path.startswith("/api/node/") and not path.endswith("/pin"):
                 nid = path[len("/api/node/"):]
                 self._route_node(nid)
@@ -155,7 +164,9 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length)
                               or b"{}") if length else {}
-            if path.startswith("/api/node/") and path.endswith("/pin"):
+            if path == "/api/node":
+                self._route_add_node(body)
+            elif path.startswith("/api/node/") and path.endswith("/pin"):
                 nid = path[len("/api/node/"):-len("/pin")]
                 self._route_pin(nid, body)
             elif path.startswith("/api/staging/") and path.endswith("/approve"):
@@ -560,6 +571,364 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    # ── API: POST /api/node (E-06 Step 1) ────
+    def _route_add_node(self, body: dict):
+        title = str(body.get("title", "")).strip()
+        if not title:
+            self._json({"error": "標題為必填欄位"}, 400)
+            return
+        if len(title) > 500:
+            self._json({"error": "標題最長 500 字"}, 400)
+            return
+        content = str(body.get("content", "")).strip()
+        if not content:
+            self._json({"error": "內容為必填欄位"}, 400)
+            return
+        if len(content) > 10000:
+            self._json({"error": "內容最長 10000 字"}, 400)
+            return
+        kind = str(body.get("kind", "Note"))
+        if kind not in VALID_KINDS:
+            self._json({"error": f"類型必須是：{', '.join(sorted(VALID_KINDS))}"}, 400)
+            return
+        try:
+            confidence = float(body.get("confidence", 0.7))
+        except (TypeError, ValueError):
+            self._json({"error": "信心度必須是數字"}, 400)
+            return
+        if not (0.0 <= confidence <= 1.0):
+            self._json({"error": "信心度必須在 0.0~1.0 之間"}, 400)
+            return
+
+        node_id = f"webui-{hashlib.sha256(f'{title}{time.time()}'.encode()).hexdigest()[:12]}"
+        conn = self._db()
+        try:
+            conn.execute(
+                "INSERT INTO nodes (id, type, title, content, confidence, "
+                "is_pinned, created_at, access_count, tags, author) "
+                "VALUES (?, ?, ?, ?, ?, 0, datetime('now'), 0, '[]', 'web-ui')",
+                (node_id, kind, title, content, round(confidence, 4))
+            )
+            try:
+                from project_brain.core.brain_db import BrainDB
+                conn.execute(
+                    "INSERT INTO nodes_fts(id, title, content, tags) VALUES (?,?,?,?)",
+                    (node_id, BrainDB._ngram(title), BrainDB._ngram(content), "[]")
+                )
+            except Exception:
+                pass
+            conn.commit()
+        except Exception as exc:
+            logger.exception("add_node failed")
+            self._json({"error": f"新增失敗：{exc}"}, 500)
+            return
+        finally:
+            conn.close()
+        self._json({"ok": True, "id": node_id}, 201)
+
+    # ── API: GET /api/admin/dashboard (E-06 Step 2) ──
+    def _route_admin_dashboard(self):
+        conn = self._db()
+        try:
+            _has_col = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+            kind_col = "kind" if "kind" in _has_col else "type"
+
+            total = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            try:
+                edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            except Exception:
+                edges = 0
+
+            by_kind = conn.execute(
+                f"SELECT {kind_col} as kind, COUNT(*) cnt FROM nodes GROUP BY {kind_col} ORDER BY cnt DESC"
+            ).fetchall()
+            kind_dist = {r["kind"] or "Note": r["cnt"] for r in by_kind}
+
+            try:
+                low_conf = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE confidence < 0.3"
+                ).fetchone()[0]
+            except Exception:
+                low_conf = 0
+            try:
+                conflicts = conn.execute(
+                    "SELECT COUNT(*) FROM edges WHERE relation_type = 'CONTRADICTS'"
+                ).fetchone()[0]
+            except Exception:
+                conflicts = 0
+
+            # Recent activity
+            now_utc = datetime.now(timezone.utc).isoformat()
+            activity = {"today": 0, "week": 0, "month": 0}
+            try:
+                activity["today"] = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now')"
+                ).fetchone()[0]
+                activity["week"] = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now', '-7 days')"
+                ).fetchone()[0]
+                activity["month"] = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now', '-30 days')"
+                ).fetchone()[0]
+            except Exception:
+                pass
+
+            # KRB pending
+            krb_pending = 0
+            try:
+                rb_path = self.__class__.workdir / ".brain" / "review_board.db"
+                if rb_path.exists():
+                    rb_conn = sqlite3.connect(str(rb_path))
+                    krb_pending = rb_conn.execute(
+                        "SELECT COUNT(*) FROM staged_nodes WHERE status='pending'"
+                    ).fetchone()[0]
+                    rb_conn.close()
+            except Exception:
+                pass
+
+            # Signal queue
+            signal_pending = 0
+            try:
+                tables = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+                if "signal_queue" in tables:
+                    signal_pending = conn.execute(
+                        "SELECT COUNT(*) FROM signal_queue WHERE status='pending'"
+                    ).fetchone()[0]
+            except Exception:
+                pass
+
+            # Health summary
+            health_errors = 0
+            health_warnings = 0
+            if low_conf > 0:
+                health_warnings += 1
+            if conflicts > 0:
+                health_warnings += 1
+
+        finally:
+            conn.close()
+
+        self._json({
+            "total_nodes": total,
+            "total_edges": edges,
+            "kind_distribution": kind_dist,
+            "low_confidence_count": low_conf,
+            "conflicts": conflicts,
+            "activity": activity,
+            "krb_pending": krb_pending,
+            "signal_pending": signal_pending,
+            "health": {
+                "status": "error" if health_errors > 0 else ("warn" if health_warnings > 0 else "ok"),
+                "errors": health_errors,
+                "warnings": health_warnings,
+            },
+        })
+
+    # ── API: GET /api/admin/audit-log (E-06 Step 3) ──
+    def _route_admin_audit_log(self, qs):
+        days = min(365, max(1, int(qs.get("days", ["30"])[0])))
+        author = (qs.get("author", [""])[0] or "").strip()[:100]
+        action = (qs.get("action", [""])[0] or "").strip()[:20]
+        page = max(1, int(qs.get("page", ["1"])[0]))
+        page_size = min(100, max(1, int(qs.get("page_size", ["50"])[0])))
+
+        entries: list[dict] = []
+        conn = self._db()
+        try:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+
+            # Source 1: node_history
+            if "node_history" in tables:
+                nh_cols = {r[1] for r in conn.execute("PRAGMA table_info(node_history)").fetchall()}
+                change_type_col = "change_type" if "change_type" in nh_cols else "'update' as change_type"
+                changed_by_col = "changed_by" if "changed_by" in nh_cols else "'' as changed_by"
+                change_note_col = "change_note" if "change_note" in nh_cols else "'' as change_note"
+                rows = conn.execute(
+                    f"SELECT node_id, title, {change_type_col}, "
+                    f"{changed_by_col}, {change_note_col}, snapshot_at "
+                    f"FROM node_history "
+                    f"WHERE snapshot_at >= datetime('now', '-{days} days') "
+                    f"ORDER BY snapshot_at DESC"
+                ).fetchall()
+                for r in rows:
+                    actor = r["changed_by"] or ""
+                    if author and author.lower() not in actor.lower():
+                        continue
+                    act = r["change_type"] or "update"
+                    if action and action != act:
+                        continue
+                    entries.append({
+                        "time": r["snapshot_at"] or "",
+                        "actor": actor,
+                        "action": act,
+                        "node_id": r["node_id"],
+                        "title": r["title"] or "",
+                        "detail": r["change_note"] or "",
+                        "source": "node_history",
+                    })
+
+            # Source 2: staged_nodes (KRB)
+            rb_path = self.__class__.workdir / ".brain" / "review_board.db"
+            if rb_path.exists():
+                try:
+                    rb_conn = sqlite3.connect(str(rb_path))
+                    rb_conn.row_factory = sqlite3.Row
+                    rb_rows = rb_conn.execute(
+                        "SELECT id, kind, title, status, submitter, reviewer, "
+                        "created_at, reviewed_at, review_note "
+                        "FROM staged_nodes ORDER BY created_at DESC"
+                    ).fetchall()
+                    rb_conn.close()
+                    for r in rb_rows:
+                        # Submit event
+                        sub = r["submitter"] or ""
+                        if not (author and author.lower() not in sub.lower()):
+                            if not (action and action != "submit"):
+                                entries.append({
+                                    "time": r["created_at"] or "",
+                                    "actor": sub,
+                                    "action": "submit",
+                                    "node_id": r["id"],
+                                    "title": r["title"] or "",
+                                    "detail": f"kind={r['kind']}, status={r['status']}",
+                                    "source": "krb",
+                                })
+                        # Review event
+                        if r["reviewed_at"]:
+                            rev = r["reviewer"] or ""
+                            if not (author and author.lower() not in rev.lower()):
+                                act_type = "approve" if r["status"] == "approved" else "reject"
+                                if not (action and action != act_type):
+                                    entries.append({
+                                        "time": r["reviewed_at"],
+                                        "actor": rev,
+                                        "action": act_type,
+                                        "node_id": r["id"],
+                                        "title": r["title"] or "",
+                                        "detail": r["review_note"] or "",
+                                        "source": "krb",
+                                    })
+                except Exception:
+                    pass
+
+            # Sort all entries by time descending
+            entries.sort(key=lambda e: e.get("time", ""), reverse=True)
+        finally:
+            conn.close()
+
+        total = len(entries)
+        offset = (page - 1) * page_size
+        page_entries = entries[offset:offset + page_size]
+
+        self._json({
+            "entries": page_entries,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size if page_size else 1,
+        })
+
+    # ── API: GET /api/admin/settings (E-06 Step 4) ──
+    def _route_admin_settings(self):
+        bd = self.__class__.workdir / ".brain"
+        result: dict = {
+            "mode": "standalone",
+            "embedding": "LocalTFIDF",
+            "llm": "未設定",
+            "schema_version": 0,
+            "services": [],
+            "storage": {},
+        }
+
+        # Read brain.toml for config
+        toml_path = bd / "brain.toml"
+        if toml_path.exists():
+            try:
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib  # type: ignore[no-redef]
+                cfg = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+                result["mode"] = cfg.get("mode", "standalone")
+                result["embedding"] = cfg.get("embedding", {}).get("provider", "LocalTFIDF")
+                result["llm"] = cfg.get("llm", {}).get("provider", "未設定")
+            except Exception:
+                pass
+
+        db_path = bd / "brain.db"
+        if not db_path.exists():
+            result["services"].append({"name": "brain.db", "status": "error", "detail": "not found"})
+            self._json(result)
+            return
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            # Schema version
+            try:
+                row = conn.execute(
+                    "SELECT value FROM brain_meta WHERE key='schema_version'"
+                ).fetchone()
+                if row:
+                    result["schema_version"] = int(row[0])
+            except Exception:
+                pass
+
+            # Node count
+            try:
+                nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+                result["services"].append({
+                    "name": "brain.db",
+                    "status": "ok",
+                    "detail": f"{nodes} nodes",
+                })
+            except Exception as e:
+                result["services"].append({"name": "brain.db", "status": "error", "detail": str(e)})
+
+            # Central Brain status
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            if "api_keys" in tables:
+                try:
+                    active = conn.execute(
+                        "SELECT COUNT(*) FROM api_keys WHERE is_revoked=0"
+                    ).fetchone()[0]
+                    result["services"].append({
+                        "name": "Central Brain",
+                        "status": "ok" if active > 0 else "warn",
+                        "detail": f"{active} active keys",
+                    })
+                except Exception:
+                    pass
+            else:
+                result["services"].append({
+                    "name": "Central Brain",
+                    "status": "ok",
+                    "detail": "未設定",
+                })
+        finally:
+            conn.close()
+
+        # Storage
+        try:
+            result["storage"]["brain_db"] = _fmt_file_size(db_path.stat().st_size)
+            backup_dir = bd / "backups"
+            if backup_dir.exists():
+                backups = list(backup_dir.glob("brain.db.*"))
+                total_size = sum(f.stat().st_size for f in backups)
+                result["storage"]["backups"] = f"{len(backups)} 份 / {_fmt_file_size(total_size)}"
+            else:
+                result["storage"]["backups"] = "無備份"
+        except Exception:
+            pass
+
+        self._json(result)
+
     # ── API: GET /api/staging ────────────────
     def _route_staging(self):
         items = _load_staging(self.__class__.workdir)
@@ -622,6 +991,14 @@ def _validate_node_patch(body: dict) -> tuple[list[str], list, str | None]:
         # nodes table uses 'type' column; 'kind' is an alias used in SELECT
         cols.append("type"); vals.append(k)
     return cols, vals, None
+
+
+def _fmt_file_size(n: int) -> str:
+    if n >= 1_048_576:
+        return f"{n / 1_048_576:.1f} MB"
+    if n >= 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n} B"
 
 
 def _sync_fts(conn: sqlite3.Connection, node_id: str) -> None:
@@ -972,6 +1349,50 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 .tv-pager button:hover:not(:disabled){{border-color:var(--accent);color:var(--accent)}}
 .tv-pager button:disabled{{opacity:0.3;cursor:default}}
 .tv-pager .current{{color:var(--accent);font-weight:600}}
+
+/* ── E-06: Admin Views ── */
+.admin-view{{display:none;flex:1;flex-direction:column;overflow:hidden}}
+.admin-view.active{{display:flex}}
+.av-header{{padding:14px 20px;font-size:15px;font-weight:600;
+  background:var(--bg2);border-bottom:1px solid var(--border)}}
+.av-body{{padding:20px;overflow-y:auto;flex:1}}
+.av-toolbar{{padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
+.dash-cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:20px}}
+.dash-card{{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 16px}}
+.dash-card .dc-val{{font-size:28px;font-weight:700;color:var(--accent);line-height:1.1}}
+.dash-card .dc-label{{font-size:11px;color:var(--text2);margin-top:4px}}
+.dash-card.warn .dc-val{{color:var(--red)}}
+.dash-card.ok .dc-val{{color:var(--green)}}
+.dash-section{{margin-bottom:20px}}
+.dash-title{{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;
+  text-transform:uppercase;letter-spacing:.06em}}
+.dash-kinds{{display:flex;flex-wrap:wrap;gap:8px}}
+.dash-kind-tag{{font-size:12px;padding:4px 10px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);background:var(--bg3)}}
+.dash-kind-tag .dk-name{{color:var(--text2)}}
+.dash-kind-tag .dk-cnt{{color:var(--accent);font-weight:600;margin-left:4px}}
+.add-form{{max-width:600px}}
+.add-label{{display:block;font-size:11px;font-weight:600;color:var(--text2);
+  margin-bottom:4px;margin-top:10px;text-transform:uppercase;letter-spacing:.04em}}
+.add-label:first-child{{margin-top:0}}
+.add-conf-wrap{{display:flex;align-items:center;gap:4px}}
+.settings-row{{display:flex;align-items:center;gap:10px;padding:8px 0;
+  border-bottom:1px solid var(--border);font-size:12px}}
+.settings-row .sr-label{{color:var(--text2);width:120px;flex-shrink:0}}
+.settings-row .sr-value{{color:var(--text);font-weight:500}}
+.svc-item{{display:flex;align-items:center;gap:8px;padding:6px 0;
+  border-bottom:1px solid var(--border);font-size:12px}}
+.svc-dot{{width:8px;height:8px;border-radius:50%;flex-shrink:0}}
+.svc-name{{color:var(--text2);width:120px}}
+.svc-detail{{color:var(--text)}}
+.audit-action{{display:inline-block;font-size:10px;padding:2px 7px;border-radius:10px;
+  font-weight:600;text-transform:uppercase}}
+.audit-action.update{{background:rgba(88,166,255,0.15);color:var(--accent)}}
+.audit-action.submit{{background:rgba(251,191,36,0.15);color:var(--yellow)}}
+.audit-action.approve{{background:rgba(34,197,94,0.15);color:var(--green)}}
+.audit-action.reject,.audit-action.delete{{background:rgba(248,113,113,0.15);color:var(--red)}}
 </style>
 </head>
 <body>
@@ -991,8 +1412,12 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
   <div class="view-tabs">
     <button class="view-tab active" data-view="graph" onclick="switchView('graph')">📊 圖譜</button>
     <button class="view-tab" data-view="table" onclick="switchView('table')">📋 管理</button>
+    <button class="view-tab" data-view="dashboard" onclick="switchView('dashboard')">📈 儀表板</button>
+    <button class="view-tab" data-view="audit" onclick="switchView('audit')">📝 審計</button>
+    <button class="view-tab" data-view="settings" onclick="switchView('settings')">⚙ 設定</button>
   </div>
   <div id="hdr-actions">
+    <button class="hdr-btn" style="background:rgba(59,130,246,0.15);border-color:#3b82f6;color:#60a5fa" onclick="switchView('add')">+ 新增知識</button>
     <button class="hdr-btn" onclick="refreshAll()">↺ 重新整理</button>
     <span id="kbd-hint">/ 搜尋 · Esc 清除</span>
   </div>
@@ -1149,6 +1574,122 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
       <button id="tv-prev" onclick="tvPrev()" disabled>← 上一頁</button>
       <span id="tv-page-info"><span class="current">1</span> / 1</span>
       <button id="tv-next" onclick="tvNext()" disabled>下一頁 →</button>
+    </div>
+  </div>
+
+  <!-- E-06: Dashboard View -->
+  <div id="dashboard-view" class="admin-view">
+    <div class="av-header">📈 知識庫儀表板</div>
+    <div class="av-body" id="dash-body">
+      <div class="dash-cards" id="dash-cards"></div>
+      <div class="dash-section">
+        <div class="dash-title">類型分佈</div>
+        <div id="dash-kinds" class="dash-kinds"></div>
+      </div>
+      <div class="dash-section">
+        <div class="dash-title">近期活動</div>
+        <div id="dash-activity"></div>
+      </div>
+      <div class="dash-section">
+        <div class="dash-title">系統健康</div>
+        <div id="dash-health"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- E-06: Audit Log View -->
+  <div id="audit-view" class="admin-view">
+    <div class="av-header">📝 審計日誌</div>
+    <div class="av-toolbar">
+      <select class="tv-select" id="audit-days" onchange="loadAudit()">
+        <option value="7">近 7 天</option>
+        <option value="30" selected>近 30 天</option>
+        <option value="90">近 90 天</option>
+        <option value="365">近一年</option>
+      </select>
+      <input class="tv-search" id="audit-author" type="text" placeholder="操作者…" style="width:140px" oninput="auditDebounce()">
+      <select class="tv-select" id="audit-action" onchange="loadAudit()">
+        <option value="">全部動作</option>
+        <option value="update">修改</option>
+        <option value="submit">提交</option>
+        <option value="approve">核准</option>
+        <option value="reject">拒絕</option>
+        <option value="delete">刪除</option>
+      </select>
+      <span class="tv-info" id="audit-info">—</span>
+    </div>
+    <div class="tv-table-wrap">
+      <table class="tv-table">
+        <thead><tr>
+          <th style="width:140px">時間</th>
+          <th style="width:100px">操作者</th>
+          <th style="width:70px">動作</th>
+          <th>節點標題</th>
+          <th style="width:200px">詳情</th>
+        </tr></thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+    </div>
+    <div class="tv-pager">
+      <button id="audit-prev" onclick="auditPrev()" disabled>← 上一頁</button>
+      <span id="audit-page-info"><span class="current">1</span> / 1</span>
+      <button id="audit-next" onclick="auditNext()" disabled>下一頁 →</button>
+    </div>
+  </div>
+
+  <!-- E-06: Settings View -->
+  <div id="settings-view" class="admin-view">
+    <div class="av-header">⚙ 系統設定</div>
+    <div class="av-body" id="settings-body">
+      <div class="dash-section">
+        <div class="dash-title">系統資訊</div>
+        <div id="settings-info"></div>
+      </div>
+      <div class="dash-section">
+        <div class="dash-title">服務狀態</div>
+        <div id="settings-services"></div>
+      </div>
+      <div class="dash-section">
+        <div class="dash-title">儲存空間</div>
+        <div id="settings-storage"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- E-06: Add Knowledge View -->
+  <div id="add-view" class="admin-view">
+    <div class="av-header">+ 新增知識</div>
+    <div class="av-body">
+      <div class="add-form">
+        <label class="add-label">標題 <span style="color:var(--red)">*</span></label>
+        <input id="add-title" class="ef-input" type="text" maxlength="500" placeholder="輸入知識標題…">
+        <label class="add-label">類型</label>
+        <select id="add-kind" class="ef-select">
+          <option value="Note">📝 筆記</option>
+          <option value="Pitfall">⚠ 踩坑紀錄</option>
+          <option value="Rule">📋 規則</option>
+          <option value="Decision">🎯 決策</option>
+          <option value="ADR">📄 架構決策紀錄（ADR）</option>
+          <option value="Component">🔧 組件</option>
+          <option value="Architecture">🏗 架構</option>
+        </select>
+        <label class="add-label">信心度（<span id="add-conf-val">0.70</span>）</label>
+        <div class="add-conf-wrap">
+          <span style="font-size:10px;color:var(--text3)">低</span>
+          <input id="add-confidence" class="ef-input" type="range" min="0" max="1" step="0.01" value="0.7"
+            style="flex:1;margin:0 6px"
+            oninput="document.getElementById('add-conf-val').textContent=parseFloat(this.value).toFixed(2)">
+          <span style="font-size:10px;color:var(--text3)">高</span>
+        </div>
+        <label class="add-label">內容 <span style="color:var(--red)">*</span></label>
+        <textarea id="add-content" class="ef-textarea" maxlength="10000" rows="8"
+          placeholder="詳細描述這筆知識…"></textarea>
+        <div class="ef-row" style="margin-top:10px">
+          <button class="ef-btn save" onclick="submitAddNode()" id="add-submit-btn">新增</button>
+          <button class="ef-btn cancel" onclick="switchView('table')">取消</button>
+        </div>
+        <div id="add-msg" style="margin-top:8px;font-size:12px;display:none"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1911,11 +2452,24 @@ function switchView(view) {{
   }});
   const gv = document.getElementById('graph-view');
   const tv = document.getElementById('table-view');
+  const allAdminViews = ['dashboard-view','audit-view','settings-view','add-view'];
+  // Hide all admin views
+  allAdminViews.forEach(id => {{
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('active');
+  }});
   if (view === 'graph') {{
     gv.classList.remove('hidden'); tv.classList.remove('active');
-  }} else {{
-    gv.classList.add('hidden'); tv.classList.add('active');
+  }} else if (view === 'table') {{
+    gv.classList.add('hidden'); tv.classList.remove('active'); tv.classList.add('active');
     tvLoadPage(1);
+  }} else {{
+    gv.classList.add('hidden'); tv.classList.remove('active');
+    const viewEl = document.getElementById(view + '-view');
+    if (viewEl) viewEl.classList.add('active');
+    if (view === 'dashboard') loadDashboard();
+    else if (view === 'audit') loadAudit();
+    else if (view === 'settings') loadSettings();
   }}
 }}
 
@@ -2011,6 +2565,140 @@ async function tvFeedback(nodeId, useful) {{
       btn.disabled = false;
     }}, 2000);
   }} catch(e) {{}}
+}}
+
+// ═══════════════════════════════════════════════════
+//  E-06: Dashboard / Audit / Settings / Add Knowledge
+// ═══════════════════════════════════════════════════
+
+async function loadDashboard() {{
+  try {{
+    const d = await fetch('/api/admin/dashboard').then(r => r.json());
+    const cards = document.getElementById('dash-cards');
+    const hs = d.health || {{}};
+    const hIcon = hs.status === 'ok' ? '✅' : (hs.status === 'warn' ? '⚠' : '❌');
+    cards.innerHTML = `
+      <div class="dash-card"><div class="dc-val">${{d.total_nodes}}</div><div class="dc-label">知識總量</div></div>
+      <div class="dash-card"><div class="dc-val">${{d.total_edges}}</div><div class="dc-label">關係數</div></div>
+      <div class="dash-card ${{d.low_confidence_count > 0 ? 'warn' : ''}}"><div class="dc-val">${{d.low_confidence_count}}</div><div class="dc-label">低信心（&lt;0.3）</div></div>
+      <div class="dash-card"><div class="dc-val">${{d.conflicts}}</div><div class="dc-label">衝突</div></div>
+      <div class="dash-card"><div class="dc-val">${{d.krb_pending}}</div><div class="dc-label">KRB 待審</div></div>
+      <div class="dash-card"><div class="dc-val">${{d.signal_pending}}</div><div class="dc-label">Signal 佇列</div></div>
+      <div class="dash-card"><div class="dc-val">${{hIcon}}</div><div class="dc-label">系統健康（${{hs.errors||0}} err, ${{hs.warnings||0}} warn）</div></div>
+    `;
+    const kinds = d.kind_distribution || {{}};
+    const kindColors = {{{','.join(f"'{k}':'{v}'" for k,v in KIND_COLOR.items())}}};
+    document.getElementById('dash-kinds').innerHTML = Object.entries(kinds).map(([k,v]) =>
+      `<div class="dash-kind-tag"><span class="dk-name" style="color:${{kindColors[k]||'var(--text2)'}}">${{k}}</span><span class="dk-cnt">${{v}}</span></div>`
+    ).join('');
+    const a = d.activity || {{}};
+    document.getElementById('dash-activity').innerHTML = `
+      <div style="font-size:12px;color:var(--text2);line-height:2">
+        今天 <strong style="color:var(--accent)">+${{a.today||0}}</strong> 筆 ·
+        本週 <strong style="color:var(--accent)">+${{a.week||0}}</strong> 筆 ·
+        本月 <strong style="color:var(--accent)">+${{a.month||0}}</strong> 筆
+      </div>`;
+    document.getElementById('dash-health').innerHTML = `
+      <div style="font-size:12px;color:var(--text2)">
+        ${{hIcon}} ${{hs.status === 'ok' ? '系統正常' : '有 ' + (hs.warnings||0) + ' 個警告'}}
+        ${{d.low_confidence_count > 0 ? '<br>⚠ ' + d.low_confidence_count + ' 筆知識信心度 &lt; 0.3（建議複查）' : ''}}
+        ${{d.conflicts > 0 ? '<br>⚠ ' + d.conflicts + ' 個知識衝突' : ''}}
+      </div>`;
+  }} catch(e) {{ document.getElementById('dash-cards').innerHTML = '<div style="color:var(--red)">載入失敗</div>'; }}
+}}
+
+// ── Audit Log ──
+let auditPage = 1, auditTotalPages = 1, auditTimer = null;
+function auditDebounce() {{ clearTimeout(auditTimer); auditTimer = setTimeout(() => loadAudit(), 300); }}
+async function loadAudit(page) {{
+  if (page) auditPage = page; else auditPage = 1;
+  const days = document.getElementById('audit-days')?.value || 30;
+  const author = document.getElementById('audit-author')?.value || '';
+  const action = document.getElementById('audit-action')?.value || '';
+  const params = new URLSearchParams({{days, page: auditPage, page_size: 50}});
+  if (author) params.set('author', author);
+  if (action) params.set('action', action);
+  try {{
+    const d = await fetch('/api/admin/audit-log?' + params).then(r => r.json());
+    auditTotalPages = d.total_pages || 1;
+    document.getElementById('audit-info').textContent = d.total + ' 筆紀錄';
+    const tbody = document.getElementById('audit-body');
+    if (!d.entries || !d.entries.length) {{
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text3)">無紀錄</td></tr>';
+    }} else {{
+      tbody.innerHTML = d.entries.map(e => `<tr>
+        <td style="font-size:11px;color:var(--text2)">${{(e.time||'').replace('T',' ').slice(0,19)}}</td>
+        <td style="font-size:11px;color:var(--text)">${{_esc(e.actor||'—')}}</td>
+        <td><span class="audit-action ${{e.action}}">${{e.action}}</span></td>
+        <td style="font-size:11px" title="${{_esc(e.title)}}">${{_esc(e.title)}}</td>
+        <td style="font-size:11px;color:var(--text3)" title="${{_esc(e.detail)}}">${{_esc((e.detail||'').slice(0,80))}}</td>
+      </tr>`).join('');
+    }}
+    document.getElementById('audit-prev').disabled = auditPage <= 1;
+    document.getElementById('audit-next').disabled = auditPage >= auditTotalPages;
+    document.getElementById('audit-page-info').innerHTML = `<span class="current">${{auditPage}}</span> / ${{auditTotalPages}}`;
+  }} catch(e) {{ document.getElementById('audit-info').textContent = '載入失敗'; }}
+}}
+function auditPrev() {{ if (auditPage > 1) loadAudit(auditPage - 1); }}
+function auditNext() {{ if (auditPage < auditTotalPages) loadAudit(auditPage + 1); }}
+
+// ── Settings ──
+async function loadSettings() {{
+  try {{
+    const d = await fetch('/api/admin/settings').then(r => r.json());
+    document.getElementById('settings-info').innerHTML = `
+      <div class="settings-row"><span class="sr-label">運行模式</span><span class="sr-value">${{d.mode || 'standalone'}}</span></div>
+      <div class="settings-row"><span class="sr-label">Embedding</span><span class="sr-value">${{d.embedding || 'LocalTFIDF'}}</span></div>
+      <div class="settings-row"><span class="sr-label">LLM</span><span class="sr-value">${{d.llm || '未設定'}}</span></div>
+      <div class="settings-row"><span class="sr-label">Schema</span><span class="sr-value">v${{d.schema_version || 0}}</span></div>
+    `;
+    const svcs = d.services || [];
+    document.getElementById('settings-services').innerHTML = svcs.map(s => {{
+      const dotColor = s.status === 'ok' ? 'var(--green)' : (s.status === 'warn' ? 'var(--yellow)' : 'var(--red)');
+      return `<div class="svc-item"><div class="svc-dot" style="background:${{dotColor}}"></div><span class="svc-name">${{s.name}}</span><span class="svc-detail">${{s.detail}}</span></div>`;
+    }}).join('') || '<div style="color:var(--text3);font-size:12px">無服務資訊</div>';
+    const st = d.storage || {{}};
+    document.getElementById('settings-storage').innerHTML = Object.entries(st).map(([k,v]) =>
+      `<div class="settings-row"><span class="sr-label">${{k}}</span><span class="sr-value">${{v}}</span></div>`
+    ).join('') || '<div style="color:var(--text3);font-size:12px">無儲存資訊</div>';
+  }} catch(e) {{ document.getElementById('settings-info').innerHTML = '<div style="color:var(--red)">載入失敗</div>'; }}
+}}
+
+// ── Add Knowledge ──
+async function submitAddNode() {{
+  const title = document.getElementById('add-title').value.trim();
+  const content = document.getElementById('add-content').value.trim();
+  const kind = document.getElementById('add-kind').value;
+  const confidence = parseFloat(document.getElementById('add-confidence').value);
+  const msg = document.getElementById('add-msg');
+  if (!title) {{ msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='請輸入標題'; return; }}
+  if (!content) {{ msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='請輸入內容'; return; }}
+  const btn = document.getElementById('add-submit-btn');
+  btn.disabled = true; btn.textContent = '新增中…';
+  try {{
+    const res = await fetch('/api/node', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{title, content, kind, confidence}})
+    }});
+    const data = await res.json();
+    if (res.ok && data.ok) {{
+      msg.style.display='block'; msg.style.color='var(--green)';
+      msg.textContent='新增成功！節點 ID: ' + data.id;
+      document.getElementById('add-title').value = '';
+      document.getElementById('add-content').value = '';
+      document.getElementById('add-confidence').value = '0.7';
+      document.getElementById('add-conf-val').textContent = '0.70';
+      setTimeout(() => {{ msg.style.display='none'; }}, 4000);
+    }} else {{
+      msg.style.display='block'; msg.style.color='var(--red)';
+      msg.textContent = data.error || '新增失敗';
+    }}
+  }} catch(e) {{
+    msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='網路錯誤';
+  }} finally {{
+    btn.disabled = false; btn.textContent = '新增';
+  }}
 }}
 
 // ── Boot ─────────────────────────────────────────
@@ -2338,6 +3026,292 @@ def create_app(workdir, **_):
         finally:
             conn.close()
         return jsonify({"ok": True, "id": safe})
+
+    @app.route("/api/node", methods=["POST"])
+    def api_add_node():
+        body = request.get_json(silent=True) or {}
+        title = str(body.get("title", "")).strip()
+        if not title:
+            return jsonify({"error": "標題為必填欄位"}), 400
+        if len(title) > 500:
+            return jsonify({"error": "標題最長 500 字"}), 400
+        content = str(body.get("content", "")).strip()
+        if not content:
+            return jsonify({"error": "內容為必填欄位"}), 400
+        if len(content) > 10000:
+            return jsonify({"error": "內容最長 10000 字"}), 400
+        kind = str(body.get("kind", "Note"))
+        if kind not in VALID_KINDS:
+            return jsonify({"error": f"類型必須是：{', '.join(sorted(VALID_KINDS))}"}), 400
+        try:
+            confidence = float(body.get("confidence", 0.7))
+        except (TypeError, ValueError):
+            return jsonify({"error": "信心度必須是數字"}), 400
+        if not (0.0 <= confidence <= 1.0):
+            return jsonify({"error": "信心度必須在 0.0~1.0 之間"}), 400
+
+        node_id = f"webui-{hashlib.sha256(f'{title}{time.time()}'.encode()).hexdigest()[:12]}"
+        conn = _get_db()
+        try:
+            conn.execute(
+                "INSERT INTO nodes (id, type, title, content, confidence, "
+                "is_pinned, created_at, access_count, tags, author) "
+                "VALUES (?, ?, ?, ?, ?, 0, datetime('now'), 0, '[]', 'web-ui')",
+                (node_id, kind, title, content, round(confidence, 4))
+            )
+            try:
+                from project_brain.core.brain_db import BrainDB
+                conn.execute(
+                    "INSERT INTO nodes_fts(id, title, content, tags) VALUES (?,?,?,?)",
+                    (node_id, BrainDB._ngram(title), BrainDB._ngram(content), "[]")
+                )
+            except Exception:
+                pass
+            conn.commit()
+        except Exception as exc:
+            return jsonify({"error": f"新增失敗：{exc}"}), 500
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "id": node_id}), 201
+
+    @app.route("/api/admin/dashboard")
+    def api_admin_dashboard():
+        conn = _get_db()
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            try:
+                edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            except Exception:
+                edges = 0
+            try:
+                by_kind = conn.execute(
+                    "SELECT kind, COUNT(*) cnt FROM nodes GROUP BY kind ORDER BY cnt DESC"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                by_kind = conn.execute(
+                    "SELECT type as kind, COUNT(*) cnt FROM nodes GROUP BY type ORDER BY cnt DESC"
+                ).fetchall()
+            kind_dist = {r["kind"] or "Note": r["cnt"] for r in by_kind}
+            try:
+                low_conf = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE confidence < 0.3"
+                ).fetchone()[0]
+            except Exception:
+                low_conf = 0
+            try:
+                conflicts = conn.execute(
+                    "SELECT COUNT(*) FROM edges WHERE relation_type = 'CONTRADICTS'"
+                ).fetchone()[0]
+            except Exception:
+                conflicts = 0
+            activity = {"today": 0, "week": 0, "month": 0}
+            try:
+                activity["today"] = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now')"
+                ).fetchone()[0]
+                activity["week"] = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now', '-7 days')"
+                ).fetchone()[0]
+                activity["month"] = conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now', '-30 days')"
+                ).fetchone()[0]
+            except Exception:
+                pass
+            krb_pending = 0
+            try:
+                rb_path = wd / ".brain" / "review_board.db"
+                if rb_path.exists():
+                    rb_conn = sqlite3.connect(str(rb_path))
+                    krb_pending = rb_conn.execute(
+                        "SELECT COUNT(*) FROM staged_nodes WHERE status='pending'"
+                    ).fetchone()[0]
+                    rb_conn.close()
+            except Exception:
+                pass
+            signal_pending = 0
+            try:
+                tables = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+                if "signal_queue" in tables:
+                    signal_pending = conn.execute(
+                        "SELECT COUNT(*) FROM signal_queue WHERE status='pending'"
+                    ).fetchone()[0]
+            except Exception:
+                pass
+            health_warnings = (1 if low_conf > 0 else 0) + (1 if conflicts > 0 else 0)
+        finally:
+            conn.close()
+        return jsonify({
+            "total_nodes": total, "total_edges": edges,
+            "kind_distribution": kind_dist,
+            "low_confidence_count": low_conf, "conflicts": conflicts,
+            "activity": activity,
+            "krb_pending": krb_pending, "signal_pending": signal_pending,
+            "health": {
+                "status": "warn" if health_warnings > 0 else "ok",
+                "errors": 0, "warnings": health_warnings,
+            },
+        })
+
+    @app.route("/api/admin/audit-log")
+    def api_admin_audit_log():
+        days = min(365, max(1, int(request.args.get("days", 30))))
+        author_q = (request.args.get("author", "") or "").strip()[:100]
+        action_q = (request.args.get("action", "") or "").strip()[:20]
+        page = max(1, int(request.args.get("page", 1)))
+        page_size = min(100, max(1, int(request.args.get("page_size", 50))))
+
+        entries: list[dict] = []
+        conn = _get_db()
+        try:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            if "node_history" in tables:
+                nh_cols = {r[1] for r in conn.execute("PRAGMA table_info(node_history)").fetchall()}
+                ct_col = "change_type" if "change_type" in nh_cols else "'update' as change_type"
+                cb_col = "changed_by" if "changed_by" in nh_cols else "'' as changed_by"
+                cn_col = "change_note" if "change_note" in nh_cols else "'' as change_note"
+                rows = conn.execute(
+                    f"SELECT node_id, title, {ct_col}, {cb_col}, {cn_col}, snapshot_at "
+                    f"FROM node_history WHERE snapshot_at >= datetime('now', '-{days} days') "
+                    f"ORDER BY snapshot_at DESC"
+                ).fetchall()
+                for r in rows:
+                    actor = r["changed_by"] or ""
+                    if author_q and author_q.lower() not in actor.lower():
+                        continue
+                    act = r["change_type"] or "update"
+                    if action_q and action_q != act:
+                        continue
+                    entries.append({
+                        "time": r["snapshot_at"] or "", "actor": actor,
+                        "action": act, "node_id": r["node_id"],
+                        "title": r["title"] or "",
+                        "detail": r["change_note"] or "", "source": "node_history",
+                    })
+        finally:
+            conn.close()
+
+        # KRB staged_nodes
+        rb_path = wd / ".brain" / "review_board.db"
+        if rb_path.exists():
+            try:
+                rb_conn = sqlite3.connect(str(rb_path))
+                rb_conn.row_factory = sqlite3.Row
+                rb_rows = rb_conn.execute(
+                    "SELECT id, kind, title, status, submitter, reviewer, "
+                    "created_at, reviewed_at, review_note FROM staged_nodes "
+                    "ORDER BY created_at DESC"
+                ).fetchall()
+                rb_conn.close()
+                for r in rb_rows:
+                    sub = r["submitter"] or ""
+                    if not (author_q and author_q.lower() not in sub.lower()):
+                        if not (action_q and action_q != "submit"):
+                            entries.append({
+                                "time": r["created_at"] or "", "actor": sub,
+                                "action": "submit", "node_id": r["id"],
+                                "title": r["title"] or "",
+                                "detail": f"kind={r['kind']}, status={r['status']}",
+                                "source": "krb",
+                            })
+                    if r["reviewed_at"]:
+                        rev = r["reviewer"] or ""
+                        if not (author_q and author_q.lower() not in rev.lower()):
+                            act_type = "approve" if r["status"] == "approved" else "reject"
+                            if not (action_q and action_q != act_type):
+                                entries.append({
+                                    "time": r["reviewed_at"], "actor": rev,
+                                    "action": act_type, "node_id": r["id"],
+                                    "title": r["title"] or "",
+                                    "detail": r["review_note"] or "",
+                                    "source": "krb",
+                                })
+            except Exception:
+                pass
+
+        entries.sort(key=lambda e: e.get("time", ""), reverse=True)
+        total = len(entries)
+        offset = (page - 1) * page_size
+        return jsonify({
+            "entries": entries[offset:offset + page_size],
+            "total": total, "page": page, "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size if page_size else 1,
+        })
+
+    @app.route("/api/admin/settings")
+    def api_admin_settings():
+        bd = wd / ".brain"
+        result: dict = {
+            "mode": "standalone", "embedding": "LocalTFIDF",
+            "llm": "未設定", "schema_version": 0,
+            "services": [], "storage": {},
+        }
+        toml_path = bd / "brain.toml"
+        if toml_path.exists():
+            try:
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib  # type: ignore[no-redef]
+                cfg = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+                result["mode"] = cfg.get("mode", "standalone")
+                result["embedding"] = cfg.get("embedding", {}).get("provider", "LocalTFIDF")
+                result["llm"] = cfg.get("llm", {}).get("provider", "未設定")
+            except Exception:
+                pass
+        db_path = bd / "brain.db"
+        if not db_path.exists():
+            result["services"].append({"name": "brain.db", "status": "error", "detail": "not found"})
+            return jsonify(result)
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            try:
+                row = conn.execute(
+                    "SELECT value FROM brain_meta WHERE key='schema_version'"
+                ).fetchone()
+                if row:
+                    result["schema_version"] = int(row[0])
+            except Exception:
+                pass
+            try:
+                nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+                result["services"].append({"name": "brain.db", "status": "ok", "detail": f"{nodes} nodes"})
+            except Exception as e:
+                result["services"].append({"name": "brain.db", "status": "error", "detail": str(e)})
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            if "api_keys" in tables:
+                try:
+                    active = conn.execute(
+                        "SELECT COUNT(*) FROM api_keys WHERE is_revoked=0"
+                    ).fetchone()[0]
+                    result["services"].append({
+                        "name": "Central Brain", "status": "ok" if active > 0 else "warn",
+                        "detail": f"{active} active keys",
+                    })
+                except Exception:
+                    pass
+            else:
+                result["services"].append({"name": "Central Brain", "status": "ok", "detail": "未設定"})
+        finally:
+            conn.close()
+        try:
+            result["storage"]["brain_db"] = _fmt_file_size(db_path.stat().st_size)
+            backup_dir = bd / "backups"
+            if backup_dir.exists():
+                backups = list(backup_dir.glob("brain.db.*"))
+                total_size = sum(f.stat().st_size for f in backups)
+                result["storage"]["backups"] = f"{len(backups)} 份 / {_fmt_file_size(total_size)}"
+            else:
+                result["storage"]["backups"] = "無備份"
+        except Exception:
+            pass
+        return jsonify(result)
 
     @app.route("/api/staging")
     def api_staging():
