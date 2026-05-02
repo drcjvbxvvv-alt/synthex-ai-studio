@@ -19,6 +19,7 @@ project_brain/interfaces/http_transport.py — E-01 HTTP MCP Transport
 
 from __future__ import annotations
 
+import contextvars
 import hmac
 import json
 import logging
@@ -29,22 +30,37 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# E-02: ContextVar carrying the authenticated user's role.
+# Default is "admin" so that stdio (non-HTTP) mode has full access.
+current_role: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "brain_role", default="admin",
+)
+
 
 # ── Auth Middleware ────────────────────────────────────────────────
 
 class AuthMiddleware:
     """Starlette ASGI middleware for Bearer token authentication.
 
-    Validates ``Authorization: Bearer <key>`` header against a known API key
-    using timing-safe comparison.  The ``/health`` endpoint is exempt.
+    Supports two modes:
+      1. **Legacy** (single shared key): validates token via timing-safe
+         comparison against ``auth_key``.  Authenticated role = "admin".
+      2. **RBAC** (``brain_db`` provided): resolves token against the
+         ``api_keys`` table.  Authenticated role comes from the key record.
+
+    Both modes can be active simultaneously — legacy key is checked first.
+    The authenticated role is stored in ``current_role`` ContextVar for
+    downstream MCP tool handlers to read.
     """
 
     # Paths that bypass authentication
     EXEMPT_PATHS = frozenset({"/health", "/health/"})
 
-    def __init__(self, app: Any, auth_key: str) -> None:
+    def __init__(self, app: Any, auth_key: str | None = None,
+                 brain_db: Any = None) -> None:
         self.app = app
         self._auth_key = auth_key
+        self._brain_db = brain_db  # BrainDB instance for RBAC key resolution
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -68,14 +84,39 @@ class AuthMiddleware:
             return
 
         token = auth_header[7:]  # strip "Bearer "
-        if not hmac.compare_digest(token, self._auth_key):
+        role = self._resolve_role(token)
+
+        if role is None:
             await self._send_json_response(send, 401, {
                 "error": "unauthorized",
                 "message": "Invalid API key",
             })
             return
 
-        await self.app(scope, receive, send)
+        # E-02: set role in ContextVar for MCP tool permission checks
+        cv_token = current_role.set(role)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_role.reset(cv_token)
+
+    def _resolve_role(self, token: str) -> str | None:
+        """Resolve a Bearer token to a role string, or None if invalid.
+
+        Check order: legacy shared key first (admin), then RBAC table.
+        """
+        # 1. Legacy single shared key
+        if self._auth_key and hmac.compare_digest(token, self._auth_key):
+            return "admin"
+        # 2. RBAC key resolution via BrainDB
+        if self._brain_db is not None:
+            try:
+                info = self._brain_db.resolve_api_key(token)
+                if info:
+                    return info["role"]
+            except Exception as e:
+                logger.warning("RBAC key resolution failed: %s", e)
+        return None
 
     @staticmethod
     async def _send_json_response(send: Any, status: int, body: dict) -> None:
@@ -177,9 +218,11 @@ class HealthEndpoint:
     All other requests pass through to the wrapped app.
     """
 
-    def __init__(self, app: Any, version: str = "0.0.0") -> None:
+    def __init__(self, app: Any, version: str = "0.0.0",
+                 mode: str = "standalone") -> None:
         self.app = app
         self._version = version
+        self._mode = mode
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] == "http" and scope.get("path") in ("/health", "/health/"):
@@ -189,6 +232,7 @@ class HealthEndpoint:
                     "status": "ok",
                     "version": self._version,
                     "transport": "streamable-http",
+                    "mode": self._mode,
                 }).encode("utf-8")
                 await send({
                     "type": "http.response.start",
@@ -306,6 +350,7 @@ class HTTPBrainServer:
         rate_limit_rpm: int = 60,
         allowed_origins: list[str] | None = None,
         transport: str = "streamable-http",
+        mode: str = "standalone",
     ) -> None:
         self._srv = brain_server
         self._bind = bind
@@ -314,6 +359,7 @@ class HTTPBrainServer:
         self._rate_limit_rpm = rate_limit_rpm
         self._allowed_origins = allowed_origins
         self._transport = transport
+        self._mode = mode
         self._app: Any = None
 
     @property
@@ -357,15 +403,19 @@ class HTTPBrainServer:
         self._rate_limiter = app
 
         # 3. Auth (requires key if configured)
+        # E-02: pass brain_db for RBAC key resolution in central mode
+        brain_db = getattr(self._srv, '_brain_db_ref', None)
         if self._auth_key:
-            app = AuthMiddleware(app, auth_key=self._auth_key)
+            app = AuthMiddleware(app, auth_key=self._auth_key, brain_db=brain_db)
+        elif brain_db is not None and self._mode == "central":
+            app = AuthMiddleware(app, brain_db=brain_db)
 
         # 2. CORS
         if self._allowed_origins:
             app = CORSMiddleware(app, allowed_origins=self._allowed_origins)
 
         # 1. Health endpoint (outermost — accessible without auth)
-        app = HealthEndpoint(app, version=version)
+        app = HealthEndpoint(app, version=version, mode=self._mode)
 
         self._app = app
         return app

@@ -580,6 +580,21 @@ def _build_parser():
     p.add_argument('--prometheus', action='store_true',
                    help='輸出 Prometheus text exposition 格式')
 
+    # Recall eval
+    p = mkp('eval', '檢索品質評估（recall@K / MRR / nDCG）')
+    p.add_argument('args', nargs='*', default=[],
+                   help='子命令：generate / run / report')
+    p.add_argument('--ci', action='store_true',
+                   help='CI 模式：recall@3 低於 threshold 時 exit 1')
+    p.add_argument('--threshold', type=float, default=0.5,
+                   help='CI recall@3 門檻（預設 0.5）')
+    p.add_argument('--hybrid', action='store_true',
+                   help='使用 hybrid search（FTS5 + vector），需 embedder')
+    p.add_argument('--min-confidence', type=float, default=0.7,
+                   help='generate 最低信心分數（預設 0.7）')
+    p.add_argument('--max-queries', type=int, default=100,
+                   help='generate 最大 query 數（預設 100）')
+
     # C-03: validate
     p = mkp('validate', '三階段知識驗證（Rule + Code + LLM）')
     p.add_argument('--ci', action='store_true',
@@ -767,6 +782,70 @@ def _build_parser():
     p.add_argument('--older-than', dest='older_than', type=int, default=0,
                    help='archive：同時清理超過 N 天的歸檔')
 
+    # E-05: brain admin (key management)
+    p = mkp('admin', 'API Key 管理（create-key / list-keys / revoke-key）')
+    p.add_argument('admin_sub', nargs='?', default='list-keys',
+                   choices=['create-key', 'list-keys', 'revoke-key'],
+                   help='子命令')
+    p.add_argument('--role', default='reader',
+                   choices=['reader', 'contributor', 'maintainer', 'admin'],
+                   help='API key 角色（預設 reader）')
+    p.add_argument('--name', default='',
+                   help='API key 名稱（例：--name "Alice"）')
+    p.add_argument('key_id', nargs='?', default='',
+                   help='Key ID（revoke-key 用）')
+
+    # E-05: brain push
+    p = mkp('push', '推送本地知識到 Central Brain')
+    p.add_argument('--to', default='',
+                   help='Central Brain URL（或從 brain.toml [team] 讀取）')
+    p.add_argument('--key', default='',
+                   help='API key（或設 BRAIN_API_KEY 環境變數）')
+    p.add_argument('--kind', default='',
+                   help='節點類型篩選（Pitfall/Rule/Decision，空=全部）')
+    p.add_argument('--min-confidence', dest='min_confidence', type=float, default=0.8,
+                   help='最低信心度（預設 0.8）')
+    p.add_argument('--max-nodes', dest='max_nodes', type=int, default=50,
+                   help='最大推送數（預設 50）')
+    p.add_argument('--dry-run', dest='dry_run', action='store_true',
+                   help='預覽模式：顯示會推送的節點，不實際推送')
+    p.add_argument('--direct', action='store_true',
+                   help='直接寫入 L3（需 admin 權限，跳過 staging）')
+
+    # E-04: brain ingest
+    p = mkp('ingest', '知識匯入 Pipeline（本地檔案 / GitHub Issues）')
+    p.add_argument('ingest_sub', nargs='?', default='',
+                   choices=['files', 'github', ''],
+                   help='子命令：files / github')
+    p.add_argument('--path', default=None,
+                   help='本地檔案路徑（brain ingest files 用）')
+    p.add_argument('--glob', default='**/*.md',
+                   help='檔案 glob pattern（預設 **/*.md）')
+    p.add_argument('--repo', default=None,
+                   help='GitHub repo（owner/repo 格式，brain ingest github 用）')
+    p.add_argument('--token', default='',
+                   help='GitHub token（或設 GITHUB_TOKEN 環境變數）')
+    p.add_argument('--types', default='issues',
+                   help='GitHub 匯入類型：issues,prs（逗號分隔，預設 issues）')
+    p.add_argument('--dry-run', dest='dry_run', action='store_true',
+                   help='預覽模式：顯示會匯入的內容，不實際寫入')
+
+    # E-03: brain connect
+    p = mkp('connect', '連接 / 測試 / 中斷 Central Brain')
+    p.add_argument('url', nargs='?', default=None,
+                   help='Central Brain URL（例：http://brain.company.internal:3000）')
+    p.add_argument('--key', default='',
+                   help='API key（或設 BRAIN_API_KEY 環境變數）')
+    p.add_argument('--mode', default='overlay',
+                   choices=['overlay', 'central-only', 'local-only'],
+                   help='查詢模式（預設 overlay）')
+    p.add_argument('--test', action='store_true',
+                   help='測試連線是否可用')
+    p.add_argument('--disconnect', action='store_true',
+                   help='中斷連線（回到 local-only 模式）')
+    p.add_argument('--status', action='store_true',
+                   help='顯示目前連線狀態')
+
     p = mkp('serve', '啟動 OpenAI 相容 API / MCP server')
     p.add_argument('--port',           type=int,   default=7891,  help='監聽 port（預設：7891，MCP HTTP 預設 3000）')
     p.add_argument('--production',     action='store_true',       help='生產模式：使用 Gunicorn multi-worker')
@@ -783,6 +862,9 @@ def _build_parser():
                    help='E-01: CORS 允許的 origin（可多次指定）')
     p.add_argument('--rate-limit-rpm', dest='rate_limit_rpm', type=int, default=None,
                    help='E-01: 每 IP 每分鐘最大請求數（預設 60）')
+    p.add_argument('--mode',           default='standalone',
+                   choices=['standalone', 'central'],
+                   help='E-02: 運行模式（standalone=本地；central=團隊中心，啟用寫入佇列序列化+RBAC）')
     p.add_argument('--slack-webhook',  dest='slack_webhook', default=None,
                    help='FEAT-10: Slack Incoming Webhook URL（覆蓋 BRAIN_SLACK_WEBHOOK_URL）')
 

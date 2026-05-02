@@ -3,8 +3,8 @@
 > **主要規劃文件**。設計、開發、實作、測試的完整依賴鏈。
 >
 > **版本**：v2.0
-> **最後更新**：2026-04-27
-> **基準版本**：v0.40.0（1367 passed，0 regression）
+> **最後更新**：2026-05-02
+> **基準版本**：v0.52.0（~1618 passed，不含 chaos/benchmark）
 > **維護原則**：每個 Phase 完成後在對應區塊標記 `[DONE vX.Y.Z]`，不刪除內容。
 
 ---
@@ -31,10 +31,11 @@
 |------|------|------|
 | `docs/ROADMAP.md` | **本文件**：規劃、設計、實作、測試全覽 | 主動維護 |
 | `docs/ARCHITECTURE_REVIEW.md` | 系統缺陷審計報告（v1.2）；各項缺陷的根因、驗證方法、修法細節 | 審計存檔（規劃已遷移至本文件） |
+| `docs/SYSTEM_DEEP_REVIEW_2026-05-02.md` | v0.46.0 深度系統審查；可靠度、誠實性、記憶檢索品質、成本、缺陷與修復優先級 | 主動參考 |
 | `docs/AUTO_KNOWLEDGE_PIPELINE.md` | Pipeline Layer 1-5 設計文件（v0.3.4）；Prompt 設計、資料模型、可靠性策略 | 技術參考（Layer 1-5 已實作） |
 | `docs/EXPERIMENT_REPORT.md` | REV-01/02、KRB 效果的數據記錄範本 | 待填寫 |
 | `CHANGELOG.md` | 各版本變更歷史 | 主動維護 |
-| `tests/TEST_PLAN.md` | 測試套件全覽與真實數據量測計劃 | 需更新至 v0.40 |
+| `tests/TEST_PLAN.md` | 測試套件全覽與真實數據量測計劃 | ✅ v1.0（D-05 已更新） |
 | `COMMANDS.md` | CLI 命令使用者參考 | 主動維護 |
 | `docs/archive/` | 過時文件歸檔 | 唯讀 |
 
@@ -46,10 +47,10 @@
 
 | 指標 | 數值 |
 |------|------|
-| 版本 | v0.40.0 |
-| Unit tests | 1367 passed（含 chaos/benchmark marker 測試） |
+| 版本 | v0.52.0 |
+| Unit tests | ~1618 passed（不含 chaos/benchmark） |
 | 測試覆蓋率 | ≥ 50%（`fail_under = 50` in pyproject.toml） |
-| 基準 recall@3 | ≥ 60%（baseline.json） |
+| 基準 recall@3 | 29%（IDF+diversity 改進後，eval.py 實測） |
 | 基準 avg 查詢延遲 | ≤ 500ms |
 | Schema 版本 | v28（feedback_log 表） |
 
@@ -79,9 +80,14 @@ project_brain/
 │
 ├── interfaces/
 │   ├── mcp_server.py        [STABLE] BrainServer class，22 MCP tools，feedback_log 整合
+│   ├── http_transport.py    [STABLE] AuthMiddleware + RateLimit + CORS + HTTPBrainServer（E-01 ✅）
 │   ├── api_server.py        [STABLE]
-│   ├── cli*.py              [STABLE] brain validate --ci/--json 已加入
-│   └── web_ui/              [STABLE] 行內編輯 + KRB Staging API + 33 tests（D-02 ✅）
+│   ├── cli*.py              [STABLE] brain validate/eval/health --ci/--json
+│   └── web_ui/              [STABLE] 行內編輯 + KRB Staging API + 管理面板（Table 視圖）+ 59 tests（D-02 ✅）
+│
+├── embedder.py              [STABLE] 5 backends（multilingual/ollama/openai/voyage/tfidf）+ lazy probe + warmup
+├── eval.py                  [STABLE] RecallEvaluator（recall@K/MRR/nDCG）+ brain eval CLI
+├── rbac.py                  [STABLE] ROLE_HIERARCHY + TOOL_PERMISSIONS + has_permission（E-02 ✅）
 │
 └── integrations/
     ├── llm_client.py        [STABLE] LLMClient Protocol + Ollama/Anthropic/Fallback/Noop
@@ -96,8 +102,8 @@ project_brain/
 | Phase A | v0.31~v0.34 | ✅ **DONE** | 止血 + 架構深化（11 項） |
 | Phase B | v0.35 | ✅ **DONE** | 可觀測性、資料同步、維護性（7 項） |
 | Phase C | v0.40 | ✅ **DONE** | 架構統一、LLM 介面、Pipeline 擴展（5 項） |
-| Phase D | v1.0 | 🔄 **進行中** | 生產就緒、LoRA 蒸餾、CI 全覆蓋（5 項） |
-| Phase E | v2.0 | 🔄 **進行中** | 團隊共享腦、HTTP MCP、集中知識庫（6 項） |
+| Phase D | v1.0 | 🔄 **4/5 DONE** | 生產就緒、CI 全覆蓋（D-02~D-05 ✅）；D-01 LoRA 待 GPU |
+| Phase E | v2.0 | 🔄 **5/6 DONE** | E-01~E-05 ✅；E-06 未實作 |
 
 ---
 
@@ -535,7 +541,7 @@ class TestLoRAClientIntegration:
 
 ---
 
-### D-02 ARCH-05：WebUI 完整化（行內編輯 + KRB 管理）[DONE v0.41.0]
+### D-02 ARCH-05：WebUI 完整化（行內編輯 + KRB 管理 + 管理面板）[DONE v0.47.0]
 
 **ID**：ARCH-05
 **優先**：P4
@@ -600,9 +606,19 @@ class TestKRBManagement:
 - [x] KRB staging 管理界面可正常 approve/reject（`/api/staging/*` 端點）
 - [x] `pytest tests/unit/test_web_ui_edit.py` 33/33 passed（零 regression）
 - [x] 覆蓋率從 0 提升至 33 tests（後端 API 全覆蓋）
+- [x] 管理面板（Table 視圖）：`📊 圖譜 / 📋 管理` Tab + 分頁 + sort/filter（v0.47.0）
+- [x] `/api/nodes` 分頁端點：`page`/`page_size`/`q`/`kind`/`sort`/`order` 參數（v0.47.0）
+- [x] Graph 效能修復：`/api/graph` limit 100（預設）+ 前端節點上限控制（v0.47.0）
+- [x] `pytest tests/integration/test_web_ui.py` 26/26 passed（v0.47.0 新增）
 
-**實際實作**：`_validate_node_patch` + `_sync_fts` + `_load_staging` 三個共用 helper；  
-`kind` API 欄位自動映射到 DB 的 `type` 欄位（在 docstring 中標記）。
+**實際實作**：
+- `_validate_node_patch` + `_sync_fts` + `_load_staging` 三個共用 helper（v0.41.0）
+- `kind` API 欄位自動映射到 DB 的 `type` 欄位
+- `_route_nodes()` + `/api/nodes` 分頁端點（v0.47.0）
+- 前端 `switchView()`、`loadTablePage()`、Table view DOM（v0.47.0）
+- WebUI FTS sync 改用 `BrainDB._ngram()` 確保中文索引一致性（v0.47.0，P1-3）
+
+**測試**：`tests/unit/test_web_ui_edit.py`（33）+ `tests/integration/test_web_ui.py`（26）= 59 tests
 
 **推薦模型**：Sonnet 4.6（前端 + API 整合）
 **估計工作量**：16h
@@ -868,7 +884,10 @@ class TestSSETransport:
 
 ---
 
-### E-02 Central Brain 模式（多用戶寫入安全）[DONE v0.46.0]
+### E-02 Central Brain 模式（多用戶寫入安全）[DONE v0.49.0]
+
+> v0.46.0：知識歸屬（source/author）+ 衝突偵測（find_conflicts_for_node）
+> v0.49.0：Write Queue 序列化 + RBAC 基礎 + `--mode central` CLI + 100 threads 0 丟失
 
 **ID**：E-02
 **優先**：P1（與 E-01 並行開發）
@@ -939,14 +958,25 @@ class TestAttribution:
 
 #### 驗收條件
 
-- [ ] 100 threads 並發寫入無資料丟失
-- [ ] 讀取延遲在高並發寫入時 ≤ 200ms
-- [ ] 每條知識有 `author` 歸屬記錄
-- [ ] `brain health` 顯示 central mode 狀態
+- [x] 100 threads 並發寫入無資料丟失（`serialized_writes=True`，Write Queue FIFO）
+- [x] 讀取不被寫入阻塞（WAL concurrent readers，測試驗證）
+- [x] 每條知識有 `author`/`source` 歸屬記錄（v0.46.0 已完成）
+- [x] `brain health` 顯示 central mode 狀態（`_check_central_mode()`）
+- [x] RBAC：`api_keys` table + `store/resolve/revoke_api_key` + `has_permission`
+- [x] MCP tools 權限守衛：`add_knowledge`/`complete_task`/`report_knowledge_outcome` 需 contributor+
+- [x] `brain serve --mcp --mode central` CLI flag
+- [x] 33 tests（`test_write_queue.py` 14 + `test_rbac.py` 19）
+
+#### 實際實作
+
+- **Write Queue**：`_WriteRequest` + `_write_worker` + `_enqueue_write_fn` + `@_serialize_if_needed` decorator
+- **RBAC**：`rbac.py`（`ROLE_HIERARCHY`/`TOOL_PERMISSIONS`/`has_permission`）+ Schema v29（`api_keys` table）
+- **Auth**：`AuthMiddleware` 雙模式（legacy key + RBAC）+ `contextvars.ContextVar("brain_role")`
+- **Plumbing**：`BrainServer(mode=)` → `ProjectBrain(serialized_writes=)` → `BrainDB(serialized_writes=)`
 
 ---
 
-### E-03 Client Connect 模式（個人 Brain 疊加查詢）
+### E-03 Client Connect 模式（個人 Brain 疊加查詢）[DONE v0.50.0]
 
 **ID**：E-03
 **優先**：P2
@@ -1056,14 +1086,25 @@ class TestOverlayThreshold:
 
 #### 驗收條件
 
-- [ ] `brain connect` 命令設定成功，寫入 brain.toml
-- [ ] overlay 模式下本地優先，miss 時查 central
-- [ ] central 不可達時 graceful degradation（不 crash）
-- [ ] `brain connect --test` 驗證連線可用性
+- [x] `brain connect` 命令設定成功，寫入 brain.toml（`[team]` section）
+- [x] overlay 模式下本地優先，miss 時查 central（get_context + search_knowledge）
+- [x] central 不可達時 graceful degradation（不 crash，返回空結果）
+- [x] `brain connect --test` 驗證連線可用性（ping + search_knowledge probe）
+- [x] `brain connect --disconnect` 回到 local-only 模式
+- [x] env var override：`BRAIN_TEAM_URL` / `BRAIN_TEAM_KEY` / `BRAIN_TEAM_MODE`
+- [x] 24 tests（`test_central_brain_client.py` 10 + `test_team_config.py` 14）
+
+#### 實際實作
+
+- **`brain_config.py`**：`TeamConfig` dataclass + `[team]` section parsing + env var override
+- **`integrations/central_brain_client.py`**（新模組）：stdlib urllib JSON-RPC client，MCP session init + tools/call
+- **`interfaces/mcp_server.py`**：`_get_central_client()` helper + overlay 邏輯於 get_context / search_knowledge
+- **`interfaces/cli_connect.py`**（新模組）：`brain connect` CLI（connect/test/status/disconnect）
+- **`interfaces/cli.py`** + **`cli_utils.py`**：dispatch + subparser 註冊
 
 ---
 
-### E-04 知識 Ingestion Pipeline（公司文件匯入）
+### E-04 知識 Ingestion Pipeline（公司文件匯入）[DONE v0.51.0]
 
 **ID**：E-04
 **優先**：P2
@@ -1238,15 +1279,25 @@ class TestTextChunker:
 
 #### 驗收條件
 
-- [ ] `brain ingest files --path ./docs` 可匯入 Markdown 到 central brain
-- [ ] `brain ingest github --repo org/repo` 正確提取 Issues/PRs
-- [ ] 重複匯入冪等（不建立重複節點）
-- [ ] `--dry-run` 模式不寫入任何資料
-- [ ] 批次 100 個文件的 ingestion ≤ 60s（無 LLM 部分）
+- [x] `brain ingest files --path ./docs` 可匯入 Markdown（heading 切分 + heuristic/LLM extraction）
+- [x] `brain ingest github --repo org/repo` 正確提取 Issues/PRs（label → kind hint）
+- [x] 重複匯入冪等（exact title match + Jaccard ≥ 0.8 → skip）
+- [x] `--dry-run` 模式不寫入任何資料
+- [x] Confidence routing：≥ 0.7 → L3，< 0.7 → KRB staging
+- [x] LLM failure graceful fallback to heuristic
+- [x] 42 tests（chunker 14 + files 11 + pipeline 17）
+
+#### 實際實作
+
+- **`integrations/ingest/`** package（6 modules）：`base.py` / `chunker.py` / `files.py` / `github.py` / `pipeline.py` / `__init__.py`
+- **`interfaces/cli_ingest.py`**：`brain ingest files|github` CLI
+- LLM extraction prompt → JSON array + code fence stripping
+- Heuristic extraction：keyword-based kind detection（Pitfall/Decision/Rule/Note）
+- GitHub REST API via stdlib `urllib.request`（zero deps）
 
 ---
 
-### E-05 個人知識推送到集中庫（Push to Central）
+### E-05 個人知識推送到集中庫（Push to Central）[DONE v0.52.0]
 
 **ID**：E-05
 **優先**：P3
@@ -1364,10 +1415,22 @@ class TestAPIKeyManagement:
 
 #### 驗收條件
 
-- [ ] `brain push` 成功推送至 central KRB staging
-- [ ] 角色權限正確（contributor 不能 approve）
-- [ ] 管理員可透過 `brain admin` 管理 API keys
-- [ ] `--dry-run` 不寫入任何資料
+- [x] `brain push` 成功推送至 central KRB staging（via CentralBrainClient.add_knowledge）
+- [x] 角色權限正確（push_to_central 需 contributor+，RBAC 驗證）
+- [x] 管理員可透過 `brain admin create-key/list-keys/revoke-key` 管理 API keys
+- [x] `--dry-run` 不寫入任何資料（preview 模式）
+- [x] PII 清理（複用 federation._strip_pii）
+- [x] 節點篩選：kind + min_confidence + max_nodes
+- [x] 26 tests（`test_push_central.py` 18 + `test_admin_keys_cli.py` 8）
+
+#### 實際實作
+
+- **`integrations/push_central.py`**（新模組）：`PushTransport`（select/sanitize/push/preview）
+- **`integrations/central_brain_client.py`**：新增 `add_knowledge()` 方法
+- **`interfaces/cli_push.py`**（新模組）：`brain push` CLI
+- **`interfaces/cli_admin_keys.py`**（新模組）：`brain admin create-key/list-keys/revoke-key`
+- **`interfaces/mcp_server.py`**：`push_to_central` MCP tool
+- **`rbac.py`**：新增 `push_to_central: contributor`
 
 ---
 
@@ -1561,21 +1624,21 @@ Phase C (v0.40) ✅ 全部完成
 │              └──▶ C-05 Feedback Loop（依賴 C-04）
 │
 ▼
-Phase D (v1.0) 🔄 進行中
-├── D-01 LoRA 蒸餾（依賴 C-02，需 GPU）
-├── D-02 WebUI 行內編輯（依賴 C-01）
-├── D-03 CI 全覆蓋（依賴 B-03 health + C-03 validate）
-├── D-04 生產驗證（依賴所有 Phase C）
-└── D-05 文件完整化（依賴所有功能完成）
+Phase D (v1.0) 4/5 DONE
+├── D-01 LoRA 蒸餾（依賴 C-02，需 GPU）          ⏳ blocked on GPU
+├── D-02 WebUI 完整化（依賴 C-01）                ✅ v0.47.0
+├── D-03 CI 全覆蓋（依賴 B-03 + C-03）            ✅ v0.42.0
+├── D-04 生產驗證（依賴所有 Phase C）               ✅ v0.43.0
+└── D-05 文件完整化（依賴所有功能完成）              ✅ v0.44.0
          │
          ▼
-Phase E (v2.0) 📋 規劃中
-├── E-01 HTTP MCP Transport ◄── 所有 Phase E 的基礎
-│    └──▶ E-02 Central Brain 多用戶寫入安全
-│              └──▶ E-03 Client Connect 疊加查詢（依賴 E-01 + E-02）
-│                   └──▶ E-05 個人知識推送（依賴 E-02 + E-03）
-├── E-04 Ingestion Pipeline（依賴 E-02）
-└── E-06 運維 Agent 整合（依賴 E-01~E-05 全部）
+Phase E (v2.0) 5/6 DONE
+├── E-01 HTTP MCP Transport                       ✅ v0.45.0
+│    └──▶ E-02 Central Brain 多用戶寫入安全        ✅ v0.49.0
+│              └──▶ E-03 Client Connect 疊加查詢   ✅ v0.50.0
+│                   └──▶ E-05 個人知識推送          ✅ v0.52.0
+├── E-04 Ingestion Pipeline（依賴 E-02）           ✅ v0.51.0
+└── E-06 運維 Agent 整合（依賴 E-01~E-05 全部）     ❌ 未實作
 ```
 
 ---

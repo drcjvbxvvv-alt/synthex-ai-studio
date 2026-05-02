@@ -198,9 +198,10 @@ class ProjectBrain:
     BRAIN_DIR   = ".brain"
     CONFIG_FILE = "config.json"
 
-    def __init__(self, workdir: str):
+    def __init__(self, workdir: str, *, serialized_writes: bool = False):
         self.workdir      = Path(workdir).resolve()
         self.brain_dir    = self.workdir / self.BRAIN_DIR
+        self._serialized_writes = serialized_writes  # E-02: central brain mode
 
         # 延遲初始化（只有呼叫 init/scan 後才建立）
         self._db        = None   # A-10: BrainDB (unified)
@@ -240,7 +241,8 @@ class ProjectBrain:
             with self._db_lock:                        # BUG-A03: per-property lock
                 if self._db is None:
                     self.brain_dir.mkdir(parents=True, exist_ok=True)
-                    self._db = BrainDB(self.brain_dir)
+                    self._db = BrainDB(self.brain_dir,
+                                       serialized_writes=self._serialized_writes)
         return self._db
 
     @property
@@ -862,17 +864,21 @@ Agent 自動記錄：每次 git commit 後，brain sync 自動執行
                              description=description)  # MEM-02
         except Exception as _e:
             import logging; logging.getLogger(__name__).debug("db.add_node failed: %s", _e)
-        # Phase 1: async embedding (non-blocking)
-        try:
-            from .embedder import get_embedder
-            _emb = get_embedder()
-            if _emb:
-                _text = f"{title} {content}"[:2000]
-                _vec  = _emb.embed(_text)
-                if _vec:
-                    self.db.add_vector(node_id, _vec, model=getattr(_emb, 'MODEL', 'unknown'))
-        except Exception as _e:
-            logger.warning("embedding failed for node %s", node_id, _e)  # embedding failure must never block add_knowledge
+        # ARCH-DEBT: async embedding — node available via FTS5 immediately,
+        # vector search comes online when background thread finishes
+        def _bg_embed():
+            try:
+                from .embedder import get_embedder
+                _emb = get_embedder()
+                if _emb:
+                    _text = f"{title} {content}"[:2000]
+                    _vec  = _emb.embed(_text)
+                    if _vec:
+                        self.db.add_vector(node_id, _vec, model=getattr(_emb, 'MODEL', 'unknown'))
+            except Exception as _e:
+                logger.debug("bg_embed failed for node %s: %s", node_id, _e)
+        import threading as _t
+        _t.Thread(target=_bg_embed, daemon=True).start()
 
         # P3: near-duplicate check against FTS5 candidates (lightweight, non-blocking)
         try:

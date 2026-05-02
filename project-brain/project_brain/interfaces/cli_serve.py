@@ -43,6 +43,7 @@ def cmd_serve(args):
                 print(f"  {Y}⚠ 未設定 --auth-key，HTTP 端點無認證保護{R}")
                 print(f"  {D}建議：brain serve --mcp --auth-key <key> 或設 BRAIN_API_KEY 環境變數{R}\n")
             try:
+                mode = getattr(args, 'mode', 'standalone')
                 from project_brain.mcp_server import create_http_server
                 http = create_http_server(
                     wd,
@@ -52,6 +53,7 @@ def cmd_serve(args):
                     rate_limit_rpm=rpm,
                     allowed_origins=origins,
                     transport=transport,
+                    mode=mode,
                 )
                 http.run()
             except ImportError as e:

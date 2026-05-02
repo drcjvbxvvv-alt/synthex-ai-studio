@@ -4,6 +4,381 @@
 
 ---
 
+## v0.52.0（2026-05-02）— E-05 個人知識推送到集中庫 + API Key 管理
+
+> 本地知識可推送到 Central Brain（KRB staging 待審），admin 可用 `--direct` 直接寫入 L3。
+> 新增 API key 管理 CLI（create-key / list-keys / revoke-key）。
+> 新增 26 tests + 2 test files，新建 3 個模組。
+
+### Push to Central
+
+- **`integrations/push_central.py`**（新模組）：`PushTransport` — 節點篩選、PII 清理、推送
+  - `select_nodes(brain_db, kind, min_confidence, scope, max_nodes)` — SQL 篩選
+  - `sanitize_nodes(nodes)` — 複用 federation `_strip_pii`
+  - `push(client, nodes, direct=False)` — 逐一呼叫 `CentralBrainClient.add_knowledge`
+  - `preview(nodes)` — dry-run 預覽
+- **`CentralBrainClient.add_knowledge()`**（新方法）— 透過 MCP JSON-RPC 呼叫 remote `add_knowledge` tool
+
+### API Key 管理 CLI
+
+```bash
+brain admin create-key --role contributor --name "Alice"  # 產生 brn_c_xxx token
+brain admin list-keys                                      # 列出所有 key
+brain admin revoke-key <key_id>                            # 撤銷
+```
+
+### `push_to_central` MCP Tool
+
+- 參數：`node_ids`（指定推送）或 `kind` + `min_confidence`（篩選推送）
+- 權限：contributor+（RBAC via `_check_permission`）
+- 自動讀取 `brain.toml [team]` 的 target URL 和 key
+
+### `brain push` CLI
+
+```bash
+brain push --to <url> --key <key> --kind Pitfall --min-confidence 0.8 --dry-run
+brain push --kind Rule  # 使用 brain.toml [team] 設定
+```
+
+### 測試
+
+- `tests/unit/test_push_central.py`（18 tests）：select/sanitize/push/tags/RBAC
+- `tests/unit/test_admin_keys_cli.py`（8 tests）：create/list/revoke round-trip
+
+---
+
+## v0.51.0（2026-05-02）— E-04 知識 Ingestion Pipeline
+
+> 從本地 Markdown 檔案和 GitHub Issues/PRs 自動匯入知識到 Brain。
+> 共用 pipeline：chunking → LLM/啟發式提取 → dedup → 寫入（L3 或 KRB staging）。
+> 新增 42 tests + 3 test files，新建 6 個模組（`integrations/ingest/` package）。
+
+### Ingestion 基礎架構
+
+- **`integrations/ingest/base.py`**：`RawDocument`、`KnowledgeCandidate`、`IngestResult` dataclasses
+- **`integrations/ingest/chunker.py`**：`TextChunker` — Markdown heading 切分、CJK token 估算、長段落二次切分
+- **`integrations/ingest/pipeline.py`**：`IngestPipeline` 協調器
+  - LLM 提取模式（JSON prompt → structured extraction）
+  - 啟發式提取模式（keyword-based kind detection，零 LLM 依賴）
+  - 三層 dedup（exact title match → FTS5 search → Jaccard token overlap ≥ 0.8）
+  - Confidence routing：≥ 0.7 → L3 直接寫入，< 0.7 → KRB staging
+  - Dry-run 模式（`--dry-run`）
+  - LLM rate limiting（預設 10 calls/min）
+
+### 資料源
+
+- **`integrations/ingest/files.py`**：`LocalFilesIngestSource` — 遞迴掃描 Markdown、glob pattern filter、heading 分段
+- **`integrations/ingest/github.py`**：`GitHubIngestSource` — stdlib urllib REST API、issues/PRs fetch、label → kind hint mapping
+
+### CLI 命令
+
+```bash
+brain ingest files --path ./docs [--glob "**/*.md"] [--dry-run]
+brain ingest github --repo org/repo --token $GH_TOKEN [--types issues,prs] [--dry-run]
+```
+
+### 測試
+
+- `tests/unit/test_ingest_chunker.py`（14 tests）：heading split、token estimation、CJK、long split
+- `tests/unit/test_ingest_files.py`（11 tests）：scan、glob、nested dir、single file、empty skip
+- `tests/unit/test_ingest_pipeline.py`（17 tests）：heuristic/LLM extraction、dedup、routing、dry-run
+
+---
+
+## v0.50.0（2026-05-02）— E-03 Client Connect 疊加查詢
+
+> 個人 Claude Code 可連接 Central Brain，支援 overlay（本地優先 + fallback）、
+> central-only、local-only 三種查詢模式。新增 `brain connect` CLI 命令。
+> 新增 24 tests + 2 test files，新建 `central_brain_client.py` + `cli_connect.py`。
+
+### TeamConfig — brain.toml `[team]` section
+
+- `TeamConfig` dataclass：`central_brain_url`、`central_brain_key`、`mode`、`overlay_threshold`
+- `BrainConfig` 新增 `team` field，`_build_config()` 解析 `[team]` section
+- 環境變數覆蓋：`BRAIN_TEAM_URL`、`BRAIN_TEAM_KEY`、`BRAIN_TEAM_MODE`
+
+### CentralBrainClient
+
+- **`project_brain/integrations/central_brain_client.py`**（新模組）
+- 使用 `urllib.request`（stdlib）呼叫 Central Brain HTTP MCP endpoint
+- `ping()` → `/health` 連線檢查
+- `search_knowledge(query, top_k)` → JSON-RPC `tools/call` → 知識搜尋
+- `get_context(task)` → JSON-RPC `tools/call` → AI context
+- MCP streamable-http session management（`initialize` + `notifications/initialized`）
+- 完全容錯：網路錯誤/timeout 返回空結果，不影響本地 brain
+
+### Overlay 查詢整合
+
+- `get_context` MCP tool：overlay 模式下本地結果不足（< 100 chars）時 fallback central
+- `search_knowledge` MCP tool：overlay 模式下本地結果不足時補充 central 結果（title dedup）
+- central-only 模式跳過本地搜尋
+- Central 結果加 `🌐 Central Brain` header 或 `[central]` source 標記
+
+### `brain connect` CLI 命令
+
+- `brain connect <url> --key <key> --mode overlay` — 設定連線
+- `brain connect --test` — 測試連線可用性
+- `brain connect --status` — 顯示連線狀態
+- `brain connect --disconnect` — 中斷連線（回到 local-only）
+- 讀寫 `.brain/brain.toml [team]` section，保留其他 section
+
+### 測試
+
+- `tests/unit/test_central_brain_client.py`（10 tests）：mock HTTP server、ping、search、context、graceful degradation、SSE parsing
+- `tests/unit/test_team_config.py`（14 tests）：defaults、TOML parsing、env override、connect/disconnect、mode validation
+
+---
+
+## v0.49.0（2026-05-02）— E-02 補完：Write Queue 序列化 + RBAC
+
+> 完成 E-02 Central Brain 模式剩餘功能：寫入佇列序列化（100 threads 0 丟失）、
+> RBAC 基礎（API key 角色管理 + 權限檢查）、`--mode central` CLI flag。
+> 新增 33 tests + 2 test files，新建 `rbac.py` 模組。
+
+### Write Queue 序列化
+
+**問題**：原有 `threading.RLock()` 在高並發下僅能保證 ~90% 寫入成功（SQLite busy timeout）。
+
+**修復**：
+- `BrainDB(serialized_writes=True)` 新增 `queue.Queue` + background worker thread
+- 所有寫入經 FIFO 佇列序列化，worker thread 逐一執行
+- `_WriteRequest` dataclass 支持 SQL 語句和 callable 兩種模式
+- `@_serialize_if_needed` decorator 自動路由 `add_node`、`update_node`、`delete_node`、
+  `deprecate_node`、`add_episode`、`add_temporal_edge` 6 個多語句原子方法
+- `_execute_write` / `_execute_writescript` 在 serialized mode 自動 enqueue
+- `close()` 送 poison pill 並 join worker thread
+- **驗收**：100 threads × 10 writes = 1000 rows，0 丟失 ✅
+
+### RBAC 基礎
+
+- **`project_brain/rbac.py`**（新模組）：`ROLE_HIERARCHY`、`TOOL_PERMISSIONS`、`has_permission()`
+- **Schema v29**：`api_keys` table（`key_hash` SHA-256, `role`, `name`, `expires_at`, `is_revoked`）
+- `BrainDB.store_api_key(token, role, name)` / `resolve_api_key(token)` / `revoke_api_key(key_id)` / `list_api_keys()`
+- `AuthMiddleware` 支持雙模式：legacy 單 key（admin）+ RBAC key resolution
+- `contextvars.ContextVar("brain_role")` 傳遞角色到 MCP tool handlers
+- `add_knowledge`、`complete_task`、`report_knowledge_outcome` 加入權限守衛
+
+### Central mode CLI
+
+- `brain serve --mcp --mode central` 啟動寫入佇列 + RBAC
+- `BrainServer(mode="central")` → `ProjectBrain(serialized_writes=True)` → `BrainDB(serialized_writes=True)`
+- `/health` 端點新增 `"mode": "central"` 欄位
+- `brain health` 新增 `_check_central_mode()` 顯示 RBAC 狀態
+
+### 測試
+
+- `tests/unit/test_write_queue.py`（14 tests）：基本寫入、100-thread stress、錯誤傳播、shutdown、讀取不阻塞
+- `tests/unit/test_rbac.py`（19 tests）：permission 層級、API key round-trip、expiry、revoke、schema v29
+
+---
+
+## v0.48.0（2026-05-02）— Embedding 冷啟動優化
+
+> 解決 `get_embedder()` 在每次啟動時觸發 test embed probe 造成的冷啟動延遲，
+> 以及 `add_knowledge` 同步 embedding 阻塞回傳的問題。
+> 新增 10 tests（`tests/unit/test_embed_coldstart.py`）。
+
+### ARCH-DEBT 修復：get_embedder() lazy probe
+
+**問題**：`get_embedder()` 預設對每個 provider 呼叫 `emb.embed("test")` 探測，
+即使 `BRAIN_EMBED_PROVIDER` 已明確設定，仍會觸發 model 初始化（sentence-transformers
+初次載入 ~2-5s）。
+
+**修復**：
+- `BRAIN_EMBED_PROVIDER` 明確設定時，`_skip_probe = True`，直接回傳 embedder 實例
+- 新增 `BRAIN_EMBED_LAZY=1` env var，強制所有 provider 跳過 probe（適合測試環境）
+- Model 改為真正 lazy load：第一次呼叫 `embed()` 時才載入，不在 `__init__` 觸發
+
+### ARCH-DEBT 修復：add_knowledge 非同步 embedding
+
+**問題**：`add_knowledge` 呼叫 `emb.embed(text)` 為同步操作，
+sentence-transformers 初次 encode 可達 500ms～2s，阻塞 MCP tool 回傳。
+
+**修復**：
+- embedding 移至 daemon thread 背景執行（`threading.Thread(daemon=True)`）
+- `add_knowledge` 立即回傳 `node_id`，FTS5 搜尋立即可用
+- vector 搜尋在背景 embedding 完成後自動上線（無需重啟）
+
+### 新增：warmup_embedder()
+
+- `warmup_embedder()` — 在 server 啟動時啟動背景 thread 預載 model
+- MCP server 整合：`BRAIN_EMBED_WARMUP=1` 時在 server 初始化後自動觸發
+- 第一個真實請求到達時 model 已就緒，消除 p99 首次查詢尖刺
+
+### 測試
+
+`tests/unit/test_embed_coldstart.py`（10 tests）：
+- `TestGetEmbedderLazyProbe`（4）：explicit provider / LAZY env / none / cache hit
+- `TestAsyncEmbedding`（2）：`add_knowledge` < 1s 回傳、FTS5 立即可搜尋
+- `TestWarmupEmbedder`（2）：背景 thread 啟動、provider=none 不 crash
+- `TestEmbedProviderIntegration`（2）：LocalTFIDF fallback 永遠可用、維度一致性
+
+---
+
+## v0.47.0（2026-05-02）— 深度系統審查修復 + 檢索改進 + WebUI 管理面板
+
+> 基於 `docs/SYSTEM_DEEP_REVIEW_2026-05-02.md` 的審查發現，
+> 修復 P0/P1/P2 級缺陷 + recall eval + FTS5 排序改進 + WebUI 管理面板。
+> 新增 82 tests + 9 test files。
+
+### P0-1：MCP add_knowledge conflict check 簽名修復
+
+**問題**：`mcp_server.py` 背景 conflict check 呼叫 `find_conflicts(title_c, top_k=3)`，
+但實際簽名是 `find_conflicts(similarity_threshold, candidates_per_anchor)`。
+TypeError 被靜默吞掉，`KNOWLEDGE_CONFLICT` signal 永遠不產生。
+
+**修復**：
+- 新增 `BrainDB.find_conflicts_for_node(node_id)` — 只檢查單節點衝突，不掃全庫
+- MCP `add_knowledge` 背景 check 改呼叫 `find_conflicts_for_node(node_id)`
+- 15 tests（`tests/unit/test_find_conflicts_for_node.py`）
+
+### P0-2：__version__ source checkout mismatch 修復
+
+**問題**：`importlib.metadata` 優先讀取 installed distribution（0.41.0），
+導致 `brain health` 回報舊版本。
+
+**修復**：`_read_version()` 改為優先讀 `pyproject.toml`，metadata 降為 fallback。
+- 3 tests（`tests/unit/test_version_consistency.py`）
+
+### P1-2：測試 marker 隔離 + WebUI schema 相容修復
+
+- `tests/test_chaos_and_load.py` 加入 `pytestmark = pytest.mark.chaos`（module-level）
+- `tests/chaos/test_chaos_and_load.py` 同上
+- WebUI raw handler 改用 PRAGMA table_info 偵測 schema，不再依賴 try/except fallback chain
+- 4 個 WebUI 測試從 FAIL → PASS
+
+### P1-3：WebUI FTS sync 使用 BrainDB._ngram()
+
+**問題**：WebUI PATCH 後 `_sync_fts()` 直接寫 raw text 到 FTS5，
+但 `BrainDB.add_node()` 使用 CJK n-gram tokenization，導致中文搜尋退化。
+
+**修復**：`_sync_fts()` 改用 `BrainDB._ngram()` tokenize title/content。
+- 5 tests（`tests/unit/test_webui_fts_ngram.py`）
+
+### P2-1：get_context full output 顯示 node id
+
+**問題**：full 模式缺少 node id，Agent 無法呼叫 `report_knowledge_outcome(node_id=...)`。
+
+**修復**：
+- `_fmt_node()` 標題加入 `[node_id[:8]]` 前綴
+- footer 新增結構化 `Sources` block（完整 node id 列表）
+- 8 tests（`tests/unit/test_context_node_id.py`）
+
+### P2-2：health 顯示 storage metrics
+
+**新增 `_check_storage_metrics()`**：
+- `storage/db`：brain.db + WAL 大小（> 100MB 時 WARN）
+- `storage/backups`：備份數量 + 總大小（> 14 個時 WARN）
+- `storage/vectors`：embedding 覆蓋率（< 80% 時 WARN）
+- 8 tests（`tests/unit/test_health_storage.py`）
+
+### P2-3：靜默例外審計測試
+
+**新增 `tests/unit/test_silent_exception_audit.py`**：
+- 掃描 critical modules 中 `except Exception: pass` 模式（baseline ≤ 25）
+- 禁止 bare `except:` without type
+- 驗證 P0-1 回歸（conflict check 不再靜默失敗）
+- 驗證 add_node/search_nodes 有 logger 呼叫
+- 5 tests
+
+### 誠實性修正
+
+- README 測試數：1219 → ~1483（不含 chaos/benchmark）
+- README 並發安全措辭：「多人同時操作不丟資料」→「best-effort，非強一致」
+- ROADMAP E-02 狀態：`[DONE]` → `[PARTIAL]`（Write Queue 未實作）
+- ROADMAP 基準版本更新
+
+### 檢索品質評估框架（SYSTEM_DEEP_REVIEW §11 D1）
+
+**新增 `project_brain/eval.py`** — `RecallEvaluator` 類別：
+- 從真實知識庫自動生成 eval dataset（高信心節點 → query/expected pairs）
+- 支援人工 curate 的 JSONL dataset（`.brain/eval/queries.jsonl`）
+- 量化指標：recall@1/3/5/10、MRR、nDCG@3、noise rate、avg context tokens
+- per-tag breakdown（按 type/scope 分類報告）
+- 33 tests（`tests/unit/test_recall_eval.py`）
+
+**新增 CLI `brain eval` 命令**：
+- `brain eval generate` — 從知識庫產生 eval dataset
+- `brain eval run` — 執行評估（自動產生或載入已有 dataset）
+- `brain eval report` — 輸出 JSON 報告
+- `--ci --threshold 0.5` — CI 模式，recall@3 低於門檻時 exit 1
+
+**首次真實 KB 基線測試**（762 nodes, 100 queries）：
+- recall@3 = 21%, recall@10 = 30%
+- MRR = 0.16, nDCG@3 = 0.16
+- Pitfall recall@3 = 42%, Rule = 17%, Decision = 6%
+
+### FTS5 搜尋排序改進
+
+**問題**：3 個高信心通用節點「霸屏」93% 搜尋結果（`rule-22fe170e`、`pitfall-f29fc403`、
+`pitfall-02c3808d`），因為純 confidence 排序讓含常見 CJK bigram 的節點永遠排前。
+
+**修復 1 — IDF 加權排序**：
+- 計算每個 query token 的 document frequency
+- 常見 token（出現在多數文檔中）降權，稀有 token 加權
+- 新排序公式：`score = idf_relevance × 0.6 + effective_confidence × 0.4`
+
+**修復 2 — 結果多樣性懲罰**：
+- 排序後 greedy reranking：如果候選結果 title 與已選結果 Jaccard > 0.5，降權
+- 防止 3 個相似節點佔滿 top-3
+
+**修復 3 — RecallEvaluator hybrid 模式**：
+- `brain eval run --hybrid` 使用 FTS5 + vector 混合搜尋
+- 13 tests（`tests/unit/test_search_idf_diversity.py`）
+
+**改進效果**（同一 dataset，改進前 → 改進後）：
+
+| 指標 | 改進前 | 改進後 | 提升 |
+|------|--------|--------|------|
+| recall@1 | 10% | 25% | +150% |
+| recall@3 | 21% | 29% | +38% |
+| MRR | 0.16 | 0.27 | +68% |
+| nDCG@3 | 0.16 | 0.27 | +67% |
+| Decision recall@3 | 6% | 24% | +300% |
+
+### WebUI 管理面板 + 效能修復
+
+**問題**：762+ 節點的 D3 force graph 導致瀏覽器嚴重卡頓（O(n²) 力學模擬 + 大量 SVG DOM）。
+
+**修復 — Graph 效能**：
+- `/api/graph` 預設 limit 從 300 降為 100
+- 前端新增節點上限控制（數字輸入框，20-500）
+- 使用者可按需增加節點數，預設不卡
+
+**新增 — 管理面板（Table 視圖）**：
+- Header 新增「📊 圖譜 / 📋 管理」Tab 切換
+- Table view 包含：搜尋框、type 篩選、排序（信心度/時間/存取次數/標題）
+- 分頁表格（每頁 20 筆）
+- 每行顯示：類型 pill、標題、摘要、信心度（色階）、存取次數、日期
+- 操作按鈕：🔍 查看詳情、👍 有用、👎 過時
+
+**新增 — /api/nodes 端點**：
+- 分頁：`page` + `page_size`（最大 100）
+- 搜尋：`q`（title + content LIKE）
+- 篩選：`kind`（Pitfall/Rule/Decision/ADR/Note）
+- 排序：`sort` × `order`（confidence/created_at/access_count/title）
+- 10 tests（新增到 `tests/integration/test_web_ui.py`）
+
+### 架構債修復
+
+**MCP singleton 連線**：
+- 修復 mcp_server.py 3 處重複 `BrainDB()` 建構（line 644, 1289, 1711）
+- 改用 `b.db`（已有的 ProjectBrain singleton），減少連線泄漏和 WAL 壓力
+
+**Traces 採樣**：
+- `search_nodes` 不再每次同步寫 trace，改為每 N 次記錄一次
+- 預設 `_trace_sample_rate=5`（可透過 `BRAIN_TRACE_SAMPLE_RATE` 環境變數調整）
+- 高 QPS HTTP MCP 場景下減少 80% 的 WAL 寫入
+
+**Backup 保留天數可設定**：
+- `_maybe_backup()` 保留份數讀取順序：`BRAIN_BACKUP_KEEP` env → `config.json` → 預設 7
+- 最小值為 1（防止意外清空）
+- 17 tests（`tests/unit/test_arch_debt.py`）
+
+**測試套件**：~1557 passed（不含 chaos/benchmark），0 real failures
+
+---
+
 ## v0.46.0（2026-04-27）— E-02 多用戶寫入安全 + E-VERIFY 連接驗證
 
 ### E-02：多用戶寫入安全 + author 歸屬

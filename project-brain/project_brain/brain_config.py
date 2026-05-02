@@ -144,6 +144,23 @@ class ObservabilityConfig:
 
 
 @dataclass
+class TeamConfig:
+    """E-03: Central Brain 連線設定。
+
+    透過 ``brain connect`` CLI 或手動編輯 ``brain.toml [team]`` 設定。
+
+    Modes:
+      local-only    — 只查本地 brain（預設）
+      overlay       — 本地優先，結果不足時 fallback 到 central brain
+      central-only  — 只查 central brain（本地 brain 不使用）
+    """
+    central_brain_url: str   = ""
+    central_brain_key: str   = ""
+    mode:              str   = "local-only"
+    overlay_threshold: float = 0.6
+
+
+@dataclass
 class BrainCoreConfig:
     max_context_tokens:  int   = 6000
     freshness_warn_days: int   = 30
@@ -160,6 +177,7 @@ class BrainConfig:
     federation:  FederationConfig  = field(default_factory=FederationConfig)
     mcp:         MCPConfig         = field(default_factory=MCPConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    team:        TeamConfig        = field(default_factory=TeamConfig)
 
 
 # ── TOML 載入 ──────────────────────────────────────────────────────────────────
@@ -298,6 +316,13 @@ def _build_config(raw: dict) -> BrainConfig:
     cfg.observability.log_context_builds = obs.get("log_context_builds", cfg.observability.log_context_builds)
     cfg.observability.daily_token_limit  = obs.get("daily_token_limit",  cfg.observability.daily_token_limit)
 
+    # E-03: [team] section
+    tm = raw.get("team", {})
+    cfg.team.central_brain_url = tm.get("central_brain_url", cfg.team.central_brain_url)
+    cfg.team.central_brain_key = tm.get("central_brain_key", cfg.team.central_brain_key)
+    cfg.team.mode              = tm.get("mode",              cfg.team.mode)
+    cfg.team.overlay_threshold = float(tm.get("overlay_threshold", cfg.team.overlay_threshold))
+
     return cfg
 
 
@@ -329,6 +354,17 @@ def load_config(brain_dir: Optional[Path] = None) -> BrainConfig:
     ollama_model = os.environ.get("BRAIN_OLLAMA_MODEL", "")
     if ollama_model and not model:
         cfg.pipeline.llm.model = ollama_model
+
+    # E-03: team config env var overrides
+    team_url = os.environ.get("BRAIN_TEAM_URL", "")
+    if team_url:
+        cfg.team.central_brain_url = team_url
+    team_key = os.environ.get("BRAIN_TEAM_KEY", "")
+    if team_key:
+        cfg.team.central_brain_key = team_key
+    team_mode = os.environ.get("BRAIN_TEAM_MODE", "")
+    if team_mode:
+        cfg.team.mode = team_mode
 
     return cfg
 

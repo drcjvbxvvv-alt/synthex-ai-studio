@@ -52,9 +52,11 @@ class HealthChecker:
 
         checks.extend(self._check_db_access())
         checks.extend(self._check_kg_braindb_sync())
+        checks.extend(self._check_central_mode())
         checks.extend(self._check_krb_staging())
         checks.extend(self._check_schema_version())
         checks.extend(self._check_signal_queue())
+        checks.extend(self._check_storage_metrics())
         checks.extend(self._check_benchmark_age())
 
         ok_n   = sum(1 for c in checks if c["level"] == OK)
@@ -250,6 +252,103 @@ class HealthChecker:
             return [_check(OK, "signal queue", f"{pending} pending")]
         except Exception as e:
             return [_check(ERROR, "signal queue", f"check failed: {e}")]
+
+    def _check_storage_metrics(self) -> list[dict]:
+        """Check DB size, WAL size, backup count, vector coverage."""
+        results: list[dict] = []
+        db_path = self.brain_dir / "brain.db"
+        if not db_path.exists():
+            return []
+
+        def _fmt_size(n: int) -> str:
+            if n >= 1_048_576:
+                return f"{n / 1_048_576:.1f}MB"
+            if n >= 1024:
+                return f"{n / 1024:.1f}KB"
+            return f"{n}B"
+
+        # DB size + WAL size
+        try:
+            db_size = db_path.stat().st_size
+            wal_path = db_path.parent / "brain.db-wal"
+            wal_size = wal_path.stat().st_size if wal_path.exists() else 0
+            size_msg = f"brain.db={_fmt_size(db_size)}"
+            if wal_size > 0:
+                size_msg += f", WAL={_fmt_size(wal_size)}"
+            level = WARN if db_size > 100_000_000 else OK  # warn > 100MB
+            results.append(_check(level, "storage/db", size_msg))
+        except Exception as e:
+            results.append(_check(ERROR, "storage/db", f"check failed: {e}"))
+
+        # Backup count + total size
+        try:
+            backup_dir = self.brain_dir / "backups"
+            if backup_dir.exists():
+                backups = sorted(backup_dir.glob("brain.db.*"))
+                total_backup_size = sum(f.stat().st_size for f in backups)
+                count = len(backups)
+                level = WARN if count > 14 else OK
+                results.append(_check(
+                    level, "storage/backups",
+                    f"{count} backups, total {_fmt_size(total_backup_size)}"
+                ))
+            else:
+                results.append(_check(OK, "storage/backups", "no backups directory"))
+        except Exception as e:
+            results.append(_check(ERROR, "storage/backups", f"check failed: {e}"))
+
+        # Vector coverage: % of nodes that have embeddings
+        try:
+            conn = sqlite3.connect(str(db_path))
+            total_nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            if "vectors" in tables and total_nodes > 0:
+                with_vectors = conn.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+                pct = (with_vectors / total_nodes * 100) if total_nodes else 0
+                level = OK if pct >= 80 else WARN
+                results.append(_check(
+                    level, "storage/vectors",
+                    f"{with_vectors}/{total_nodes} nodes have embeddings ({pct:.0f}%)"
+                ))
+            elif total_nodes > 0:
+                results.append(_check(OK, "storage/vectors", "no vectors table (embedding not configured)"))
+            conn.close()
+        except Exception as e:
+            results.append(_check(ERROR, "storage/vectors", f"check failed: {e}"))
+
+        return results
+
+    def _check_central_mode(self) -> list[dict]:
+        """E-02: Report central brain mode status and API key count."""
+        db_path = self.brain_dir / "brain.db"
+        if not db_path.exists():
+            return []
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            # Check if api_keys table exists (schema v29+)
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            if "api_keys" not in tables:
+                return [_check(OK, "central_mode", "standalone mode (no RBAC tables)")]
+            row = conn.execute(
+                "SELECT COUNT(*) as total,"
+                " SUM(CASE WHEN is_revoked=0 THEN 1 ELSE 0 END) as active"
+                " FROM api_keys"
+            ).fetchone()
+            total, active = row["total"], row["active"] or 0
+            conn.close()
+            if total == 0:
+                return [_check(OK, "central_mode",
+                               "RBAC ready (api_keys table exists, 0 keys registered)")]
+            return [_check(OK, "central_mode",
+                           f"RBAC active ({active} active keys, {total - active} revoked)")]
+        except Exception as e:
+            return [_check(WARN, "central_mode", f"check failed: {e}")]
 
     def _check_benchmark_age(self) -> list[dict]:
         """Check if baseline.json is recent."""

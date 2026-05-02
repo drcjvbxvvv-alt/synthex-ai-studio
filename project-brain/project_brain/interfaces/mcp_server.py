@@ -328,8 +328,9 @@ class BrainServer:
     returns the FastMCP server — callers see no API change.
     """
 
-    def __init__(self, workdir: str) -> None:
+    def __init__(self, workdir: str, *, mode: str = "standalone") -> None:
         self.work_path = _validate_workdir(workdir)
+        self._mode = mode  # E-02: "standalone" or "central"
 
         # ── Rate limiter (was module-level _call_times / _rate_lock) ──
         self._call_times: list[float] = []
@@ -359,8 +360,19 @@ class BrainServer:
         # ── Primary brain ──
         sys.path.insert(0, str(self.work_path.parent))
         from project_brain.engine import ProjectBrain
-        self.brain = ProjectBrain(str(self.work_path))
+        _serialized = (mode == "central")
+        self.brain = ProjectBrain(str(self.work_path), serialized_writes=_serialized)
+        # E-02: expose brain_db ref for AuthMiddleware RBAC resolution
+        self._brain_db_ref = self.brain.db if _serialized else None
         self._brain_cache[str(self.work_path)] = self.brain
+
+        # ARCH-DEBT: optional embedder warmup — pre-load model in background
+        if os.environ.get("BRAIN_EMBED_WARMUP", "") == "1":
+            try:
+                from project_brain.embedder import warmup_embedder
+                warmup_embedder()
+            except Exception:
+                pass  # warmup failure must never block server startup
 
     # ── Instance methods (previously module-level helpers) ──────────
 
@@ -505,6 +517,38 @@ class BrainServer:
         brain = self.brain
         work_path = self.work_path
 
+        # E-03: central brain overlay helper
+        def _get_central_client():
+            """Return a CentralBrainClient if team config enables it, else None."""
+            try:
+                from project_brain.brain_config import load_config
+                cfg = load_config(work_path / ".brain" if (work_path / ".brain").exists() else None)
+                if cfg.team.mode == "local-only" or not cfg.team.central_brain_url:
+                    return None, cfg.team
+                from project_brain.integrations.central_brain_client import CentralBrainClient
+                client = CentralBrainClient(
+                    url=cfg.team.central_brain_url,
+                    api_key=cfg.team.central_brain_key,
+                )
+                return client, cfg.team
+            except Exception as e:
+                logger.debug("E-03: central brain client init failed: %s", e)
+                return None, None
+
+        # E-02: permission check helper (reads role from ContextVar)
+        def _check_permission(tool_name: str) -> dict | None:
+            """Return an error dict if the current role lacks permission, else None."""
+            from project_brain.interfaces.http_transport import current_role
+            from project_brain.rbac import has_permission, TOOL_PERMISSIONS
+            role = current_role.get("admin")  # default "admin" for stdio mode
+            required = TOOL_PERMISSIONS.get(tool_name)
+            if required and not has_permission(role, required):
+                return {
+                    "error": "permission_denied",
+                    "message": f"Role '{role}' cannot call {tool_name} (requires {required}+)",
+                }
+            return None
+
         # Minimal FastMCP init — different versions have different kwargs
         try:
             mcp = FastMCP(
@@ -639,10 +683,9 @@ class BrainServer:
                 except Exception as _e:
                     logger.debug("auto-resolve thread start failed, skipping", exc_info=True)  # auto-resolve must never block context delivery
                 # VISION-01: record recently updated node IDs for auto-feedback
+                # ARCH-DEBT: reuse b.db singleton instead of creating new BrainDB
                 try:
-                    from project_brain.brain_db import BrainDB as _BDB2
-                    _bdb2 = _BDB2(b.brain_dir)
-                    _recent_rows = _bdb2.conn.execute(
+                    _recent_rows = b.db.conn.execute(
                         "SELECT id FROM nodes ORDER BY updated_at DESC LIMIT 10"
                     ).fetchall()
                     _wk2 = str(b.workdir)
@@ -650,6 +693,24 @@ class BrainServer:
                         srv._session_nodes[_wk2] = [r[0] for r in _recent_rows if r[0]]
                 except Exception as _e:
                     logger.debug("session_nodes update failed", exc_info=True)
+
+                # E-03: overlay — append central brain context if configured
+                try:
+                    _central, _team_cfg = _get_central_client()
+                    if _central and _team_cfg:
+                        _is_central_only = (_team_cfg.mode == "central-only")
+                        _is_overlay = (_team_cfg.mode == "overlay")
+                        # Count local sources (heuristic: count "Sources" node IDs)
+                        _local_thin = not ctx or len(ctx) < 100
+                        if _is_central_only:
+                            ctx = _central.get_context(task_clean, current_file=file_clean)
+                        elif _is_overlay and _local_thin:
+                            _central_ctx = _central.get_context(task_clean, current_file=file_clean)
+                            if _central_ctx:
+                                ctx = (ctx or "") + "\n\n---\n## 🌐 Central Brain\n" + _central_ctx
+                except Exception as _e:
+                    logger.debug("E-03 overlay failed (non-fatal): %s", _e)
+
                 return ctx
             except Exception as e:
                 logger.error("get_context 內部錯誤：%s", e)
@@ -719,7 +780,29 @@ class BrainServer:
                     limit=top_k * 3 if author_filter else top_k,
                 )
                 filtered = [r for r in raw if _author_match(r)]
-                return [_format_result(r) for r in filtered[:top_k]]
+                local_results = [_format_result(r) for r in filtered[:top_k]]
+
+                # E-03: overlay — supplement with central brain results
+                try:
+                    _central, _team_cfg = _get_central_client()
+                    if _central and _team_cfg:
+                        if _team_cfg.mode == "central-only":
+                            return _central.search_knowledge(q_clean, top_k=top_k, kind=kind)
+                        if _team_cfg.mode == "overlay" and len(local_results) < top_k:
+                            _need = top_k - len(local_results)
+                            _central_results = _central.search_knowledge(q_clean, top_k=_need, kind=kind)
+                            # Dedup: skip central results whose title matches a local result
+                            _local_titles = {r["title"].lower() for r in local_results}
+                            for cr in _central_results:
+                                if cr.get("title", "").lower() not in _local_titles:
+                                    cr["source"] = cr.get("source", "") + " [central]"
+                                    local_results.append(cr)
+                                if len(local_results) >= top_k:
+                                    break
+                except Exception as _e:
+                    logger.debug("E-03 search overlay failed (non-fatal): %s", _e)
+
+                return local_results
             except Exception as e:
                 logger.error("search_knowledge 內部錯誤：%s", e)
                 return []
@@ -775,6 +858,9 @@ class BrainServer:
             Returns:
                 {"node_id": "...", "success": true}
             """
+            perm_err = _check_permission("add_knowledge")
+            if perm_err:
+                return perm_err
             srv.rate_check()
 
             title_c   = _safe_str(title,   MAX_TITLE_LEN, "title")
@@ -825,13 +911,15 @@ class BrainServer:
                 # C-04: background conflict detection → emit KNOWLEDGE_CONFLICT
                 def _bg_conflict_check():
                     try:
-                        conflicts = b.db.find_conflicts(title_c, top_k=3)
+                        conflicts = b.db.find_conflicts_for_node(
+                            node_id, similarity_threshold=0.6, candidates_per_anchor=10,
+                        )
                         if conflicts:
                             srv.emit_signal(
                                 "knowledge_conflict", str(b.workdir),
                                 f"conflict: {title_c[:80]} vs {len(conflicts)} existing",
                                 raw_content="\n".join(
-                                    f"[{c.get('type','')}] {c.get('title','')}: {c.get('reason','')}"
+                                    f"[{c.get('type','')}] {c.get('title_b','')}: {c.get('reason','')}"
                                     for c in conflicts[:3]
                                 ),
                                 metadata={"node_id": node_id, "conflict_count": len(conflicts)},
@@ -1222,6 +1310,9 @@ class BrainServer:
             Returns:
                 {"ok": True, "created": N, "node_ids": [...]}
             """
+            perm_err = _check_permission("complete_task")
+            if perm_err:
+                return perm_err
             srv.rate_check()
 
             wd_str = _safe_str(workdir or os.environ.get("BRAIN_WORKDIR", ""), 500, "workdir") or workdir
@@ -1282,11 +1373,10 @@ class BrainServer:
                 _auto_nodes = list(srv._session_nodes.pop(_wk, []))
             if _auto_nodes:
                 _had_pitfalls = bool(_pitfalls)
+                # ARCH-DEBT: reuse b.db singleton instead of creating new BrainDB
                 try:
-                    from project_brain.brain_db import BrainDB as _BDB3
-                    _bdb3 = _BDB3(b.brain_dir)
                     for _nid in _auto_nodes[:5]:  # cap at 5 to avoid over-feedback
-                        _bdb3.record_feedback(_nid, helpful=not _had_pitfalls)
+                        b.db.record_feedback(_nid, helpful=not _had_pitfalls)
                     logger.debug(
                         "VISION-01 auto-feedback: %d nodes helpful=%s",
                         min(5, len(_auto_nodes)), not _had_pitfalls,
@@ -1340,6 +1430,9 @@ class BrainServer:
             Returns:
                 {"ok": True, "node_id": "...", "confidence": 0.85, "delta": +0.03}
             """
+            perm_err = _check_permission("report_knowledge_outcome")
+            if perm_err:
+                return perm_err
             srv.rate_check()
 
             node_id_clean = _safe_str(node_id, 100, "node_id")
@@ -1428,6 +1521,84 @@ class BrainServer:
             except Exception as e:
                 logger.error("report_knowledge_outcome error: %s", e)
                 return {"ok": False, "error": str(e)}
+
+        # ── Tool: push_to_central (E-05) ────────────────────────────────
+        @mcp.tool()
+        def push_to_central(
+            node_ids: "list[str] | None" = None,
+            kind: str = "",
+            min_confidence: float = 0.8,
+            max_nodes: int = 50,
+            target_url: str = "",
+            api_key: str = "",
+            workdir: str = "",
+        ) -> dict:
+            """
+            推送本地知識到 Central Brain。
+
+            可指定 node_ids 推送特定節點，或用 kind/min_confidence 篩選。
+            推送的知識進入 Central Brain 的 KRB Staging 待審。
+
+            Args:
+                node_ids:       指定推送的節點 ID（None = 使用 kind/confidence 篩選）
+                kind:           節點類型篩選（Pitfall/Rule/Decision，空 = 全部）
+                min_confidence: 最低信心度（預設 0.8）
+                max_nodes:      最大推送數（預設 50）
+                target_url:     Central Brain URL（空 = 從 brain.toml [team] 讀取）
+                api_key:        API key（空 = 從 brain.toml [team] 或 BRAIN_API_KEY 讀取）
+                workdir:        專案工作目錄
+
+            Returns:
+                {"ok": True, "pushed": N, "failed": M, "errors": [...]}
+            """
+            perm_err = _check_permission("push_to_central")
+            if perm_err:
+                return perm_err
+            srv.rate_check()
+
+            wd_str = _safe_str(workdir or os.environ.get("BRAIN_WORKDIR", ""), 500, "workdir") or workdir
+            b = srv.resolve_brain(wd_str)
+
+            # Resolve target URL
+            _url = _safe_str(target_url, 500, "target_url")
+            _key = _safe_str(api_key, 500, "api_key")
+            if not _url:
+                try:
+                    from project_brain.brain_config import load_config
+                    _cfg = load_config(b.brain_dir)
+                    _url = _cfg.team.central_brain_url
+                    if not _key:
+                        _key = _cfg.team.central_brain_key
+                except Exception:
+                    pass
+            if not _url:
+                return {"ok": False, "error": "No target URL — set via argument or brain.toml [team]"}
+
+            from project_brain.integrations.push_central import PushTransport
+            from project_brain.integrations.central_brain_client import CentralBrainClient
+
+            transport = PushTransport()
+            client = CentralBrainClient(url=_url, api_key=_key)
+
+            if node_ids:
+                # Push specific nodes
+                nodes = [b.db.get_node(nid) for nid in node_ids]
+                nodes = [n for n in nodes if n is not None]
+            else:
+                nodes = transport.select_nodes(
+                    b.db, kind=kind, min_confidence=min_confidence, max_nodes=max_nodes,
+                )
+
+            sanitized = transport.sanitize_nodes(nodes)
+            result = transport.push(client, sanitized, source_label="mcp:push")
+
+            return {
+                "ok": result.pushed_fail == 0,
+                "pushed": result.pushed_ok,
+                "failed": result.pushed_fail,
+                "total_selected": result.total_selected,
+                "errors": result.errors[:10],
+            }
 
         # ── Tool: krb_pre_screen (PH3-03) ───────────────────────────────
         @mcp.tool()
@@ -1700,15 +1871,12 @@ class BrainServer:
                 {"synced": int, "skipped": int, "errors": int, "details": list}
             """
             srv.rate_check()
+            # ARCH-DEBT: reuse resolve_brain singletons
             try:
                 _b    = srv.resolve_brain(workdir)
-                from project_brain.brain_db      import BrainDB as _BDB_FED
-                from project_brain.graph         import KnowledgeGraph as _KG_FED
                 from project_brain.review_board  import KnowledgeReviewBoard as _KRB_FED
                 from project_brain.federation    import FederationAutoSync
-                _bdb_f  = _BDB_FED(_b.brain_dir)
-                _graph_f = _KG_FED(_b.brain_dir / "brain.db")
-                _krb_f  = _KRB_FED(_bdb_f, _graph_f)
+                _krb_f  = _KRB_FED(_b.db, _b.graph)
                 syncer  = FederationAutoSync(_krb_f, _b.brain_dir)
                 stats   = syncer.sync_all(dry_run=dry_run, min_confidence=min_confidence)
                 logger.info(
@@ -1748,6 +1916,7 @@ def create_http_server(
     rate_limit_rpm: int = 60,
     allowed_origins: list[str] | None = None,
     transport: str = "streamable-http",
+    mode: str = "standalone",
 ) -> "HTTPBrainServer":
     """E-01: 建立支援 HTTP/SSE 的 MCP Server（供遠端 Claude Code 連接）。
 
@@ -1784,7 +1953,7 @@ def create_http_server(
         # }
     """
     from project_brain.interfaces.http_transport import HTTPBrainServer
-    srv = BrainServer(workdir)
+    srv = BrainServer(workdir, mode=mode)
     return HTTPBrainServer(
         brain_server=srv,
         bind=bind,
@@ -1793,6 +1962,7 @@ def create_http_server(
         rate_limit_rpm=rate_limit_rpm,
         allowed_origins=allowed_origins,
         transport=transport,
+        mode=mode,
     )
 
 

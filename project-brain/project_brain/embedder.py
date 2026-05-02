@@ -354,9 +354,21 @@ def get_embedder():
         logger.debug("Embedder disabled via BRAIN_EMBED_PROVIDER=none")
         return None
 
+    # ARCH-DEBT: when provider is explicitly set, skip the test embed probe
+    # to avoid cold-start blocking. Model loads lazily on first real embed().
+    _explicit = bool(provider and provider != "none")
+    _skip_probe = _explicit or os.environ.get("BRAIN_EMBED_LAZY", "") == "1"
+
     # ── 1. Multilingual (sentence-transformers) ───────────────────
     if provider == "multilingual" or (not provider and MultilingualEmbedder.is_available()):
         e = MultilingualEmbedder()
+        if _skip_probe:
+            # Trust lazy loading — model loads on first real embed() call
+            logger.info("Embedder: MultilingualEmbedder %s (lazy, %d dim)",
+                        e.model_name, e.dim)
+            with _embedder_lock:
+                _embedder_cache[provider] = e
+            return e
         vec = e.embed("test", is_query=True)
         if vec and len(vec) > 0:
             logger.info(
@@ -375,6 +387,11 @@ def get_embedder():
     # ── 2. Ollama ────────────────────────────────────────────────
     if provider == "ollama" or (not provider and OllamaEmbedder.is_available()):
         e = OllamaEmbedder()
+        if _skip_probe:
+            logger.info("Embedder: Ollama %s (lazy, %d dim)", e.model, e.dim)
+            with _embedder_lock:
+                _embedder_cache[provider] = e
+            return e
         vec = e.embed("test")
         if vec and len(vec) > 0:
             logger.info("Embedder: Ollama %s (%d dim)", e.model, len(vec))
@@ -403,3 +420,23 @@ def get_embedder():
     with _embedder_lock:
         _embedder_cache[provider] = None
     return None
+
+
+def warmup_embedder() -> None:
+    """Pre-load the embedder model in a background thread.
+
+    Call this at server startup (brain serve / brain webui) when
+    BRAIN_EMBED_WARMUP=1 is set. The model loads in the background
+    so the first user request doesn't pay the cold-start cost.
+    """
+    import threading
+    def _warmup():
+        try:
+            emb = get_embedder()
+            if emb:
+                # Force model load by embedding a test string
+                emb.embed("warmup probe")
+                logger.info("embedder warmup complete: %s", type(emb).__name__)
+        except Exception as _e:
+            logger.debug("embedder warmup failed (non-fatal): %s", _e)
+    threading.Thread(target=_warmup, daemon=True, name="embedder-warmup").start()

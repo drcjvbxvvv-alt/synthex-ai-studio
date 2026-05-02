@@ -608,4 +608,4 @@ class TestCreateHTTPServerFactory:
             assert isinstance(http, HTTPBrainServer)
             assert http.port == 4000
             assert http.bind == "127.0.0.1"
-            MockBS.assert_called_once_with(str(tmp_path))
+            MockBS.assert_called_once_with(str(tmp_path), mode="standalone")

@@ -5,14 +5,18 @@ Single brain.db replaces 6 scattered SQLite files.
 L2 temporal memory replaces FalkorDB with pure SQLite.
 """
 from __future__ import annotations
+import dataclasses
+import functools
 import logging
-import contextlib, hashlib, json, math, sqlite3, threading
+import contextlib, hashlib, json, math, os, queue, sqlite3, threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional, TypeVar
+
+_T = TypeVar("_T")
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 28          # DEF-04: bump on every schema change (C-05: feedback_log)
+SCHEMA_VERSION = 29          # DEF-04: bump on every schema change (E-02: api_keys)
 
 # REF-02: single source of truth in synonyms.py
 from ..synonyms import SYNONYM_MAP as _SYNONYM_MAP   # noqa: E402
@@ -23,18 +27,61 @@ from project_brain.vector_store    import VectorStore
 from project_brain.feedback_tracker import FeedbackTracker
 
 
+@dataclasses.dataclass
+class _WriteRequest:
+    """Internal message passed through the serialized write queue."""
+    kind: str                          # "execute" | "executescript" | "callable"
+    sql: str = ""
+    params: tuple = ()
+    fn: Callable | None = None         # for kind="callable"
+    result_event: threading.Event = dataclasses.field(default_factory=threading.Event)
+    result_value: Any = None
+    error: BaseException | None = None
+
+
+def _serialize_if_needed(method: Callable[..., _T]) -> Callable[..., _T]:
+    """Decorator: route the entire method body through the write queue in serialized mode.
+
+    When ``self._serialized_writes`` is True and the caller is NOT on the
+    write-worker thread, the method is wrapped in a callable and enqueued.
+    The calling thread blocks until the worker executes it and returns the result.
+
+    When ``self._serialized_writes`` is False (default), the method runs directly.
+    """
+    @functools.wraps(method)
+    def wrapper(self: "BrainDB", *args: Any, **kwargs: Any) -> _T:
+        if self._serialized_writes and not self._is_write_worker():
+            return self._enqueue_write_fn(lambda: method(self, *args, **kwargs))
+        return method(self, *args, **kwargs)
+    return wrapper
+
+
 class BrainDB:
     """Single SQLite database holding all Project Brain data."""
 
-    def __init__(self, brain_dir: Path):
+    def __init__(self, brain_dir: Path, *, serialized_writes: bool = False):
         self.brain_dir = Path(brain_dir)
         self.brain_dir.mkdir(parents=True, exist_ok=True)
         self.db_path     = self.brain_dir / "brain.db"
         self._write_lock = threading.RLock()  # REF-03: replaces fcntl
+        # ARCH-DEBT: trace sampling — only record 1 in N searches to reduce WAL pressure
+        self._trace_counter = 0
+        self._trace_sample_rate = int(os.environ.get("BRAIN_TRACE_SAMPLE_RATE", "5"))
+        # E-02: serialized write queue for central brain mode
+        self._serialized_writes = serialized_writes
+        self._write_queue: queue.Queue[_WriteRequest | None] | None = None
+        self._write_worker_thread: threading.Thread | None = None
         # ARCH-02: single shared connection — eliminates per-thread fd leak
         self._conn_obj: sqlite3.Connection = self._make_connection()
         self._setup()
-        # FEAT-06: 每日自動備份（靜默，不阻塞啟動）
+        # E-02: start write worker AFTER schema is set up
+        if serialized_writes:
+            self._write_queue = queue.Queue()
+            self._write_worker_thread = threading.Thread(
+                target=self._write_worker, daemon=True, name="brain-write-worker",
+            )
+            self._write_worker_thread.start()
+        # FEAT-06: 每日自動備份��靜默，不阻塞啟動）
         self._maybe_backup()
 
     def _maybe_backup(self) -> None:
@@ -43,7 +90,7 @@ class BrainDB:
         規則：
           - 每天最多備份一次（比較最新備份的日期）
           - 使用 SQLite VACUUM INTO，保證備份為完整且不含 WAL 的乾淨資料庫
-          - 保留最近 7 份，超過自動刪除
+          - 保留份數由 BRAIN_BACKUP_KEEP 環境變數 或 config.json 控制（預設 7）
         """
         if not self.db_path.exists():
             return
@@ -58,9 +105,10 @@ class BrainDB:
             # VACUUM INTO 建立完整備份（自動 checkpoint WAL）
             self._conn_obj.execute(f"VACUUM INTO '{today_path}'")
             logger.debug("FEAT-06: daily backup created → %s", today_path.name)
-            # 清理超過 7 份的舊備份（按名稱排序，最舊的先刪）
+            # ARCH-DEBT: configurable retention (env > config.json > default 7)
+            keep = self._backup_keep_count()
             backups = sorted(backup_dir.glob("brain_????????.db"))
-            for old in backups[:-7]:
+            for old in backups[:-keep]:
                 try:
                     old.unlink()
                     logger.debug("FEAT-06: removed old backup %s", old.name)
@@ -69,6 +117,27 @@ class BrainDB:
         except Exception as _e:
             # 備份失敗不應影響正常啟動
             logger.warning("FEAT-06: daily backup failed (non-fatal): %s", _e)
+
+    def _backup_keep_count(self) -> int:
+        """Read backup retention count from env/config (default 7)."""
+        # 1. Environment variable
+        env_val = os.environ.get("BRAIN_BACKUP_KEEP")
+        if env_val:
+            try:
+                return max(1, int(env_val))
+            except (ValueError, TypeError):
+                pass
+        # 2. config.json
+        try:
+            cfg_path = self.brain_dir / "config.json"
+            if cfg_path.exists():
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                val = cfg.get("backup_keep")
+                if val is not None:
+                    return max(1, int(val))
+        except Exception:
+            pass
+        return 7
 
     def _make_connection(self) -> sqlite3.Connection:
         """ARCH-02: open the shared SQLite connection. Override in subclasses."""
@@ -90,7 +159,15 @@ class BrainDB:
         """ARCH-02: explicitly close the shared connection to release the fd.
 
         LOW-03: idempotent — safe to call multiple times.
+        E-02: send poison pill to write worker and join before closing connection.
         """
+        # E-02: shut down write worker first
+        if self._write_queue is not None:
+            self._write_queue.put(None)  # poison pill
+            if self._write_worker_thread is not None:
+                self._write_worker_thread.join(timeout=5)
+            self._write_queue = None
+            self._write_worker_thread = None
         if self._conn_obj is None:
             return
         try:
@@ -98,6 +175,60 @@ class BrainDB:
         except Exception:
             pass
         self._conn_obj = None
+
+    # ── E-02: API Key management ──────────────────────────────────────
+
+    def store_api_key(self, token: str, role: str = "reader",
+                      name: str = "") -> int:
+        """Store a hashed API key for RBAC. Returns the key row ID."""
+        from ..rbac import VALID_ROLES
+        if role not in VALID_ROLES:
+            raise ValueError(f"Invalid role {role!r}; must be one of {sorted(VALID_ROLES)}")
+        key_hash = hashlib.sha256(token.encode()).hexdigest()
+        cur = self._execute_write(
+            "INSERT INTO api_keys (key_hash, role, name) VALUES (?, ?, ?)",
+            (key_hash, role, name),
+        )
+        return cur.lastrowid
+
+    def resolve_api_key(self, token: str) -> Optional[dict]:
+        """Resolve a Bearer token to its role metadata, or None if invalid/expired/revoked."""
+        key_hash = hashlib.sha256(token.encode()).hexdigest()
+        row = self.conn.execute(
+            "SELECT id, role, name, expires_at, is_revoked FROM api_keys WHERE key_hash = ?",
+            (key_hash,),
+        ).fetchone()
+        if not row:
+            return None
+        row = dict(row)
+        if row["is_revoked"]:
+            return None
+        if row["expires_at"]:
+            try:
+                exp = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) > exp:
+                    return None
+            except Exception:
+                pass  # malformed expiry → treat as non-expiring
+        return {"role": row["role"], "name": row["name"], "key_id": row["id"]}
+
+    def revoke_api_key(self, key_id: int) -> bool:
+        """Revoke an API key by ID. Returns True if the key was found."""
+        cur = self._execute_write(
+            "UPDATE api_keys SET is_revoked = 1 WHERE id = ? AND is_revoked = 0",
+            (key_id,),
+        )
+        return cur.rowcount > 0
+
+    def list_api_keys(self) -> list[dict]:
+        """List all API keys (without hashes). For admin dashboard."""
+        rows = self.conn.execute(
+            "SELECT id, role, name, created_at, expires_at, is_revoked FROM api_keys"
+            " ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def _setup(self) -> None:
         self.conn.executescript("""
@@ -373,6 +504,18 @@ class BrainDB:
                  conf_after  REAL,
                  created_at  TEXT DEFAULT (datetime('now'))
              )"""),
+            # v29: E-02 — api_keys table for RBAC
+            ("E-02: api_keys table for RBAC",
+             """CREATE TABLE IF NOT EXISTS api_keys (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 key_hash    TEXT NOT NULL UNIQUE,
+                 role        TEXT NOT NULL DEFAULT 'reader',
+                 name        TEXT NOT NULL DEFAULT '',
+                 created_at  TEXT DEFAULT (datetime('now')),
+                 expires_at  TEXT DEFAULT NULL,
+                 is_revoked  INTEGER NOT NULL DEFAULT 0,
+                 CHECK (role IN ('reader','contributor','maintainer','admin'))
+             )"""),
         ]
 
         for idx, (desc, sql) in enumerate(_migrations):
@@ -569,9 +712,69 @@ class BrainDB:
         macOS/Linux-only and added 1-2ms syscall overhead per write.
         SQLite WAL mode + busy_timeout=5000 handles cross-process serialization.
         RLock is reentrant so nested calls in the same thread are safe.
+
+        E-02: In serialized_writes mode, the write-worker thread is the only
+        thread that should hold the lock. If called from the worker, yield
+        directly (worker is already serial). The RLock is still acquired for
+        safety (reentrant), ensuring correct behavior if _write_guard is nested.
         """
         with self._write_lock:
             yield
+
+    # ── E-02: Write Queue infrastructure ─────────────────────────────
+
+    def _is_write_worker(self) -> bool:
+        """Return True if the current thread is the write-worker thread."""
+        return (self._write_worker_thread is not None
+                and threading.current_thread() is self._write_worker_thread)
+
+    def _write_worker(self) -> None:
+        """E-02: Background thread that drains the write queue serially.
+
+        Each request is executed under ``_write_guard()`` (which acquires the
+        RLock).  Results and errors are communicated back to the calling thread
+        via ``_WriteRequest.result_event``.
+
+        A ``None`` sentinel (poison pill) terminates the loop.
+        """
+        while True:
+            req = self._write_queue.get()
+            if req is None:
+                break
+            try:
+                if req.kind == "execute":
+                    req.result_value = self._execute_write_direct(req.sql, req.params)
+                elif req.kind == "executescript":
+                    self._execute_writescript_direct(req.sql)
+                elif req.kind == "callable" and req.fn is not None:
+                    req.result_value = req.fn()
+            except Exception as e:
+                req.error = e
+            finally:
+                req.result_event.set()
+
+    def _enqueue_write(self, kind: str, sql: str, params: tuple = ()) -> Any:
+        """Enqueue a simple SQL write and block until the worker completes it."""
+        req = _WriteRequest(kind=kind, sql=sql, params=params)
+        self._write_queue.put(req)
+        req.result_event.wait()
+        if req.error:
+            raise req.error
+        return req.result_value
+
+    def _enqueue_write_fn(self, fn: Callable[..., _T]) -> _T:
+        """Enqueue an arbitrary callable to run on the write-worker thread.
+
+        Used by ``@_serialize_if_needed`` to route entire method bodies
+        (e.g. ``add_node`` with its multi-statement atomic block) through
+        the serialized queue.
+        """
+        req = _WriteRequest(kind="callable", fn=fn)
+        self._write_queue.put(req)
+        req.result_event.wait()
+        if req.error:
+            raise req.error
+        return req.result_value
 
     # ── MEDIUM-01: 寫入統一入口（ARCHITECTURE_REVIEW.md §3 MEDIUM-01）─────
     #
@@ -579,6 +782,36 @@ class BrainDB:
     # 保證 lock + commit + rollback 行為一致，便於除錯與審計。
     # 唯一例外：__init__ 內的 _setup / _migrate_schema，因為在 BrainDB 建構
     # 完成前不會有任何並發呼叫者，不需序列化。
+
+    def _execute_write_direct(
+        self,
+        sql:    str,
+        params: tuple = (),
+    ) -> sqlite3.Cursor:
+        """Direct write execution (always runs on the current thread)."""
+        with self._write_guard():
+            try:
+                cur = self.conn.execute(sql, params)
+                self.conn.commit()
+                return cur
+            except Exception:
+                try:
+                    self.conn.rollback()
+                except Exception as _rb_err:
+                    logger.error("_execute_write: rollback failed: %s", _rb_err)
+                raise
+
+    def _execute_writescript_direct(self, script: str) -> None:
+        """Direct writescript execution (always runs on the current thread)."""
+        with self._write_guard():
+            try:
+                self.conn.executescript(script)
+            except Exception:
+                try:
+                    self.conn.rollback()
+                except Exception as _rb_err:
+                    logger.error("_execute_writescript: rollback failed: %s", _rb_err)
+                raise
 
     def _execute_write(
         self,
@@ -594,6 +827,8 @@ class BrainDB:
           - 失敗則 ``self.conn.rollback()`` 後 re-raise
           - 可安全巢狀呼叫（RLock）
 
+        E-02: In serialized_writes mode, enqueues to the write worker.
+
         Args:
             sql:    單一 SQL 語句（INSERT / UPDATE / DELETE / etc.）
             params: SQL 參數 tuple
@@ -601,17 +836,9 @@ class BrainDB:
         Returns:
             ``sqlite3.Cursor`` — 呼叫端可讀取 ``rowcount`` / ``lastrowid``
         """
-        with self._write_guard():
-            try:
-                cur = self.conn.execute(sql, params)
-                self.conn.commit()
-                return cur
-            except Exception:
-                try:
-                    self.conn.rollback()
-                except Exception as _rb_err:
-                    logger.error("_execute_write: rollback failed: %s", _rb_err)
-                raise
+        if self._serialized_writes and not self._is_write_worker():
+            return self._enqueue_write("execute", sql, params)
+        return self._execute_write_direct(sql, params)
 
     def _execute_writescript(self, script: str) -> None:
         """
@@ -620,15 +847,10 @@ class BrainDB:
         ``executescript()`` 會自動在腳本前隱式 COMMIT 任何 pending transaction，
         因此不需要額外 commit。失敗時仍 rollback + re-raise。
         """
-        with self._write_guard():
-            try:
-                self.conn.executescript(script)
-            except Exception:
-                try:
-                    self.conn.rollback()
-                except Exception as _rb_err:
-                    logger.error("_execute_writescript: rollback failed: %s", _rb_err)
-                raise
+        if self._serialized_writes and not self._is_write_worker():
+            self._enqueue_write("executescript", script)
+            return
+        self._execute_writescript_direct(script)
 
     def _load_search_config(self) -> dict:
         """OPT-05: Load hybrid search weight overrides from .brain/config.json."""
@@ -757,6 +979,7 @@ class BrainDB:
 
     # -- L3: knowledge nodes --
 
+    @_serialize_if_needed
     def add_node(self, node_id: str, node_type: str, title: str,
                  content: str = "", tags=None, scope: str = "global", **kw) -> str:
         tags_json  = json.dumps(tags or [], ensure_ascii=False)
@@ -845,6 +1068,7 @@ class BrainDB:
             created_at= data.get("created_at", ""),
         )
 
+    @_serialize_if_needed
     def update_node(self, node_id: str, title=None, content=None,
                     confidence=None, importance=None,
                     changed_by: str = "", change_note: str = "",
@@ -955,24 +1179,82 @@ class BrainDB:
                     f" WHERE nodes_fts MATCH ? {sf}"
                     f" ORDER BY {sort_clause} LIMIT ?",
                     (fts_q, *sp, _s, limit)).fetchall()
-            # DEF-05/OPT-04 fix: re-rank by decay-adjusted effective confidence
+            # DEF-05/OPT-04 fix: re-rank by IDF-weighted relevance + decay-adjusted confidence
             results = [dict(r) for r in rows]
+
+            # Compute IDF weights for query tokens
+            _total_docs = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] or 1
+            _idf: dict[str, float] = {}
+            for tok in _safe_unique:
+                try:
+                    df = self.conn.execute(
+                        "SELECT COUNT(*) FROM nodes_fts WHERE nodes_fts MATCH ?",
+                        (f'"{tok}"',),
+                    ).fetchone()[0]
+                    import math as _math
+                    _idf[tok] = _math.log((_total_docs + 1) / (df + 1)) + 1.0
+                except Exception:
+                    _idf[tok] = 1.0
+
+            # Score each result: IDF-weighted term overlap + confidence
             for r in results:
                 r["effective_confidence"] = self._effective_confidence(r)
+                # IDF relevance: sum of IDF weights for matching tokens
+                r_title = (r.get("title") or "").lower()
+                r_content = (r.get("content") or "").lower()
+                r_text = r_title + " " + r_content
+                idf_score = 0.0
+                for tok in _safe_unique:
+                    if tok.strip('"').lower() in r_text:
+                        idf_score += _idf.get(tok, 1.0)
+                # Normalize by max possible IDF sum
+                max_idf = sum(_idf.values()) or 1.0
+                idf_norm = idf_score / max_idf  # 0.0 ~ 1.0
+
+                # Combined score: relevance × 0.6 + confidence × 0.4
+                r["_search_score"] = (
+                    idf_norm * 0.6
+                    + float(r["effective_confidence"]) * 0.4
+                )
+
             results.sort(
-                key=lambda x: (x.get("is_pinned", 0), x["effective_confidence"]),
+                key=lambda x: (x.get("is_pinned", 0), x.get("_search_score", 0)),
                 reverse=True,
             )
-            # BUG-B fix: record trace with result_count so query_hit_rate() works
-            # MEDIUM-01: route through _execute_write for consistent locking
-            try:
-                _ms = (_time.monotonic() - _t0) * 1000
-                self._execute_write(
-                    "INSERT INTO traces(query, result_count, latency_ms) VALUES(?,?,?)",
-                    (query[:500], len(results), round(_ms, 2)),
+
+            # Diversity penalty: demote results whose titles are too similar
+            # to already-selected results (greedy reranking)
+            if len(results) > 1:
+                reranked = [results[0]]
+                for candidate in results[1:]:
+                    c_words = set((candidate.get("title") or "").lower().split())
+                    penalty = 1.0
+                    for selected in reranked:
+                        s_words = set((selected.get("title") or "").lower().split())
+                        union = c_words | s_words
+                        if union:
+                            overlap = len(c_words & s_words) / len(union)
+                            if overlap > 0.5:
+                                penalty = min(penalty, 1.0 - overlap)
+                    candidate["_search_score"] = candidate.get("_search_score", 0) * penalty
+                    reranked.append(candidate)
+                reranked.sort(
+                    key=lambda x: (x.get("is_pinned", 0), x.get("_search_score", 0)),
+                    reverse=True,
                 )
-            except Exception as _e:
-                logger.error("trace insert failed in search_nodes: %s", _e)
+                results = reranked
+            # BUG-B fix: record trace with result_count so query_hit_rate() works
+            # ARCH-DEBT: sample traces (1 in N) to reduce WAL pressure under high QPS
+            self._trace_counter += 1
+            if self._trace_counter % self._trace_sample_rate == 0:
+                try:
+                    _ms = (_time.monotonic() - _t0) * 1000
+                    self._execute_write(
+                        "INSERT INTO traces(query, result_count, latency_ms) VALUES(?,?,?)",
+                        (query[:500], len(results), round(_ms, 2)),
+                    )
+                except Exception as _e:
+                    logger.error("trace insert failed in search_nodes: %s", _e)
             return results
         except Exception as _e:
             logger.error("search_nodes failed: %s", _e)
@@ -1016,6 +1298,7 @@ class BrainDB:
         )
         return r.rowcount > 0
 
+    @_serialize_if_needed
     def delete_node(self, node_id: str) -> bool:
         with self._write_guard():
             # DATA-01: capture node data for audit log before deletion
@@ -1078,6 +1361,7 @@ class BrainDB:
             change_type = "rollback",   # OBS-03: distinguish from regular updates
         )
 
+    @_serialize_if_needed
     def deprecate_node(self, node_id: str, replaced_by: str = "",
                        reason: str = "") -> bool:
         """FEAT-13: Mark a node as deprecated.
@@ -1447,6 +1731,7 @@ class BrainDB:
 
     # ── L2: temporal memory ───────────────────────────────────────────
 
+    @_serialize_if_needed
     def add_episode(self, content: str, source: str = "", ref_time=None, confidence: float = 0.5) -> str:
         # BUG-01 fix: use source alone as hash seed when available so that the
         # same git commit always produces the same episode ID regardless of how
@@ -1476,6 +1761,7 @@ class BrainDB:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @_serialize_if_needed
     def add_temporal_edge(self, source_id: str, relation: str, target_id: str,
                           content: str = "", valid_from=None) -> int:
         ts = valid_from or datetime.now(timezone.utc).isoformat()
@@ -2001,6 +2287,102 @@ class BrainDB:
 
         conflicts.sort(key=lambda x: (x["type"] != "contradiction", -x["similarity"]))
         return conflicts[:50]
+
+    def find_conflicts_for_node(
+        self,
+        node_id: str,
+        similarity_threshold: float = 0.6,
+        candidates_per_anchor: int = 10,
+    ) -> list:
+        """Detect conflicts for a single node against the rest of the knowledge base.
+
+        Unlike ``find_conflicts()`` which scans *all* pairwise combinations,
+        this method only checks the given *node_id* against its FTS5 candidates.
+        Designed for post-write background conflict detection (e.g. after
+        ``add_knowledge``).
+
+        Returns a list of conflict dicts (same schema as ``find_conflicts``):
+          type, node_a, node_b, title_a, title_b, similarity, reason.
+
+        Args:
+            node_id: The node to check.
+            similarity_threshold: Jaccard overlap threshold (default 0.6).
+            candidates_per_anchor: How many FTS5 candidates to compare (default 10).
+        """
+        row = self.conn.execute(
+            "SELECT id, type, title, content FROM nodes WHERE id = ?",
+            (node_id,),
+        ).fetchone()
+        if not row:
+            return []
+
+        anchor = dict(row)
+        a_title = anchor.get("title") or ""
+        if not a_title:
+            return []
+
+        a_words = set(a_title.lower().split())
+        if not a_words:
+            a_words = {a_title.lower()}
+
+        candidate_ids = self._find_conflict_candidates(
+            a_title, limit=candidates_per_anchor,
+        )
+
+        _contra = [
+            ("must", "must not"), ("should", "should not"),
+            ("use", "do not use"), ("enable", "disable"),
+            ("allow", "deny"), ("required", "forbidden"),
+            ("需要", "不需要"), ("必須", "禁止"),
+        ]
+
+        conflicts: list[dict] = []
+        for cand_id in candidate_ids:
+            if cand_id == node_id:
+                continue
+            cand_row = self.conn.execute(
+                "SELECT id, type, title, content FROM nodes WHERE id = ?",
+                (cand_id,),
+            ).fetchone()
+            if not cand_row:
+                continue
+            cand = dict(cand_row)
+            b_title = cand.get("title") or ""
+            b_words = set(b_title.lower().split())
+            if not b_words:
+                b_words = {b_title.lower()} if b_title else set()
+            if not b_words:
+                continue
+
+            union = a_words | b_words
+            if not union:
+                continue
+            overlap = len(a_words & b_words) / len(union)
+            if overlap < similarity_threshold:
+                continue
+
+            a_text = (a_title + " " + (anchor.get("content") or "")).lower()
+            b_text = (b_title + " " + (cand.get("content") or "")).lower()
+            is_contra = any(
+                (ka in a_text and kb in b_text) or (kb in a_text and ka in b_text)
+                for ka, kb in _contra
+            )
+            ctype = "contradiction" if is_contra else "duplicate"
+            conflicts.append({
+                "type":       ctype,
+                "node_a":     node_id,
+                "node_b":     cand_id,
+                "title_a":    a_title,
+                "title_b":    b_title,
+                "similarity": round(overlap, 3),
+                "reason":     (
+                    f"相似標題（{overlap:.0%} 重疊）且內容矛盾" if is_contra
+                    else f"相似標題（{overlap:.0%} 重疊），可能重複"
+                ),
+            })
+
+        conflicts.sort(key=lambda x: (x["type"] != "contradiction", -x["similarity"]))
+        return conflicts
 
     # ── FEAT-03: usage analytics ────────────────────────────────
 

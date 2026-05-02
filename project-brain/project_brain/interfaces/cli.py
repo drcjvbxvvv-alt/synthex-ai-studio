@@ -43,10 +43,15 @@ from project_brain.cli_admin import (
     cmd_optimize, cmd_clear, cmd_scan, cmd_health_report, cmd_report,
     cmd_analytics, cmd_export, cmd_import, cmd_index,
     cmd_health, cmd_pipeline_stats, cmd_validate,
+    cmd_eval,
     _cmd_backfill_git,
 )
 
 from project_brain.cli_serve import cmd_serve, cmd_webui
+from project_brain.interfaces.cli_connect import cmd_connect
+from project_brain.interfaces.cli_ingest import cmd_ingest
+from project_brain.interfaces.cli_push import cmd_push
+from project_brain.interfaces.cli_admin_keys import cmd_admin_keys
 from project_brain.cli_fed import cmd_fed, cmd_migrate, cmd_session
 
 
@@ -212,6 +217,10 @@ def main():
         'clear':         cmd_clear,
         'review':        cmd_review,
         'scan':          cmd_scan,
+        'connect':       cmd_connect,
+        'ingest':        cmd_ingest,
+        'push':          cmd_push,
+        'admin':         cmd_admin_keys,
         'serve':         cmd_serve,
         'session':       cmd_session,
         'index':         cmd_index,
@@ -231,6 +240,7 @@ def main():
         'migrate':       cmd_migrate,
         'fed':            cmd_fed,
         # counterfactual: REFACTOR-01 已移除，由 _apply_aliases 攔截並 exit
+        'eval':          cmd_eval,
         'backfill-git':  _cmd_backfill_git,
         'deprecate':     cmd_deprecate,
         'lifecycle':     cmd_lifecycle,
