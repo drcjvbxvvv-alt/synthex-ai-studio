@@ -1365,46 +1365,136 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 /* ── E-06: Admin Views ── */
 .admin-view{{display:none;flex:1;flex-direction:column;overflow:hidden}}
 .admin-view.active{{display:flex}}
-.av-header{{padding:14px 20px;font-size:15px;font-weight:600;
-  background:var(--bg2);border-bottom:1px solid var(--border)}}
-.av-body{{padding:20px;overflow-y:auto;flex:1}}
-.av-toolbar{{padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--border);
-  display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
-.dash-cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:20px}}
+.av-header{{padding:16px 28px;font-size:16px;font-weight:700;letter-spacing:-.01em;
+  background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px}}
+.av-header .av-sub{{font-size:11px;font-weight:400;color:var(--text3);margin-left:4px}}
+.av-body{{padding:28px;overflow-y:auto;flex:1;max-width:1100px}}
+.av-toolbar{{padding:12px 20px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap}}
+
+/* Dashboard cards */
+.dash-cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:28px}}
 .dash-card{{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
-  padding:14px 16px}}
-.dash-card .dc-val{{font-size:28px;font-weight:700;color:var(--accent);line-height:1.1}}
-.dash-card .dc-label{{font-size:11px;color:var(--text2);margin-top:4px}}
+  padding:18px 20px;position:relative;overflow:hidden;transition:border-color var(--trans),box-shadow var(--trans)}}
+.dash-card:hover{{border-color:var(--border2);box-shadow:0 2px 12px rgba(0,0,0,0.12)}}
+.dash-card .dc-icon{{font-size:24px;margin-bottom:8px;display:block;opacity:0.8}}
+.dash-card .dc-val{{font-size:32px;font-weight:800;color:var(--accent);line-height:1;
+  letter-spacing:-.02em}}
+.dash-card .dc-label{{font-size:11px;color:var(--text3);margin-top:6px;letter-spacing:.02em}}
 .dash-card.warn .dc-val{{color:var(--red)}}
+.dash-card.warn{{border-color:rgba(248,81,73,0.25)}}
 .dash-card.ok .dc-val{{color:var(--green)}}
-.dash-section{{margin-bottom:20px}}
-.dash-title{{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;
+.dash-card.ok{{border-color:rgba(63,185,80,0.2)}}
+.dash-card .dc-bar{{position:absolute;bottom:0;left:0;right:0;height:3px;
+  background:var(--accent);opacity:0.4;border-radius:0 0 var(--radius) var(--radius)}}
+
+/* Dashboard sections */
+.dash-section{{margin-bottom:24px}}
+.dash-section-card{{background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--radius);padding:18px 20px}}
+.dash-title{{font-size:11px;font-weight:700;color:var(--text3);margin-bottom:12px;
+  text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;gap:6px}}
+.dash-title::before{{content:'';width:3px;height:12px;border-radius:2px;
+  background:var(--accent);flex-shrink:0}}
+
+/* Kind distribution - bar chart style */
+.dash-kinds{{display:flex;flex-direction:column;gap:8px}}
+.dash-kind-row{{display:flex;align-items:center;gap:10px}}
+.dash-kind-row .dkr-dot{{width:10px;height:10px;border-radius:3px;flex-shrink:0}}
+.dash-kind-row .dkr-name{{font-size:12px;color:var(--text2);width:80px;flex-shrink:0}}
+.dash-kind-row .dkr-bar-wrap{{flex:1;height:22px;background:var(--bg3);border-radius:4px;
+  overflow:hidden;position:relative}}
+.dash-kind-row .dkr-bar{{height:100%;border-radius:4px;transition:width .5s ease;min-width:2px}}
+.dash-kind-row .dkr-cnt{{font-size:12px;font-weight:700;color:var(--text);width:50px;
+  text-align:right;flex-shrink:0}}
+
+/* Activity timeline cards */
+.activity-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}
+.activity-card{{background:var(--bg3);border-radius:var(--radius-sm);padding:14px 16px;
+  text-align:center;transition:transform var(--trans)}}
+.activity-card:hover{{transform:translateY(-2px)}}
+.activity-card .ac-val{{font-size:24px;font-weight:800;color:var(--accent);line-height:1}}
+.activity-card .ac-label{{font-size:10px;color:var(--text3);margin-top:4px;
   text-transform:uppercase;letter-spacing:.06em}}
-.dash-kinds{{display:flex;flex-wrap:wrap;gap:8px}}
-.dash-kind-tag{{font-size:12px;padding:4px 10px;border-radius:var(--radius-sm);
-  border:1px solid var(--border);background:var(--bg3)}}
-.dash-kind-tag .dk-name{{color:var(--text2)}}
-.dash-kind-tag .dk-cnt{{color:var(--accent);font-weight:600;margin-left:4px}}
-.add-form{{max-width:600px}}
-.add-label{{display:block;font-size:11px;font-weight:600;color:var(--text2);
-  margin-bottom:4px;margin-top:10px;text-transform:uppercase;letter-spacing:.04em}}
+
+/* Health status */
+.health-items{{display:flex;flex-direction:column;gap:8px}}
+.health-item{{display:flex;align-items:center;gap:10px;padding:10px 14px;
+  background:var(--bg3);border-radius:var(--radius-sm);font-size:12px;
+  border-left:3px solid transparent}}
+.health-item.ok{{border-left-color:var(--green)}}
+.health-item.warn{{border-left-color:var(--yellow)}}
+.health-item.err{{border-left-color:var(--red)}}
+.health-item .hi-icon{{font-size:16px;flex-shrink:0}}
+.health-item .hi-text{{color:var(--text2);flex:1}}
+
+/* Add Knowledge form */
+.add-form{{max-width:640px}}
+.add-form-card{{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:24px 28px}}
+.add-label{{display:block;font-size:11px;font-weight:700;color:var(--text3);
+  margin-bottom:6px;margin-top:16px;text-transform:uppercase;letter-spacing:.06em}}
 .add-label:first-child{{margin-top:0}}
-.add-conf-wrap{{display:flex;align-items:center;gap:4px}}
+.add-conf-wrap{{display:flex;align-items:center;gap:6px;padding:4px 0}}
+.add-form .ef-input,.add-form .ef-textarea,.add-form .ef-select{{
+  background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);
+  color:var(--text);padding:10px 12px;font-size:13px;outline:none;width:100%;
+  transition:border-color var(--trans),box-shadow var(--trans)}}
+.add-form .ef-input:focus,.add-form .ef-textarea:focus,.add-form .ef-select:focus{{
+  border-color:var(--accent2);box-shadow:0 0 0 3px rgba(31,111,235,0.12)}}
+.add-form .ef-textarea{{min-height:160px;resize:vertical;font-family:inherit;line-height:1.6}}
+.add-form .ef-select{{cursor:pointer;padding:10px 12px}}
+.add-submit-row{{display:flex;gap:8px;margin-top:20px}}
+.add-submit-row .ef-btn{{padding:10px 24px;font-size:13px;font-weight:600;
+  border-radius:var(--radius-sm);cursor:pointer;border:1px solid var(--border);
+  transition:all var(--trans)}}
+.add-submit-row .ef-btn.save{{background:var(--accent2);border-color:var(--accent2);
+  color:#fff;flex:none;min-width:120px}}
+.add-submit-row .ef-btn.save:hover{{background:var(--accent);box-shadow:0 2px 8px rgba(31,111,235,0.3)}}
+.add-submit-row .ef-btn.cancel{{background:var(--bg3);color:var(--text2);flex:none}}
+.add-submit-row .ef-btn.cancel:hover{{border-color:var(--accent);color:var(--accent)}}
+.add-msg{{margin-top:12px;padding:10px 14px;border-radius:var(--radius-sm);font-size:12px;
+  display:none;font-weight:500}}
+.add-msg.success{{display:block;background:rgba(63,185,80,0.1);border:1px solid rgba(63,185,80,0.25);color:var(--green)}}
+.add-msg.error{{display:block;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.25);color:var(--red)}}
+
+/* Settings */
+.settings-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}}
+.settings-card{{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:18px 20px}}
+.settings-card .sc-title{{font-size:11px;font-weight:700;color:var(--text3);
+  text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;
+  display:flex;align-items:center;gap:6px}}
+.settings-card .sc-title::before{{content:'';width:3px;height:12px;border-radius:2px;
+  background:var(--accent);flex-shrink:0}}
 .settings-row{{display:flex;align-items:center;gap:10px;padding:8px 0;
   border-bottom:1px solid var(--border);font-size:12px}}
-.settings-row .sr-label{{color:var(--text2);width:120px;flex-shrink:0}}
-.settings-row .sr-value{{color:var(--text);font-weight:500}}
-.svc-item{{display:flex;align-items:center;gap:8px;padding:6px 0;
+.settings-row:last-child{{border-bottom:none}}
+.settings-row .sr-label{{color:var(--text3);width:100px;flex-shrink:0;font-size:11px}}
+.settings-row .sr-value{{color:var(--text);font-weight:600}}
+.svc-item{{display:flex;align-items:center;gap:10px;padding:10px 0;
   border-bottom:1px solid var(--border);font-size:12px}}
-.svc-dot{{width:8px;height:8px;border-radius:50%;flex-shrink:0}}
-.svc-name{{color:var(--text2);width:120px}}
-.svc-detail{{color:var(--text)}}
-.audit-action{{display:inline-block;font-size:10px;padding:2px 7px;border-radius:10px;
-  font-weight:600;text-transform:uppercase}}
-.audit-action.update{{background:rgba(88,166,255,0.15);color:var(--accent)}}
-.audit-action.submit{{background:rgba(251,191,36,0.15);color:var(--yellow)}}
-.audit-action.approve{{background:rgba(34,197,94,0.15);color:var(--green)}}
-.audit-action.reject,.audit-action.delete{{background:rgba(248,113,113,0.15);color:var(--red)}}
+.svc-item:last-child{{border-bottom:none}}
+.svc-dot{{width:10px;height:10px;border-radius:50%;flex-shrink:0;
+  box-shadow:0 0 6px currentColor}}
+.svc-dot.ok{{background:var(--green);color:var(--green)}}
+.svc-dot.warn{{background:var(--yellow);color:var(--yellow)}}
+.svc-dot.err{{background:var(--red);color:var(--red)}}
+.svc-name{{color:var(--text);font-weight:600;width:120px;flex-shrink:0}}
+.svc-detail{{color:var(--text2)}}
+
+/* Audit log */
+.audit-action{{display:inline-block;font-size:10px;padding:3px 8px;border-radius:10px;
+  font-weight:700;text-transform:uppercase;letter-spacing:.03em}}
+.audit-action.update{{background:rgba(88,166,255,0.12);color:var(--accent)}}
+.audit-action.submit{{background:rgba(210,153,34,0.12);color:var(--yellow)}}
+.audit-action.approve{{background:rgba(63,185,80,0.12);color:var(--green)}}
+.audit-action.reject,.audit-action.delete{{background:rgba(248,81,73,0.12);color:var(--red)}}
+.audit-empty{{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:60px 20px;color:var(--text3);gap:10px}}
+.audit-empty .ae-icon{{font-size:36px;opacity:.4}}
+.audit-empty .ae-text{{font-size:13px}}
 </style>
 </head>
 <body>
@@ -1592,12 +1682,14 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 
   <!-- E-06: Dashboard View -->
   <div id="dashboard-view" class="admin-view">
-    <div class="av-header">📈 知識庫儀表板</div>
+    <div class="av-header">📈 知識庫儀表板 <span class="av-sub">系統總覽與健康狀態</span></div>
     <div class="av-body" id="dash-body">
       <div class="dash-cards" id="dash-cards"></div>
       <div class="dash-section">
         <div class="dash-title">類型分佈</div>
-        <div id="dash-kinds" class="dash-kinds"></div>
+        <div class="dash-section-card">
+          <div id="dash-kinds" class="dash-kinds"></div>
+        </div>
       </div>
       <div class="dash-section">
         <div class="dash-title">近期活動</div>
@@ -1612,7 +1704,7 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 
   <!-- E-06: Audit Log View -->
   <div id="audit-view" class="admin-view">
-    <div class="av-header">📝 審計日誌</div>
+    <div class="av-header">📝 審計日誌 <span class="av-sub">知識變更追蹤</span></div>
     <div class="av-toolbar">
       <select class="tv-select" id="audit-days" onchange="loadAudit()">
         <option value="7">近 7 天</option>
@@ -1652,56 +1744,48 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 
   <!-- E-06: Settings View -->
   <div id="settings-view" class="admin-view">
-    <div class="av-header">⚙ 系統設定</div>
+    <div class="av-header">⚙ 系統設定 <span class="av-sub">設定、服務狀態與儲存</span></div>
     <div class="av-body" id="settings-body">
-      <div class="dash-section">
-        <div class="dash-title">系統資訊</div>
-        <div id="settings-info"></div>
-      </div>
-      <div class="dash-section">
-        <div class="dash-title">服務狀態</div>
-        <div id="settings-services"></div>
-      </div>
-      <div class="dash-section">
-        <div class="dash-title">儲存空間</div>
-        <div id="settings-storage"></div>
-      </div>
+      <div class="settings-grid" id="settings-grid"></div>
     </div>
   </div>
 
   <!-- E-06: Add Knowledge View -->
   <div id="add-view" class="admin-view">
-    <div class="av-header">+ 新增知識</div>
+    <div class="av-header">+ 新增知識 <span class="av-sub">將知識加入團隊知識庫</span></div>
     <div class="av-body">
       <div class="add-form">
-        <label class="add-label">標題 <span style="color:var(--red)">*</span></label>
-        <input id="add-title" class="ef-input" type="text" maxlength="500" placeholder="輸入知識標題…">
-        <label class="add-label">類型</label>
-        <select id="add-kind" class="ef-select">
-          <option value="Note">📝 筆記</option>
-          <option value="Pitfall">⚠ 踩坑紀錄</option>
-          <option value="Rule">📋 規則</option>
-          <option value="Decision">🎯 決策</option>
-          <option value="ADR">📄 架構決策紀錄（ADR）</option>
-          <option value="Component">🔧 組件</option>
-          <option value="Architecture">🏗 架構</option>
-        </select>
-        <label class="add-label">信心度（<span id="add-conf-val">0.70</span>）</label>
-        <div class="add-conf-wrap">
-          <span style="font-size:10px;color:var(--text3)">低</span>
-          <input id="add-confidence" class="ef-input" type="range" min="0" max="1" step="0.01" value="0.7"
-            style="flex:1;margin:0 6px"
-            oninput="document.getElementById('add-conf-val').textContent=parseFloat(this.value).toFixed(2)">
-          <span style="font-size:10px;color:var(--text3)">高</span>
+        <div class="add-form-card">
+          <label class="add-label" style="margin-top:0">標題 <span style="color:var(--red)">*</span></label>
+          <input id="add-title" class="ef-input" type="text" maxlength="500" placeholder="例：API 必須驗證 JWT 過期時間">
+          <label class="add-label">類型</label>
+          <select id="add-kind" class="ef-select">
+            <option value="Note">📝 筆記 — 一般知識記錄</option>
+            <option value="Pitfall">⚠ 踩坑紀錄 — 遇到的問題和解法</option>
+            <option value="Rule">📋 規則 — 必須遵守的規範</option>
+            <option value="Decision">🎯 決策 — 為什麼這樣做的理由</option>
+            <option value="ADR">📄 ADR — 架構決策紀錄</option>
+            <option value="Component">🔧 組件 — 系統組件說明</option>
+            <option value="Architecture">🏗 架構 — 系統架構描述</option>
+          </select>
+          <label class="add-label">信心度（系統對這筆知識的確信程度）</label>
+          <div class="add-conf-wrap">
+            <span style="font-size:11px;color:var(--text3)">低</span>
+            <input id="add-confidence" class="ef-input" type="range" min="0" max="1" step="0.01" value="0.7"
+              style="flex:1;margin:0 8px;padding:6px 0"
+              oninput="document.getElementById('add-conf-val').textContent=parseFloat(this.value).toFixed(2)">
+            <span style="font-size:11px;color:var(--text3)">高</span>
+            <span id="add-conf-val" style="font-size:13px;font-weight:700;color:var(--accent);min-width:36px;text-align:center">0.70</span>
+          </div>
+          <label class="add-label">內容 <span style="color:var(--red)">*</span></label>
+          <textarea id="add-content" class="ef-textarea" maxlength="10000" rows="8"
+            placeholder="詳細描述這筆知識，包含背景、原因、解決方式…"></textarea>
+          <div class="add-submit-row">
+            <button class="ef-btn save" onclick="submitAddNode()" id="add-submit-btn">新增知識</button>
+            <button class="ef-btn cancel" onclick="switchView('table')">取消</button>
+          </div>
+          <div id="add-msg" class="add-msg"></div>
         </div>
-        <label class="add-label">內容 <span style="color:var(--red)">*</span></label>
-        <textarea id="add-content" class="ef-textarea" maxlength="10000" rows="8"
-          placeholder="詳細描述這筆知識…"></textarea>
-        <div class="ef-row" style="margin-top:10px">
-          <button class="ef-btn save" onclick="submitAddNode()" id="add-submit-btn">新增</button>
-          <button class="ef-btn cancel" onclick="switchView('table')">取消</button>
-        </div>
-        <div id="add-msg" style="margin-top:8px;font-size:12px;display:none"></div>
       </div>
     </div>
   </div>
@@ -2589,35 +2673,56 @@ async function loadDashboard() {{
     const d = await fetch('/api/admin/dashboard').then(r => r.json());
     const cards = document.getElementById('dash-cards');
     const hs = d.health || {{}};
-    const hIcon = hs.status === 'ok' ? '✅' : (hs.status === 'warn' ? '⚠' : '❌');
-    cards.innerHTML = `
-      <div class="dash-card"><div class="dc-val">${{d.total_nodes}}</div><div class="dc-label">知識總量</div></div>
-      <div class="dash-card"><div class="dc-val">${{d.total_edges}}</div><div class="dc-label">關係數</div></div>
-      <div class="dash-card ${{d.low_confidence_count > 0 ? 'warn' : ''}}"><div class="dc-val">${{d.low_confidence_count}}</div><div class="dc-label">低信心（&lt;0.3）</div></div>
-      <div class="dash-card"><div class="dc-val">${{d.conflicts}}</div><div class="dc-label">衝突</div></div>
-      <div class="dash-card"><div class="dc-val">${{d.krb_pending}}</div><div class="dc-label">KRB 待審</div></div>
-      <div class="dash-card"><div class="dc-val">${{d.signal_pending}}</div><div class="dc-label">Signal 佇列</div></div>
-      <div class="dash-card"><div class="dc-val">${{hIcon}}</div><div class="dc-label">系統健康（${{hs.errors||0}} err, ${{hs.warnings||0}} warn）</div></div>
-    `;
+    cards.innerHTML = [
+      {{icon:'📚',val:d.total_nodes,  label:'知識總量',cls:''}},
+      {{icon:'🔗',val:d.total_edges,  label:'關係數',cls:''}},
+      {{icon:'⚠' ,val:d.low_confidence_count, label:'低信心（< 0.3）', cls:d.low_confidence_count>0?'warn':''}},
+      {{icon:'⚡',val:d.conflicts,    label:'衝突',cls:d.conflicts>0?'warn':''}},
+      {{icon:'📋',val:d.krb_pending,  label:'KRB 待審',cls:''}},
+      {{icon:'📡',val:d.signal_pending,label:'Signal 佇列',cls:''}},
+    ].map(c => `<div class="dash-card ${{c.cls}}">
+      <span class="dc-icon">${{c.icon}}</span>
+      <div class="dc-val">${{c.val}}</div>
+      <div class="dc-label">${{c.label}}</div>
+      <div class="dc-bar" style="${{c.cls==='warn'?'background:var(--red)':''}}""></div>
+    </div>`).join('');
+
+    // Kind distribution — horizontal bar chart
     const kinds = d.kind_distribution || {{}};
     const kindColors = {{{','.join(f"'{k}':'{v}'" for k,v in KIND_COLOR.items())}}};
-    document.getElementById('dash-kinds').innerHTML = Object.entries(kinds).map(([k,v]) =>
-      `<div class="dash-kind-tag"><span class="dk-name" style="color:${{kindColors[k]||'var(--text2)'}}">${{k}}</span><span class="dk-cnt">${{v}}</span></div>`
-    ).join('');
+    const maxCnt = Math.max(...Object.values(kinds), 1);
+    document.getElementById('dash-kinds').innerHTML = Object.entries(kinds)
+      .sort((a,b) => b[1]-a[1])
+      .map(([k,v]) => {{
+        const pct = (v / maxCnt * 100).toFixed(1);
+        const c = kindColors[k] || 'var(--accent)';
+        return `<div class="dash-kind-row">
+          <div class="dkr-dot" style="background:${{c}}"></div>
+          <span class="dkr-name">${{k}}</span>
+          <div class="dkr-bar-wrap"><div class="dkr-bar" style="width:${{pct}}%;background:${{c}};opacity:0.7"></div></div>
+          <span class="dkr-cnt">${{v}}</span>
+        </div>`;
+      }}).join('');
+
+    // Activity — three cards
     const a = d.activity || {{}};
-    document.getElementById('dash-activity').innerHTML = `
-      <div style="font-size:12px;color:var(--text2);line-height:2">
-        今天 <strong style="color:var(--accent)">+${{a.today||0}}</strong> 筆 ·
-        本週 <strong style="color:var(--accent)">+${{a.week||0}}</strong> 筆 ·
-        本月 <strong style="color:var(--accent)">+${{a.month||0}}</strong> 筆
-      </div>`;
-    document.getElementById('dash-health').innerHTML = `
-      <div style="font-size:12px;color:var(--text2)">
-        ${{hIcon}} ${{hs.status === 'ok' ? '系統正常' : '有 ' + (hs.warnings||0) + ' 個警告'}}
-        ${{d.low_confidence_count > 0 ? '<br>⚠ ' + d.low_confidence_count + ' 筆知識信心度 &lt; 0.3（建議複查）' : ''}}
-        ${{d.conflicts > 0 ? '<br>⚠ ' + d.conflicts + ' 個知識衝突' : ''}}
-      </div>`;
-  }} catch(e) {{ document.getElementById('dash-cards').innerHTML = '<div style="color:var(--red)">載入失敗</div>'; }}
+    document.getElementById('dash-activity').innerHTML = `<div class="activity-grid">
+      <div class="activity-card"><div class="ac-val">+${{a.today||0}}</div><div class="ac-label">今天</div></div>
+      <div class="activity-card"><div class="ac-val">+${{a.week||0}}</div><div class="ac-label">本週</div></div>
+      <div class="activity-card"><div class="ac-val">+${{a.month||0}}</div><div class="ac-label">本月</div></div>
+    </div>`;
+
+    // Health — status items
+    const items = [];
+    if (hs.status === 'ok') items.push({{cls:'ok',icon:'✅',text:'系統正常，所有檢查通過'}});
+    else items.push({{cls:'warn',icon:'⚠',text:'系統有 '+(hs.warnings||0)+' 個警告'}});
+    if (d.low_confidence_count > 0) items.push({{cls:'warn',icon:'📉',text:d.low_confidence_count+' 筆知識信心度 < 0.3（建議複查或更新）'}});
+    if (d.conflicts > 0) items.push({{cls:'warn',icon:'⚡',text:d.conflicts+' 個知識衝突待解決'}});
+    if (d.low_confidence_count === 0 && d.conflicts === 0 && hs.status === 'ok')
+      items.push({{cls:'ok',icon:'🎯',text:'無低信心知識、無衝突'}});
+    document.getElementById('dash-health').innerHTML = '<div class="health-items">' +
+      items.map(i => `<div class="health-item ${{i.cls}}"><span class="hi-icon">${{i.icon}}</span><span class="hi-text">${{i.text}}</span></div>`).join('') + '</div>';
+  }} catch(e) {{ document.getElementById('dash-cards').innerHTML = '<div style="color:var(--red);padding:20px">載入失敗，請檢查伺服器連線</div>'; }}
 }}
 
 // ── Audit Log ──
@@ -2637,14 +2742,18 @@ async function loadAudit(page) {{
     document.getElementById('audit-info').textContent = d.total + ' 筆紀錄';
     const tbody = document.getElementById('audit-body');
     if (!d.entries || !d.entries.length) {{
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text3)">無紀錄</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="5"><div class="audit-empty">
+        <div class="ae-icon">📋</div>
+        <div class="ae-text">此時間範圍內無變更紀錄</div>
+      </div></td></tr>`;
     }} else {{
+      const actionLabels = {{update:'修改',submit:'提交',approve:'核准',reject:'拒絕',delete:'刪除'}};
       tbody.innerHTML = d.entries.map(e => `<tr>
-        <td style="font-size:11px;color:var(--text2)">${{(e.time||'').replace('T',' ').slice(0,19)}}</td>
-        <td style="font-size:11px;color:var(--text)">${{_esc(e.actor||'—')}}</td>
-        <td><span class="audit-action ${{e.action}}">${{e.action}}</span></td>
-        <td style="font-size:11px" title="${{_esc(e.title)}}">${{_esc(e.title)}}</td>
-        <td style="font-size:11px;color:var(--text3)" title="${{_esc(e.detail)}}">${{_esc((e.detail||'').slice(0,80))}}</td>
+        <td style="font-size:11px;color:var(--text2);white-space:nowrap">${{(e.time||'').replace('T',' ').slice(0,16)}}</td>
+        <td style="font-size:11px;color:var(--text);font-weight:500">${{_esc(e.actor||'—')}}</td>
+        <td><span class="audit-action ${{e.action}}">${{actionLabels[e.action]||e.action}}</span></td>
+        <td style="font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{_esc(e.title)}}">${{_esc(e.title)}}</td>
+        <td style="font-size:11px;color:var(--text3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{_esc(e.detail)}}">${{_esc((e.detail||'').slice(0,80))}}</td>
       </tr>`).join('');
     }}
     document.getElementById('audit-prev').disabled = auditPage <= 1;
@@ -2659,33 +2768,49 @@ function auditNext() {{ if (auditPage < auditTotalPages) loadAudit(auditPage + 1
 async function loadSettings() {{
   try {{
     const d = await fetch('/api/admin/settings').then(r => r.json());
-    document.getElementById('settings-info').innerHTML = `
-      <div class="settings-row"><span class="sr-label">運行模式</span><span class="sr-value">${{d.mode || 'standalone'}}</span></div>
-      <div class="settings-row"><span class="sr-label">Embedding</span><span class="sr-value">${{d.embedding || 'LocalTFIDF'}}</span></div>
-      <div class="settings-row"><span class="sr-label">LLM</span><span class="sr-value">${{d.llm || '未設定'}}</span></div>
-      <div class="settings-row"><span class="sr-label">Schema</span><span class="sr-value">v${{d.schema_version || 0}}</span></div>
-    `;
+    const grid = document.getElementById('settings-grid');
     const svcs = d.services || [];
-    document.getElementById('settings-services').innerHTML = svcs.map(s => {{
-      const dotColor = s.status === 'ok' ? 'var(--green)' : (s.status === 'warn' ? 'var(--yellow)' : 'var(--red)');
-      return `<div class="svc-item"><div class="svc-dot" style="background:${{dotColor}}"></div><span class="svc-name">${{s.name}}</span><span class="svc-detail">${{s.detail}}</span></div>`;
-    }}).join('') || '<div style="color:var(--text3);font-size:12px">無服務資訊</div>';
     const st = d.storage || {{}};
-    document.getElementById('settings-storage').innerHTML = Object.entries(st).map(([k,v]) =>
-      `<div class="settings-row"><span class="sr-label">${{k}}</span><span class="sr-value">${{v}}</span></div>`
-    ).join('') || '<div style="color:var(--text3);font-size:12px">無儲存資訊</div>';
-  }} catch(e) {{ document.getElementById('settings-info').innerHTML = '<div style="color:var(--red)">載入失敗</div>'; }}
+    const storageLabels = {{brain_db:'資料庫大小',backups:'備份'}};
+    grid.innerHTML = `
+      <div class="settings-card">
+        <div class="sc-title">系統資��</div>
+        <div class="settings-row"><span class="sr-label">運行模式</span><span class="sr-value">${{d.mode || 'standalone'}}</span></div>
+        <div class="settings-row"><span class="sr-label">Embedding</span><span class="sr-value">${{d.embedding || 'LocalTFIDF'}}</span></div>
+        <div class="settings-row"><span class="sr-label">LLM</span><span class="sr-value">${{d.llm || '未設定'}}</span></div>
+        <div class="settings-row"><span class="sr-label">Schema</span><span class="sr-value">v${{d.schema_version || 0}}</span></div>
+      </div>
+      <div class="settings-card">
+        <div class="sc-title">服務狀態</div>
+        ${{svcs.map(s => {{
+          const cls = s.status === 'ok' ? 'ok' : (s.status === 'warn' ? 'warn' : 'err');
+          return `<div class="svc-item"><div class="svc-dot ${{cls}}"></div><span class="svc-name">${{s.name}}</span><span class="svc-detail">${{s.detail}}</span></div>`;
+        }}).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">無服務資訊</div>'}}
+      </div>
+      <div class="settings-card">
+        <div class="sc-title">儲存空間</div>
+        ${{Object.entries(st).map(([k,v]) =>
+          `<div class="settings-row"><span class="sr-label">${{storageLabels[k]||k}}</span><span class="sr-value">${{v}}</span></div>`
+        ).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">無儲存資訊</div>'}}
+      </div>
+    `;
+  }} catch(e) {{ document.getElementById('settings-grid').innerHTML = '<div class="settings-card"><div style="color:var(--red);padding:12px">載入失敗，請檢查伺服器連線</div></div>'; }}
 }}
 
 // ── Add Knowledge ──
+function _addMsg(text, type) {{
+  const msg = document.getElementById('add-msg');
+  msg.className = 'add-msg ' + type;
+  msg.textContent = text;
+  if (type === 'success') setTimeout(() => {{ msg.className = 'add-msg'; }}, 5000);
+}}
 async function submitAddNode() {{
   const title = document.getElementById('add-title').value.trim();
   const content = document.getElementById('add-content').value.trim();
   const kind = document.getElementById('add-kind').value;
   const confidence = parseFloat(document.getElementById('add-confidence').value);
-  const msg = document.getElementById('add-msg');
-  if (!title) {{ msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='請輸入標題'; return; }}
-  if (!content) {{ msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='請輸入內容'; return; }}
+  if (!title) {{ _addMsg('請輸入知識標題','error'); return; }}
+  if (!content) {{ _addMsg('請輸入知識內容','error'); return; }}
   const btn = document.getElementById('add-submit-btn');
   btn.disabled = true; btn.textContent = '新增中…';
   try {{
@@ -2696,21 +2821,18 @@ async function submitAddNode() {{
     }});
     const data = await res.json();
     if (res.ok && data.ok) {{
-      msg.style.display='block'; msg.style.color='var(--green)';
-      msg.textContent='新增成功！節點 ID: ' + data.id;
+      _addMsg('新增成功！知識已加入知識庫。','success');
       document.getElementById('add-title').value = '';
       document.getElementById('add-content').value = '';
       document.getElementById('add-confidence').value = '0.7';
       document.getElementById('add-conf-val').textContent = '0.70';
-      setTimeout(() => {{ msg.style.display='none'; }}, 4000);
     }} else {{
-      msg.style.display='block'; msg.style.color='var(--red)';
-      msg.textContent = data.error || '新增失敗';
+      _addMsg(data.error || '新增失敗，請稍後再試','error');
     }}
   }} catch(e) {{
-    msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='網路錯誤';
+    _addMsg('網路錯誤，無法連線至伺服器','error');
   }} finally {{
-    btn.disabled = false; btn.textContent = '新增';
+    btn.disabled = false; btn.textContent = '新增知識';
   }}
 }}
 
