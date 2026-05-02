@@ -976,63 +976,76 @@ function auditNext() { if (auditPage < auditTotalPages) loadAudit(auditPage + 1)
 // ── Settings ──
 let _settingsData = null;
 async function loadSettings() {
+  const grid = document.getElementById('settings-grid');
+  let d;
   try {
-    const d = await fetch('/api/admin/settings').then(r => r.json());
-    _settingsData = d;
-    const grid = document.getElementById('settings-grid');
-    const svcs = d.services || [];
-    const st = d.storage || {};
-    const c = d.config || {};
-    const storageLabels = {brain_db:'\u8cc7\u6599\u5eab\u5927\u5c0f',backups:'\u5099\u4efd'};
-    grid.innerHTML = `
-      <div class="settings-card">
-        <div class="sc-title">\u7cfb\u7d71\u8cc7\u8a0a</div>
-        <div class="settings-row"><span class="sr-label">\u904b\u884c\u6a21\u5f0f</span><span class="sr-value">${d.mode || 'standalone'}</span></div>
-        <div class="settings-row"><span class="sr-label">Embedding</span><span class="sr-value">${d.embedding || 'LocalTFIDF'}</span></div>
-        <div class="settings-row"><span class="sr-label">LLM</span><span class="sr-value">${d.llm || '\u672a\u8a2d\u5b9a'}</span></div>
-        <div class="settings-row"><span class="sr-label">Schema</span><span class="sr-value">v${d.schema_version || 0}</span></div>
-      </div>
-      <div class="settings-card">
-        <div class="sc-title">\u670d\u52d9\u72c0\u614b</div>
-        ${svcs.map(s => {
-          const cls = s.status === 'ok' ? 'ok' : (s.status === 'warn' ? 'warn' : 'err');
-          return '<div class="svc-item"><div class="svc-dot '+cls+'"></div><span class="svc-name">'+s.name+'</span><span class="svc-detail">'+s.detail+'</span></div>';
-        }).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">\u7121\u670d\u52d9\u8cc7\u8a0a</div>'}
-      </div>
-      <div class="settings-card">
-        <div class="sc-title">\u5132\u5b58\u7a7a\u9593</div>
-        ${Object.entries(st).map(([k,v]) =>
-          '<div class="settings-row"><span class="sr-label">'+(storageLabels[k]||k)+'</span><span class="sr-value">'+v+'</span></div>'
-        ).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">\u7121\u5132\u5b58\u8cc7\u8a0a</div>'}
-      </div>
-      <div class="settings-card" style="grid-column:1/-1">
-        <div class="sc-title">\u77e5\u8b58\u5f15\u64ce\u8a2d\u5b9a</div>
-        ${_cfgRow('\u6700\u5927\u4e0a\u4e0b\u6587 Token',   'brain_max_context_tokens',  c.brain_max_context_tokens,  'number', '\u63a8\u85a6 4000\u301c8000')}
-        ${_cfgRow('\u904e\u6642\u8b66\u544a\u5929\u6578',     'brain_freshness_warn_days', c.brain_freshness_warn_days, 'number', '\u8d85\u904e\u6b64\u5929\u6578\u7684\u77e5\u8b58\u6a19\u8a18\u70ba\u904e\u6642')}
-        ${_cfgRow('\u53bb\u91cd\u95be\u503c',           'brain_dedup_threshold',     c.brain_dedup_threshold,     'number', '0.0\u301c1.0\uff0c\u8d8a\u9ad8\u8d8a\u56b4\u683c')}
-      </div>
-      <div class="settings-card">
-        <div class="sc-title">\u77e5\u8b58\u8870\u6e1b</div>
-        ${_cfgToggle('\u555f\u7528\u8870\u6e1b', 'decay_enabled', c.decay_enabled)}
-        ${_cfgRow('\u57f7\u884c\u9593\u9694\uff08\u5c0f\u6642\uff09', 'decay_interval_hours', c.decay_interval_hours, 'number', '\u591a\u4e45\u57f7\u884c\u4e00\u6b21\u8870\u6e1b\u8a08\u7b97')}
-      </div>
-      <div class="settings-card">
-        <div class="sc-title">Pipeline \u81ea\u52d5\u5316</div>
-        ${_cfgToggle('\u555f\u7528 Pipeline', 'pipeline_enabled', c.pipeline_enabled)}
-        ${_cfgRow('Worker \u9593\u9694\uff08\u79d2\uff09', 'pipeline_worker_interval', c.pipeline_worker_interval, 'number', '\u6700\u5c0f 10 \u79d2')}
-        ${_cfgRow('\u81ea\u52d5\u4fe1\u5fc3\u5ea6\u4e0a\u9650', 'pipeline_max_auto_confidence', c.pipeline_max_auto_confidence, 'number', '0.0\u301c1.0')}
-      </div>
-      <div class="settings-card">
-        <div class="sc-title">\u77e5\u8b58\u5be9\u6838 (KRB)</div>
-        ${_cfgRow('\u81ea\u52d5\u6838\u51c6\u95be\u503c', 'review_auto_approve_threshold', c.review_auto_approve_threshold, 'number', '\u4fe1\u5fc3\u5ea6\u8d85\u904e\u6b64\u503c\u81ea\u52d5\u901a\u904e')}
-        ${_cfgRow('\u5f85\u5be9\u4fdd\u7559\u5929\u6578', 'review_staging_ttl_days', c.review_staging_ttl_days, 'number', '\u8d85\u904e\u5929\u6578\u81ea\u52d5\u6e05\u9664')}
-      </div>
-    `;
-    document.getElementById('cfg-save-wrap').style.display = 'flex';
+    const res = await fetch('/api/admin/settings');
+    d = await res.json();
   } catch(e) {
-    document.getElementById('settings-grid').innerHTML =
-      '<div class="settings-card"><div style="color:var(--red);padding:12px">\u8f09\u5165\u5931\u6557</div></div>';
+    console.error('loadSettings fetch failed:', e);
+    grid.innerHTML = '<div class="settings-card"><div style="color:var(--red);padding:12px">\u7db2\u8def\u932f\u8aa4\uff0c\u7121\u6cd5\u8f09\u5165\u8a2d\u5b9a</div></div>';
+    return;
   }
+  _settingsData = d;
+  const svcs = d.services || [];
+  const st = d.storage || {};
+  const c = d.config || {};
+  const storageLabels = {brain_db:'\u8cc7\u6599\u5eab\u5927\u5c0f',backups:'\u5099\u4efd'};
+
+  // Build HTML pieces safely (no template literal nesting that can silently fail)
+  let svcsHtml = '';
+  for (const s of svcs) {
+    const cls = s.status === 'ok' ? 'ok' : (s.status === 'warn' ? 'warn' : 'err');
+    svcsHtml += '<div class="svc-item"><div class="svc-dot '+cls+'"></div><span class="svc-name">'+(s.name||'')+'</span><span class="svc-detail">'+(s.detail||'')+'</span></div>';
+  }
+  if (!svcsHtml) svcsHtml = '<div style="color:var(--text3);font-size:12px;padding:8px 0">\u7121\u670d\u52d9\u8cc7\u8a0a</div>';
+
+  let storageHtml = '';
+  for (const [k,v] of Object.entries(st)) {
+    storageHtml += '<div class="settings-row"><span class="sr-label">'+(storageLabels[k]||k)+'</span><span class="sr-value">'+(v||'')+'</span></div>';
+  }
+  if (!storageHtml) storageHtml = '<div style="color:var(--text3);font-size:12px;padding:8px 0">\u7121\u5132\u5b58\u8cc7\u8a0a</div>';
+
+  grid.innerHTML =
+    '<div class="settings-card">'
+    + '<div class="sc-title">\u7cfb\u7d71\u8cc7\u8a0a</div>'
+    + '<div class="settings-row"><span class="sr-label">\u904b\u884c\u6a21\u5f0f</span><span class="sr-value">'+(d.mode||'standalone')+'</span></div>'
+    + '<div class="settings-row"><span class="sr-label">Embedding</span><span class="sr-value">'+(d.embedding||'LocalTFIDF')+'</span></div>'
+    + '<div class="settings-row"><span class="sr-label">LLM</span><span class="sr-value">'+(d.llm||'\u672a\u8a2d\u5b9a')+'</span></div>'
+    + '<div class="settings-row"><span class="sr-label">Schema</span><span class="sr-value">v'+(d.schema_version||0)+'</span></div>'
+    + '</div>'
+    + '<div class="settings-card">'
+    + '<div class="sc-title">\u670d\u52d9\u72c0\u614b</div>'
+    + svcsHtml
+    + '</div>'
+    + '<div class="settings-card">'
+    + '<div class="sc-title">\u5132\u5b58\u7a7a\u9593</div>'
+    + storageHtml
+    + '</div>'
+    + '<div class="settings-card" style="grid-column:1/-1">'
+    + '<div class="sc-title">\u77e5\u8b58\u5f15\u64ce\u8a2d\u5b9a</div>'
+    + _cfgRow('\u6700\u5927\u4e0a\u4e0b\u6587 Token',   'brain_max_context_tokens',  c.brain_max_context_tokens  ?? 6000, 'number', '\u63a8\u85a6 4000\u301c8000')
+    + _cfgRow('\u904e\u6642\u8b66\u544a\u5929\u6578',     'brain_freshness_warn_days', c.brain_freshness_warn_days ?? 30,   'number', '\u8d85\u904e\u6b64\u5929\u6578\u7684\u77e5\u8b58\u6a19\u8a18\u70ba\u904e\u6642')
+    + _cfgRow('\u53bb\u91cd\u95be\u503c',           'brain_dedup_threshold',     c.brain_dedup_threshold     ?? 0.85, 'number', '0.0\u301c1.0\uff0c\u8d8a\u9ad8\u8d8a\u56b4\u683c')
+    + '</div>'
+    + '<div class="settings-card">'
+    + '<div class="sc-title">\u77e5\u8b58\u8870\u6e1b</div>'
+    + _cfgToggle('\u555f\u7528\u8870\u6e1b', 'decay_enabled', c.decay_enabled ?? true)
+    + _cfgRow('\u57f7\u884c\u9593\u9694\uff08\u5c0f\u6642\uff09', 'decay_interval_hours', c.decay_interval_hours ?? 24, 'number', '\u591a\u4e45\u57f7\u884c\u4e00\u6b21\u8870\u6e1b\u8a08\u7b97')
+    + '</div>'
+    + '<div class="settings-card">'
+    + '<div class="sc-title">Pipeline \u81ea\u52d5\u5316</div>'
+    + _cfgToggle('\u555f\u7528 Pipeline', 'pipeline_enabled', c.pipeline_enabled ?? true)
+    + _cfgRow('Worker \u9593\u9694\uff08\u79d2\uff09', 'pipeline_worker_interval', c.pipeline_worker_interval ?? 60, 'number', '\u6700\u5c0f 10 \u79d2')
+    + _cfgRow('\u81ea\u52d5\u4fe1\u5fc3\u5ea6\u4e0a\u9650', 'pipeline_max_auto_confidence', c.pipeline_max_auto_confidence ?? 0.85, 'number', '0.0\u301c1.0')
+    + '</div>'
+    + '<div class="settings-card">'
+    + '<div class="sc-title">\u77e5\u8b58\u5be9\u6838 (KRB)</div>'
+    + _cfgRow('\u81ea\u52d5\u6838\u51c6\u95be\u503c', 'review_auto_approve_threshold', c.review_auto_approve_threshold ?? 0.8, 'number', '\u4fe1\u5fc3\u5ea6\u8d85\u904e\u6b64\u503c\u81ea\u52d5\u901a\u904e')
+    + _cfgRow('\u5f85\u5be9\u4fdd\u7559\u5929\u6578', 'review_staging_ttl_days', c.review_staging_ttl_days ?? 30, 'number', '\u8d85\u904e\u5929\u6578\u81ea\u52d5\u6e05\u9664')
+    + '</div>';
+
+  document.getElementById('cfg-save-wrap').style.display = 'flex';
 }
 function _cfgRow(label, key, val, type, hint) {
   const step = type === 'number' && String(val).includes('.') ? '0.01' : '1';
