@@ -1049,11 +1049,16 @@ async function saveSettings() {
   const cfg = {};
   document.querySelectorAll('.cfg-input').forEach(el => {
     const k = el.dataset.key;
-    cfg[k] = el.step === '0.01' ? parseFloat(el.value) : parseInt(el.value, 10);
+    const raw = el.value;
+    if (raw === '' || raw == null) return;  // skip empty fields
+    const num = el.step === '0.01' ? parseFloat(raw) : parseInt(raw, 10);
+    if (isNaN(num)) return;  // skip invalid numbers
+    cfg[k] = num;
   });
   document.querySelectorAll('.cfg-toggle input[type=checkbox]').forEach(el => {
     cfg[el.dataset.key] = el.checked;
   });
+  if (Object.keys(cfg).length === 0) return;
   const btn = document.getElementById('cfg-save-btn');
   btn.disabled = true; btn.textContent = '\u5132\u5b58\u4e2d\u2026';
   try {
@@ -1065,6 +1070,8 @@ async function saveSettings() {
     if (res.ok && data.ok) {
       btn.textContent = '\u2713 \u5df2\u5132\u5b58';
       setTimeout(() => { btn.textContent = '\u5132\u5b58\u8a2d\u5b9a'; btn.disabled = false; }, 2000);
+      // Reload settings to reflect the saved state
+      await loadSettings();
     } else {
       btn.textContent = data.error || '\u5132\u5b58\u5931\u6557';
       setTimeout(() => { btn.textContent = '\u5132\u5b58\u8a2d\u5b9a'; btn.disabled = false; }, 3000);

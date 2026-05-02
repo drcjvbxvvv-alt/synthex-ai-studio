@@ -1024,42 +1024,31 @@ class _Handler(BaseHTTPRequestHandler):
                 pass
 
         cfg = body.get("config", {})
+        # Strip None values (JSON null from NaN serialization)
+        cfg = {k: v for k, v in cfg.items() if v is not None}
         if not cfg:
             self._json({"error": "沒有要儲存的設定"}, 400)
             return
 
-        # Apply changes to dict
-        if "decay_enabled" in cfg or "decay_interval_hours" in cfg:
-            existing.setdefault("decay", {})
-            if "decay_enabled" in cfg:
-                existing["decay"]["enabled"] = bool(cfg["decay_enabled"])
-            if "decay_interval_hours" in cfg:
-                existing["decay"]["run_interval_hours"] = max(1, int(cfg["decay_interval_hours"]))
-
-        if "pipeline_enabled" in cfg or "pipeline_worker_interval" in cfg or "pipeline_max_auto_confidence" in cfg:
-            existing.setdefault("pipeline", {})
-            if "pipeline_enabled" in cfg:
-                existing["pipeline"]["enabled"] = bool(cfg["pipeline_enabled"])
-            if "pipeline_worker_interval" in cfg:
-                existing["pipeline"]["worker_interval_seconds"] = max(10, int(cfg["pipeline_worker_interval"]))
-            if "pipeline_max_auto_confidence" in cfg:
-                existing["pipeline"]["max_auto_confidence"] = max(0.0, min(1.0, float(cfg["pipeline_max_auto_confidence"])))
-
-        if "review_auto_approve_threshold" in cfg or "review_staging_ttl_days" in cfg:
-            existing.setdefault("review", {})
-            if "review_auto_approve_threshold" in cfg:
-                existing["review"]["auto_approve_threshold"] = max(0.0, min(1.0, float(cfg["review_auto_approve_threshold"])))
-            if "review_staging_ttl_days" in cfg:
-                existing["review"]["staging_ttl_days"] = max(1, int(cfg["review_staging_ttl_days"]))
-
-        if "brain_max_context_tokens" in cfg or "brain_freshness_warn_days" in cfg or "brain_dedup_threshold" in cfg:
-            existing.setdefault("brain", {})
-            if "brain_max_context_tokens" in cfg:
-                existing["brain"]["max_context_tokens"] = max(500, int(cfg["brain_max_context_tokens"]))
-            if "brain_freshness_warn_days" in cfg:
-                existing["brain"]["freshness_warn_days"] = max(1, int(cfg["brain_freshness_warn_days"]))
-            if "brain_dedup_threshold" in cfg:
-                existing["brain"]["dedup_threshold"] = max(0.0, min(1.0, float(cfg["brain_dedup_threshold"])))
+        # Apply changes to dict — each conversion is guarded against bad input
+        _apply_cfg = [
+            ("decay",    "enabled",                 "decay_enabled",                 bool),
+            ("decay",    "run_interval_hours",       "decay_interval_hours",          lambda v: max(1, int(v))),
+            ("pipeline", "enabled",                 "pipeline_enabled",              bool),
+            ("pipeline", "worker_interval_seconds", "pipeline_worker_interval",      lambda v: max(10, int(v))),
+            ("pipeline", "max_auto_confidence",     "pipeline_max_auto_confidence",  lambda v: max(0.0, min(1.0, float(v)))),
+            ("review",   "auto_approve_threshold",  "review_auto_approve_threshold", lambda v: max(0.0, min(1.0, float(v)))),
+            ("review",   "staging_ttl_days",        "review_staging_ttl_days",       lambda v: max(1, int(v))),
+            ("brain",    "max_context_tokens",      "brain_max_context_tokens",      lambda v: max(500, int(v))),
+            ("brain",    "freshness_warn_days",     "brain_freshness_warn_days",     lambda v: max(1, int(v))),
+            ("brain",    "dedup_threshold",         "brain_dedup_threshold",         lambda v: max(0.0, min(1.0, float(v)))),
+        ]
+        for section, key, cfgkey, conv in _apply_cfg:
+            if cfgkey in cfg:
+                try:
+                    existing.setdefault(section, {})[key] = conv(cfg[cfgkey])
+                except (TypeError, ValueError):
+                    pass  # skip invalid values silently
 
         # Write TOML
         try:
@@ -1165,7 +1154,11 @@ def _toml_val(v) -> str:
     if isinstance(v, int):
         return str(v)
     if isinstance(v, float):
-        return f"{v:.4f}".rstrip("0").rstrip(".")
+        # Ensure floats always have a decimal point so TOML parses them as float
+        s = f"{v:.4f}".rstrip("0")
+        if s.endswith("."):
+            s += "0"
+        return s
     if isinstance(v, str):
         return f'"{v}"'
     return str(v)
@@ -1899,23 +1892,26 @@ def create_app(workdir, **_):
                 pass
         body = request.get_json(silent=True) or {}
         cfg = body.get("config", {})
+        cfg = {k: v for k, v in cfg.items() if v is not None}
         if not cfg:
             return jsonify({"error": "\u6c92\u6709\u8981\u5132\u5b58\u7684\u8a2d\u5b9a"}), 400
-        # Apply
         for section, key, cfgkey, conv in [
-            ("decay", "enabled", "decay_enabled", bool),
-            ("decay", "run_interval_hours", "decay_interval_hours", int),
-            ("pipeline", "enabled", "pipeline_enabled", bool),
-            ("pipeline", "worker_interval_seconds", "pipeline_worker_interval", int),
-            ("pipeline", "max_auto_confidence", "pipeline_max_auto_confidence", float),
-            ("review", "auto_approve_threshold", "review_auto_approve_threshold", float),
-            ("review", "staging_ttl_days", "review_staging_ttl_days", int),
-            ("brain", "max_context_tokens", "brain_max_context_tokens", int),
-            ("brain", "freshness_warn_days", "brain_freshness_warn_days", int),
-            ("brain", "dedup_threshold", "brain_dedup_threshold", float),
+            ("decay",    "enabled",                 "decay_enabled",                 bool),
+            ("decay",    "run_interval_hours",       "decay_interval_hours",          lambda v: max(1, int(v))),
+            ("pipeline", "enabled",                 "pipeline_enabled",              bool),
+            ("pipeline", "worker_interval_seconds", "pipeline_worker_interval",      lambda v: max(10, int(v))),
+            ("pipeline", "max_auto_confidence",     "pipeline_max_auto_confidence",  lambda v: max(0.0, min(1.0, float(v)))),
+            ("review",   "auto_approve_threshold",  "review_auto_approve_threshold", lambda v: max(0.0, min(1.0, float(v)))),
+            ("review",   "staging_ttl_days",        "review_staging_ttl_days",       lambda v: max(1, int(v))),
+            ("brain",    "max_context_tokens",      "brain_max_context_tokens",      lambda v: max(500, int(v))),
+            ("brain",    "freshness_warn_days",     "brain_freshness_warn_days",     lambda v: max(1, int(v))),
+            ("brain",    "dedup_threshold",         "brain_dedup_threshold",         lambda v: max(0.0, min(1.0, float(v)))),
         ]:
             if cfgkey in cfg:
-                existing.setdefault(section, {})[key] = conv(cfg[cfgkey])
+                try:
+                    existing.setdefault(section, {})[key] = conv(cfg[cfgkey])
+                except (TypeError, ValueError):
+                    pass
         try:
             toml_path.write_text(_dict_to_toml(existing), encoding="utf-8")
         except Exception as exc:
