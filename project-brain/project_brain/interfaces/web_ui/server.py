@@ -1072,7 +1072,7 @@ def _generate_html(workdir: str = "") -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Project Brain · {project}</title>
 <style>
-:root {{
+:root, [data-theme="dark"] {{
   --bg:      #0d1117; --bg2: #161b22; --bg3: #1c2128;
   --border:  rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.14);
   --text:    #e6edf3; --text2: #8b949e; --text3: #484f58;
@@ -1081,6 +1081,18 @@ def _generate_html(workdir: str = "") -> str:
   --radius:  10px; --radius-sm: 6px;
   --shadow:  0 8px 32px rgba(0,0,0,0.4);
   --trans:   0.16s ease;
+  --grid-line: rgba(255,255,255,0.02);
+  --node-stroke: rgba(255,255,255,0.15);
+}}
+[data-theme="light"] {{
+  --bg:      #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2;
+  --border:  rgba(0,0,0,0.10); --border2: rgba(0,0,0,0.16);
+  --text:    #1f2328; --text2: #59636e; --text3: #8b949e;
+  --accent:  #0969da; --accent2: #0550ae;
+  --green:   #1a7f37; --red: #d1242f; --yellow: #9a6700;
+  --shadow:  0 8px 32px rgba(0,0,0,0.08);
+  --grid-line: rgba(0,0,0,0.04);
+  --node-stroke: rgba(0,0,0,0.12);
 }}
 *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
@@ -1096,7 +1108,7 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
   background:linear-gradient(135deg,#58a6ff 0%,#bc8cff 100%);
   display:flex;align-items:center;justify-content:center;font-size:13px;
   box-shadow:0 0 10px rgba(88,166,255,0.3)}}
-.logo .brand{{font-size:13px;font-weight:600;letter-spacing:-.01em;color:#6ca4f8;}}
+.logo .brand{{font-size:13px;font-weight:600;letter-spacing:-.01em;color:var(--accent);}}
 .logo .ver{{font-size:10px;color:var(--text2);background:var(--bg3);
   border:1px solid var(--border);padding:1px 5px;border-radius:4px;margin-left:2px}}
 #proj-badge{{font-size:11px;color:var(--text2);background:var(--bg3);
@@ -1217,8 +1229,8 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 #main{{flex:1;position:relative;overflow:hidden}}
 #canvas{{width:100%;height:100%;cursor:default}}
 #main::before{{content:'';position:absolute;inset:0;
-  background-image:linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);
+  background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),
+    linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
   background-size:40px 40px;pointer-events:none}}
 
 /* Tooltip */
@@ -1419,6 +1431,7 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
   <div id="hdr-actions">
     <button class="hdr-btn" style="background:rgba(59,130,246,0.15);border-color:#3b82f6;color:#60a5fa" onclick="switchView('add')">+ 新增知識</button>
     <button class="hdr-btn" onclick="refreshAll()">↺ 重新整理</button>
+    <button class="hdr-btn" id="theme-toggle" onclick="toggleTheme()" title="切換淺色/深色模式">☀</button>
     <span id="kbd-hint">/ 搜尋 · Esc 清除</span>
   </div>
 </div>
@@ -1854,7 +1867,7 @@ function render() {{
   // Links
   allLinks.forEach(l => {{
     const line = document.createElementNS(NS,'line');
-    line.setAttribute('stroke','rgba(255,255,255,0.07)');
+    line.setAttribute('stroke', getComputedStyle(document.documentElement).getPropertyValue('--border2').trim());
     line.setAttribute('stroke-width','1.2');
     line.setAttribute('stroke-linecap','round');
     l._el = line;
@@ -1910,7 +1923,7 @@ function render() {{
     const t = document.createElementNS(NS,'text');
     t.textContent = nd.title.length > 12 ? nd.title.slice(0,12)+'…' : nd.title;
     t.setAttribute('font-size','8.5');
-    t.setAttribute('fill','rgba(255,255,255,0.42)');
+    t.setAttribute('fill', getComputedStyle(document.documentElement).getPropertyValue('--text3').trim());
     t.setAttribute('text-anchor','middle');
     t.style.pointerEvents = 'none';
     t.style.userSelect    = 'none';
@@ -2700,6 +2713,23 @@ async function submitAddNode() {{
     btn.disabled = false; btn.textContent = '新增';
   }}
 }}
+
+// ── Theme toggle ──────────────────────────────────
+function toggleTheme() {{
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('brain-theme', next);
+  document.getElementById('theme-toggle').textContent = next === 'dark' ? '☀' : '☾';
+}}
+(function initTheme() {{
+  const saved = localStorage.getItem('brain-theme');
+  if (saved === 'light') {{
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.getElementById('theme-toggle').textContent = '☾';
+  }}
+}})();
 
 // ── Boot ─────────────────────────────────────────
 _restoreHash();   // UX-01: apply filter state from URL hash before first load
