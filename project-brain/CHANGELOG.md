@@ -4,6 +4,37 @@
 
 ---
 
+## v0.53.1（2026-05-02）— WebUI 前端重構：從 f-string 分離為獨立檔案
+
+> server.py 從 3793 行減至 1966 行。CSS/JS/HTML 各自獨立，IDE 完整支援。
+> 消除 f-string 雙大括號轉義導致的中文亂碼問題。
+
+### 結構變更
+
+```
+web_ui/
+├── server.py          ← 僅 Python API 路由（1966 行）
+├── static/
+│   ├── style.css      ← 所有 CSS（439 行）
+│   └── app.js         ← 所有 JS（1137 行）
+└── templates/
+    └── index.html     ← HTML 骨架（311 行）
+```
+
+### 技術細節
+
+- `_render_template()` 讀取 `templates/index.html`，替換 `{{PROJECT}}` / `{{VERSION}}`
+- `/static/<path>` 路由提供靜態檔案，帶 1 小時 Cache-Control
+- `_generate_html()` 保留為向後相容 wrapper
+- 路徑遍歷防護：filename 只允許 `[a-zA-Z0-9._-]`
+
+### 測試
+
+- 新增 9 個測試：靜態檔案服務 (4) + 模板渲染 (5)
+- 全部 103 個 WebUI 測試通過
+
+---
+
 ## v0.53.0（2026-05-02）— E-06 運維 Agent 整合：WebUI 管理面板 + Prometheus 監控
 
 > 非技術人員可在瀏覽器中新增知識、瀏覽儀表板、查閱審計日誌。

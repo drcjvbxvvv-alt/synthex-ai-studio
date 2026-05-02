@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project Brain · {{PROJECT}}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="hdr">
+  <a class="logo" href="/">
+    <div class="icon">🧠</div>
+    <span class="brand">Project Brain</span>
+    <span class="ver">v{{VERSION}}</span>
+  </a>
+  <div id="proj-badge">📁 {{PROJECT}}</div>
+  <div id="search-wrap">
+    <span id="search-icon">⌕</span>
+    <input id="search-input" type="text" placeholder="搜尋… (/)">
+    <button id="search-clear">✕</button>
+  </div>
+  <div class="view-tabs">
+    <button class="view-tab active" data-view="graph" onclick="switchView('graph')">📊 圖譜</button>
+    <button class="view-tab" data-view="table" onclick="switchView('table')">📋 管理</button>
+    <button class="view-tab" data-view="dashboard" onclick="switchView('dashboard')">📈 儀表板</button>
+    <button class="view-tab" data-view="audit" onclick="switchView('audit')">📝 審計</button>
+    <button class="view-tab" data-view="settings" onclick="switchView('settings')">⚙ 設定</button>
+  </div>
+  <div id="hdr-actions">
+    <button class="hdr-btn" style="background:rgba(59,130,246,0.15);border-color:#3b82f6;color:#60a5fa" onclick="switchView('add')">+ 新增知識</button>
+    <button class="hdr-btn" onclick="refreshAll()">↺ 重新整理</button>
+    <button class="hdr-btn" id="theme-toggle" onclick="toggleTheme()" title="切換淺色/深色模式">☀</button>
+    <span id="kbd-hint">/ 搜尋 · Esc 清除</span>
+  </div>
+</div>
+
+<div id="body">
+  <div id="sidebar">
+    <div class="s-sec">
+      <div class="s-lbl">知識庫</div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="sv" id="s-nodes">—</div><div class="sk">節點</div></div>
+        <div class="stat-card"><div class="sv" id="s-edges">—</div><div class="sk">關係</div></div>
+        <div class="stat-card warn" id="card-low" onclick="filterConf('vlow')" title="篩選低信心節點" style="cursor:pointer"><div class="sv" id="s-low">—</div><div class="sk">低信心</div></div>
+        <div class="stat-card ok"   id="card-pin" onclick="filterPinned()"    title="篩選已釘選節點"  style="cursor:pointer"><div class="sv" id="s-pin">—</div><div class="sk">已釘選</div></div>
+      </div>
+    </div>
+
+    <div class="s-sec">
+      <div class="s-lbl">篩選類型</div>
+      <div id="filter-wrap">
+        <button class="pill active" data-kind="all">全部</button>
+        <button class="pill" data-kind="Pitfall">踩坑</button>
+        <button class="pill" data-kind="Rule">規則</button>
+        <button class="pill" data-kind="Decision">決策</button>
+        <button class="pill" data-kind="ADR">ADR</button>
+        <button class="pill" data-kind="Note">筆記</button>
+        <button class="pill" data-kind="Component">組件</button>
+      </div>
+    </div>
+
+    <div class="s-sec">
+      <div class="s-lbl">節點分佈</div>
+      <div id="kind-list"></div>
+    </div>
+
+    <div class="s-sec">
+      <div class="s-lbl">信心分布</div>
+      <div id="conf-dist-list"></div>
+    </div>
+
+    <!-- Search results (shown when searching) -->
+    <div class="s-sec" id="search-results">
+      <div class="s-lbl">搜尋結果</div>
+      <div id="sr-list"></div>
+    </div>
+
+    <!-- Node detail (shown when node selected) -->
+    <div class="s-sec" id="node-panel">
+      <div class="s-lbl">節點詳情</div>
+      <div id="node-kind-badge" class="nk-badge"></div>
+      <div id="node-title"></div>
+      <div class="conf-bar-wrap">
+        <div class="conf-bar-label">
+          <span id="conf-label-text">信心</span>
+          <span id="conf-val-text" style="font-size:10px;color:var(--text2)"></span>
+        </div>
+        <div class="conf-bar"><div id="conf-bar-fill" class="conf-bar-fill"></div></div>
+      </div>
+      <div id="node-content"></div>
+      <div id="node-tags"></div>
+      <div id="node-meta"></div>
+      <div class="node-actions">
+        <button id="pin-btn" class="node-btn" onclick="togglePin()">📌 釘選</button>
+        <button class="node-btn" onclick="startEdit()">✏ 編輯</button>
+        <button class="node-btn" onclick="copyContent()">⎘ 複製</button>
+        <button class="node-btn" style="color:var(--red);border-color:var(--red)" onclick="deleteNode()">✕</button>
+      </div>
+      <!-- Inline edit form -->
+      <div id="edit-form">
+        <label class="ef-label">標題</label>
+        <input id="ef-title" class="ef-input" type="text" maxlength="500">
+        <label class="ef-label">類型</label>
+        <select id="ef-kind" class="ef-select">
+          <option>Pitfall</option><option>Decision</option><option>Rule</option>
+          <option>ADR</option><option>Component</option><option>Architecture</option><option>Note</option>
+        </select>
+        <label class="ef-label">信心 (<span id="ef-conf-val">0.7</span>)</label>
+        <input id="ef-confidence" class="ef-input" type="range" min="0" max="1" step="0.01" value="0.7"
+          oninput="document.getElementById('ef-conf-val').textContent=parseFloat(this.value).toFixed(2)">
+        <label class="ef-label">內容</label>
+        <textarea id="ef-content" class="ef-textarea" maxlength="10000"></textarea>
+        <div class="ef-row">
+          <button class="ef-btn save" onclick="saveEdit()">儲存</button>
+          <button class="ef-btn cancel" onclick="cancelEdit()">取消</button>
+        </div>
+      </div>
+      <div id="neighbor-list"></div>
+    </div>
+
+    <!-- KRB Staging panel -->
+    <div class="s-sec" id="staging-panel">
+      <div class="s-lbl">待審知識 <span id="stg-badge"></span></div>
+      <div id="stg-list"></div>
+    </div>
+  </div>
+
+  <div id="graph-view">
+    <div id="loading"><div class="spinner"></div><div class="l-text">載入知識圖譜…</div></div>
+    <div id="empty-state" style="display:none">
+      <div class="es-icon">🕸</div>
+      <div class="es-text">知識庫尚無節點<br>執行 <code>brain add</code> 或 <code>brain scan</code> 加入知識</div>
+    </div>
+    <svg id="canvas"></svg>
+    <div id="tooltip"><div id="tt-kind"></div><div id="tt-title"></div><div id="tt-conf"></div></div>
+    <div id="controls">
+      <button class="ctrl-btn" title="放大" onclick="zoom(1.25)">+</button>
+      <button class="ctrl-btn" title="縮小" onclick="zoom(0.8)">−</button>
+      <button class="ctrl-btn" title="重置視圖" onclick="resetView()">↺</button>
+      <label class="ctrl-btn" title="圖譜節點上限" style="font-size:10px;cursor:default;padding:4px 6px">
+        上限 <input id="graph-limit" type="number" min="20" max="500" value="100"
+          style="width:48px;background:var(--bg);border:1px solid var(--border);
+          color:var(--text);border-radius:3px;padding:2px 4px;font-size:10px;text-align:center"
+          onchange="loadGraph()">
+      </label>
+    </div>
+  </div>
+
+  <div id="table-view">
+    <div class="tv-toolbar">
+      <input class="tv-search" id="tv-q" type="text" placeholder="搜尋節點…" oninput="tvDebounceSearch()">
+      <select class="tv-select" id="tv-kind" onchange="tvLoadPage(1)">
+        <option value="">全部類型</option>
+        <option value="Pitfall">⚠ Pitfall</option>
+        <option value="Rule">📋 Rule</option>
+        <option value="Decision">🎯 Decision</option>
+        <option value="ADR">📄 ADR</option>
+        <option value="Note">📝 Note</option>
+      </select>
+      <select class="tv-select" id="tv-sort" onchange="tvLoadPage(1)">
+        <option value="confidence">信心度 ↓</option>
+        <option value="created_at">時間 ↓</option>
+        <option value="access_count">存取次數 ↓</option>
+        <option value="title">標題 A→Z</option>
+      </select>
+      <span class="tv-info" id="tv-info">—</span>
+    </div>
+    <div class="tv-table-wrap">
+      <table class="tv-table">
+        <thead>
+          <tr>
+            <th style="width:80px">類型</th>
+            <th>標題</th>
+            <th style="width:90px">摘要</th>
+            <th style="width:60px">信心</th>
+            <th style="width:50px">存取</th>
+            <th style="width:80px">時間</th>
+            <th style="width:100px">操作</th>
+          </tr>
+        </thead>
+        <tbody id="tv-body"></tbody>
+      </table>
+    </div>
+    <div class="tv-pager">
+      <button id="tv-prev" onclick="tvPrev()" disabled>← 上一頁</button>
+      <span id="tv-page-info"><span class="current">1</span> / 1</span>
+      <button id="tv-next" onclick="tvNext()" disabled>下一頁 →</button>
+    </div>
+  </div>
+
+  <!-- E-06: Dashboard View -->
+  <div id="dashboard-view" class="admin-view">
+    <div class="av-header">📈 知識庫儀表板 <span class="av-sub">系統總覽與健康狀態</span></div>
+    <div class="av-body" id="dash-body">
+      <div class="dash-cards" id="dash-cards"></div>
+      <div class="dash-section">
+        <div class="dash-title">類型分佈</div>
+        <div class="dash-section-card">
+          <div id="dash-kinds" class="dash-kinds"></div>
+        </div>
+      </div>
+      <div class="dash-section">
+        <div class="dash-title">近期活動</div>
+        <div id="dash-activity"></div>
+      </div>
+      <div class="dash-section">
+        <div class="dash-title">系統健康</div>
+        <div id="dash-health"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- E-06: Audit Log View -->
+  <div id="audit-view" class="admin-view">
+    <div class="av-header">📝 審計日誌 <span class="av-sub">知識變更追蹤</span></div>
+    <div class="av-toolbar">
+      <select class="tv-select" id="audit-days" onchange="loadAudit()">
+        <option value="7">近 7 天</option>
+        <option value="30" selected>近 30 天</option>
+        <option value="90">近 90 天</option>
+        <option value="365">近一年</option>
+      </select>
+      <input class="tv-search" id="audit-author" type="text" placeholder="操作者…" style="width:140px" oninput="auditDebounce()">
+      <select class="tv-select" id="audit-action" onchange="loadAudit()">
+        <option value="">全部動作</option>
+        <option value="update">修改</option>
+        <option value="submit">提交</option>
+        <option value="approve">核准</option>
+        <option value="reject">拒絕</option>
+        <option value="delete">刪除</option>
+      </select>
+      <span class="tv-info" id="audit-info">—</span>
+    </div>
+    <div class="tv-table-wrap">
+      <table class="tv-table">
+        <thead><tr>
+          <th style="width:140px">時間</th>
+          <th style="width:100px">操作者</th>
+          <th style="width:70px">動作</th>
+          <th>節點標題</th>
+          <th style="width:200px">詳情</th>
+        </tr></thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+    </div>
+    <div class="tv-pager">
+      <button id="audit-prev" onclick="auditPrev()" disabled>← 上一頁</button>
+      <span id="audit-page-info"><span class="current">1</span> / 1</span>
+      <button id="audit-next" onclick="auditNext()" disabled>下一頁 →</button>
+    </div>
+  </div>
+
+  <!-- E-06: Settings View -->
+  <div id="settings-view" class="admin-view">
+    <div class="av-header">⚙ 系統設定 <span class="av-sub">檢視系統狀態、調整運行參數</span></div>
+    <div class="av-body" id="settings-body">
+      <div class="settings-grid" id="settings-grid"></div>
+      <div id="cfg-save-wrap" style="display:none;margin-top:16px;gap:10px;align-items:center">
+        <button id="cfg-save-btn" onclick="saveSettings()" class="ef-btn save"
+          style="padding:10px 28px;font-size:13px;font-weight:600;border-radius:var(--radius-sm);
+          background:var(--accent2);border:1px solid var(--accent2);color:#fff;cursor:pointer">儲存設定</button>
+        <span style="font-size:11px;color:var(--text3)">變更會寫入 .brain/brain.toml，重啟服務後生效</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- E-06: Add Knowledge View -->
+  <div id="add-view" class="admin-view">
+    <div class="av-header">+ 新增知識 <span class="av-sub">將知識加入團隊知識庫</span></div>
+    <div class="av-body">
+      <div class="add-form">
+        <div class="add-form-card">
+          <label class="add-label" style="margin-top:0">標題 <span style="color:var(--red)">*</span></label>
+          <input id="add-title" class="ef-input" type="text" maxlength="500" placeholder="例：API 必須驗證 JWT 過期時間">
+          <label class="add-label">類型</label>
+          <select id="add-kind" class="ef-select">
+            <option value="Note">📝 筆記 — 一般知識記錄</option>
+            <option value="Pitfall">⚠ 踩坑紀錄 — 遇到的問題和解法</option>
+            <option value="Rule">📋 規則 — 必須遵守的規範</option>
+            <option value="Decision">🎯 決策 — 為什麼這樣做的理由</option>
+            <option value="ADR">📄 ADR — 架構決策紀錄</option>
+            <option value="Component">🔧 組件 — 系統組件說明</option>
+            <option value="Architecture">🏗 架構 — 系統架構描述</option>
+          </select>
+          <label class="add-label">信心度（系統對這筆知識的確信程度）</label>
+          <div class="add-conf-wrap">
+            <span style="font-size:11px;color:var(--text3)">低</span>
+            <input id="add-confidence" class="ef-input" type="range" min="0" max="1" step="0.01" value="0.7"
+              style="flex:1;margin:0 8px;padding:6px 0"
+              oninput="document.getElementById('add-conf-val').textContent=parseFloat(this.value).toFixed(2)">
+            <span style="font-size:11px;color:var(--text3)">高</span>
+            <span id="add-conf-val" style="font-size:13px;font-weight:700;color:var(--accent);min-width:36px;text-align:center">0.70</span>
+          </div>
+          <label class="add-label">內容 <span style="color:var(--red)">*</span></label>
+          <textarea id="add-content" class="ef-textarea" maxlength="10000" rows="8"
+            placeholder="詳細描述這筆知識，包含背景、原因、解決方式…"></textarea>
+          <div class="add-submit-row">
+            <button class="ef-btn save" onclick="submitAddNode()" id="add-submit-btn">新增知識</button>
+            <button class="ef-btn cancel" onclick="switchView('table')">取消</button>
+          </div>
+          <div id="add-msg" class="add-msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

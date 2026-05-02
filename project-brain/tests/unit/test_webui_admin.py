@@ -1,11 +1,13 @@
 """
-E-06 WebUI Admin API Tests — Dashboard, Audit Log, Settings, Add Knowledge
+E-06 WebUI Admin API Tests — Dashboard, Audit Log, Settings, Add Knowledge, Static Files
 
 Tests cover:
   - POST /api/node — add knowledge from WebUI
   - GET /api/admin/dashboard — system overview stats
   - GET /api/admin/audit-log — audit trail with filters
-  - GET /api/admin/settings — system configuration display
+  - GET /api/admin/settings — system configuration display + save
+  - GET /static/* — static file serving (CSS, JS)
+  - GET / — template rendering
 
 Run:  pytest tests/unit/test_webui_admin.py -v
 """
@@ -320,3 +322,63 @@ class TestSettings:
         c, db, bd, wd = setup
         r = c.post("/api/admin/settings", json={"config": {}})
         assert r.status_code == 400
+
+
+# ── Static file serving + Template rendering ────────────────────
+
+
+class TestStaticFiles:
+    def test_static_css_served(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/static/style.css")
+        assert r.status_code == 200
+        assert "text/css" in r.content_type
+        assert b"--bg:" in r.data
+
+    def test_static_js_served(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/static/app.js")
+        assert r.status_code == 200
+        assert "javascript" in r.content_type
+        assert b"KIND_COLOR" in r.data
+
+    def test_static_nonexistent_404(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/static/nonexistent.xyz")
+        assert r.status_code == 404
+
+    def test_static_path_traversal_blocked(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/static/../server.py")
+        assert r.status_code == 404
+
+
+class TestTemplateRendering:
+    def test_index_returns_html(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/")
+        assert r.status_code == 200
+        assert b"<!DOCTYPE html>" in r.data
+
+    def test_index_contains_css_link(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/")
+        assert b"/static/style.css" in r.data
+
+    def test_index_contains_js_script(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/")
+        assert b"/static/app.js" in r.data
+
+    def test_index_has_version(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/")
+        # Version should be substituted (not the raw placeholder)
+        assert b"{{VERSION}}" not in r.data
+        # Version string should be present (e.g. v2.0)
+        assert b">v" in r.data
+
+    def test_index_has_no_raw_placeholders(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/")
+        assert b"{{PROJECT}}" not in r.data
