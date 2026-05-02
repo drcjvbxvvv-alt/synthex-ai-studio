@@ -166,6 +166,8 @@ class _Handler(BaseHTTPRequestHandler):
                               or b"{}") if length else {}
             if path == "/api/node":
                 self._route_add_node(body)
+            elif path == "/api/admin/settings":
+                self._route_save_settings(body)
             elif path.startswith("/api/node/") and path.endswith("/pin"):
                 nid = path[len("/api/node/"):-len("/pin")]
                 self._route_pin(nid, body)
@@ -842,11 +844,14 @@ class _Handler(BaseHTTPRequestHandler):
             "schema_version": 0,
             "services": [],
             "storage": {},
+            "config": {},
+            "has_toml": False,
         }
 
         # Read brain.toml for config
         toml_path = bd / "brain.toml"
         if toml_path.exists():
+            result["has_toml"] = True
             try:
                 try:
                     import tomllib
@@ -856,8 +861,31 @@ class _Handler(BaseHTTPRequestHandler):
                 result["mode"] = cfg.get("mode", "standalone")
                 result["embedding"] = cfg.get("embedding", {}).get("provider", "LocalTFIDF")
                 result["llm"] = cfg.get("llm", {}).get("provider", "未設定")
+                # Editable config sections
+                result["config"] = {
+                    "decay_enabled": cfg.get("decay", {}).get("enabled", True),
+                    "decay_interval_hours": cfg.get("decay", {}).get("run_interval_hours", 24),
+                    "pipeline_enabled": cfg.get("pipeline", {}).get("enabled", True),
+                    "pipeline_worker_interval": cfg.get("pipeline", {}).get("worker_interval_seconds", 60),
+                    "pipeline_max_auto_confidence": cfg.get("pipeline", {}).get("max_auto_confidence", 0.85),
+                    "review_auto_approve_threshold": cfg.get("review", {}).get("auto_approve_threshold", 0.80),
+                    "review_staging_ttl_days": cfg.get("review", {}).get("staging_ttl_days", 30),
+                    "brain_max_context_tokens": cfg.get("brain", {}).get("max_context_tokens", 6000),
+                    "brain_freshness_warn_days": cfg.get("brain", {}).get("freshness_warn_days", 30),
+                    "brain_dedup_threshold": cfg.get("brain", {}).get("dedup_threshold", 0.85),
+                }
             except Exception:
                 pass
+        else:
+            # Defaults when no toml exists
+            result["config"] = {
+                "decay_enabled": True, "decay_interval_hours": 24,
+                "pipeline_enabled": True, "pipeline_worker_interval": 60,
+                "pipeline_max_auto_confidence": 0.85,
+                "review_auto_approve_threshold": 0.80, "review_staging_ttl_days": 30,
+                "brain_max_context_tokens": 6000, "brain_freshness_warn_days": 30,
+                "brain_dedup_threshold": 0.85,
+            }
 
         db_path = bd / "brain.db"
         if not db_path.exists():
@@ -929,6 +957,70 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._json(result)
 
+    # ── API: POST /api/admin/settings (E-06 save) ──
+    def _route_save_settings(self, body: dict):
+        bd = self.__class__.workdir / ".brain"
+        toml_path = bd / "brain.toml"
+
+        # Read existing TOML or start fresh
+        existing: dict = {}
+        if toml_path.exists():
+            try:
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib  # type: ignore[no-redef]
+                existing = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        cfg = body.get("config", {})
+        if not cfg:
+            self._json({"error": "沒有要儲存的設定"}, 400)
+            return
+
+        # Apply changes to dict
+        if "decay_enabled" in cfg or "decay_interval_hours" in cfg:
+            existing.setdefault("decay", {})
+            if "decay_enabled" in cfg:
+                existing["decay"]["enabled"] = bool(cfg["decay_enabled"])
+            if "decay_interval_hours" in cfg:
+                existing["decay"]["run_interval_hours"] = max(1, int(cfg["decay_interval_hours"]))
+
+        if "pipeline_enabled" in cfg or "pipeline_worker_interval" in cfg or "pipeline_max_auto_confidence" in cfg:
+            existing.setdefault("pipeline", {})
+            if "pipeline_enabled" in cfg:
+                existing["pipeline"]["enabled"] = bool(cfg["pipeline_enabled"])
+            if "pipeline_worker_interval" in cfg:
+                existing["pipeline"]["worker_interval_seconds"] = max(10, int(cfg["pipeline_worker_interval"]))
+            if "pipeline_max_auto_confidence" in cfg:
+                existing["pipeline"]["max_auto_confidence"] = max(0.0, min(1.0, float(cfg["pipeline_max_auto_confidence"])))
+
+        if "review_auto_approve_threshold" in cfg or "review_staging_ttl_days" in cfg:
+            existing.setdefault("review", {})
+            if "review_auto_approve_threshold" in cfg:
+                existing["review"]["auto_approve_threshold"] = max(0.0, min(1.0, float(cfg["review_auto_approve_threshold"])))
+            if "review_staging_ttl_days" in cfg:
+                existing["review"]["staging_ttl_days"] = max(1, int(cfg["review_staging_ttl_days"]))
+
+        if "brain_max_context_tokens" in cfg or "brain_freshness_warn_days" in cfg or "brain_dedup_threshold" in cfg:
+            existing.setdefault("brain", {})
+            if "brain_max_context_tokens" in cfg:
+                existing["brain"]["max_context_tokens"] = max(500, int(cfg["brain_max_context_tokens"]))
+            if "brain_freshness_warn_days" in cfg:
+                existing["brain"]["freshness_warn_days"] = max(1, int(cfg["brain_freshness_warn_days"]))
+            if "brain_dedup_threshold" in cfg:
+                existing["brain"]["dedup_threshold"] = max(0.0, min(1.0, float(cfg["brain_dedup_threshold"])))
+
+        # Write TOML
+        try:
+            toml_path.write_text(_dict_to_toml(existing), encoding="utf-8")
+        except Exception as exc:
+            self._json({"error": f"儲存失敗：{exc}"}, 500)
+            return
+
+        self._json({"ok": True})
+
     # ── API: GET /api/staging ────────────────
     def _route_staging(self):
         items = _load_staging(self.__class__.workdir)
@@ -991,6 +1083,43 @@ def _validate_node_patch(body: dict) -> tuple[list[str], list, str | None]:
         # nodes table uses 'type' column; 'kind' is an alias used in SELECT
         cols.append("type"); vals.append(k)
     return cols, vals, None
+
+
+def _dict_to_toml(d: dict, prefix: str = "") -> str:
+    """Minimal dict-to-TOML serializer (flat sections only, no nested tables)."""
+    lines: list[str] = []
+    scalars = {}
+    tables = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            tables[k] = v
+        else:
+            scalars[k] = v
+    for k, v in scalars.items():
+        lines.append(f"{k} = {_toml_val(v)}")
+    for section, vals in tables.items():
+        lines.append(f"\n[{prefix}{section}]")
+        for k, v in vals.items():
+            if isinstance(v, dict):
+                # One level of nesting
+                lines.append(f"\n[{prefix}{section}.{k}]")
+                for k2, v2 in v.items():
+                    lines.append(f"{k2} = {_toml_val(v2)}")
+            else:
+                lines.append(f"{k} = {_toml_val(v)}")
+    return "\n".join(lines) + "\n"
+
+
+def _toml_val(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        return f"{v:.4f}".rstrip("0").rstrip(".")
+    if isinstance(v, str):
+        return f'"{v}"'
+    return str(v)
 
 
 def _fmt_file_size(n: int) -> str:
@@ -1483,6 +1612,19 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 .svc-dot.err{{background:var(--red);color:var(--red)}}
 .svc-name{{color:var(--text);font-weight:600;width:120px;flex-shrink:0}}
 .svc-detail{{color:var(--text2)}}
+.cfg-input{{background:var(--bg3);border:1px solid var(--border);border-radius:4px;
+  color:var(--text);padding:5px 8px;font-size:12px;width:90px;outline:none;
+  transition:border-color var(--trans)}}
+.cfg-input:focus{{border-color:var(--accent2)}}
+.cfg-hint{{font-size:10px;color:var(--text3);margin-left:6px;flex:1}}
+.cfg-toggle{{position:relative;display:inline-block;width:36px;height:20px}}
+.cfg-toggle input{{opacity:0;width:0;height:0}}
+.cfg-slider{{position:absolute;cursor:pointer;inset:0;background:var(--bg3);
+  border:1px solid var(--border);border-radius:20px;transition:all var(--trans)}}
+.cfg-slider::before{{content:'';position:absolute;width:14px;height:14px;left:2px;bottom:2px;
+  background:var(--text3);border-radius:50%;transition:all var(--trans)}}
+.cfg-toggle input:checked + .cfg-slider{{background:var(--accent2);border-color:var(--accent2)}}
+.cfg-toggle input:checked + .cfg-slider::before{{transform:translateX(16px);background:#fff}}
 
 /* Audit log */
 .audit-action{{display:inline-block;font-size:10px;padding:3px 8px;border-radius:10px;
@@ -1744,9 +1886,15 @@ body{{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
 
   <!-- E-06: Settings View -->
   <div id="settings-view" class="admin-view">
-    <div class="av-header">⚙ 系統設定 <span class="av-sub">設定、服務狀態與儲存</span></div>
+    <div class="av-header">⚙ 系統設定 <span class="av-sub">檢視系統狀態、調整運行參數</span></div>
     <div class="av-body" id="settings-body">
       <div class="settings-grid" id="settings-grid"></div>
+      <div id="cfg-save-wrap" style="display:none;margin-top:16px;gap:10px;align-items:center">
+        <button id="cfg-save-btn" onclick="saveSettings()" class="ef-btn save"
+          style="padding:10px 28px;font-size:13px;font-weight:600;border-radius:var(--radius-sm);
+          background:var(--accent2);border:1px solid var(--accent2);color:#fff;cursor:pointer">儲存設定</button>
+        <span style="font-size:11px;color:var(--text3)">變更會寫入 .brain/brain.toml，重啟服務後生效</span>
+      </div>
     </div>
   </div>
 
@@ -2765,36 +2913,104 @@ function auditPrev() {{ if (auditPage > 1) loadAudit(auditPage - 1); }}
 function auditNext() {{ if (auditPage < auditTotalPages) loadAudit(auditPage + 1); }}
 
 // ── Settings ──
+let _settingsData = null;
 async function loadSettings() {{
   try {{
     const d = await fetch('/api/admin/settings').then(r => r.json());
+    _settingsData = d;
     const grid = document.getElementById('settings-grid');
     const svcs = d.services || [];
     const st = d.storage || {{}};
-    const storageLabels = {{brain_db:'資料庫大小',backups:'備份'}};
+    const c = d.config || {{}};
+    const storageLabels = {{brain_db:'\u8cc7\u6599\u5eab\u5927\u5c0f',backups:'\u5099\u4efd'}};
     grid.innerHTML = `
       <div class="settings-card">
-        <div class="sc-title">系統資��</div>
-        <div class="settings-row"><span class="sr-label">運行模式</span><span class="sr-value">${{d.mode || 'standalone'}}</span></div>
+        <div class="sc-title">\u7cfb\u7d71\u8cc7\u8a0a</div>
+        <div class="settings-row"><span class="sr-label">\u904b\u884c\u6a21\u5f0f</span><span class="sr-value">${{d.mode || 'standalone'}}</span></div>
         <div class="settings-row"><span class="sr-label">Embedding</span><span class="sr-value">${{d.embedding || 'LocalTFIDF'}}</span></div>
-        <div class="settings-row"><span class="sr-label">LLM</span><span class="sr-value">${{d.llm || '未設定'}}</span></div>
+        <div class="settings-row"><span class="sr-label">LLM</span><span class="sr-value">${{d.llm || '\u672a\u8a2d\u5b9a'}}</span></div>
         <div class="settings-row"><span class="sr-label">Schema</span><span class="sr-value">v${{d.schema_version || 0}}</span></div>
       </div>
       <div class="settings-card">
-        <div class="sc-title">服務狀態</div>
+        <div class="sc-title">\u670d\u52d9\u72c0\u614b</div>
         ${{svcs.map(s => {{
           const cls = s.status === 'ok' ? 'ok' : (s.status === 'warn' ? 'warn' : 'err');
-          return `<div class="svc-item"><div class="svc-dot ${{cls}}"></div><span class="svc-name">${{s.name}}</span><span class="svc-detail">${{s.detail}}</span></div>`;
-        }}).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">無服務資訊</div>'}}
+          return '<div class="svc-item"><div class="svc-dot '+cls+'"></div><span class="svc-name">'+s.name+'</span><span class="svc-detail">'+s.detail+'</span></div>';
+        }}).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">\u7121\u670d\u52d9\u8cc7\u8a0a</div>'}}
       </div>
       <div class="settings-card">
-        <div class="sc-title">儲存空間</div>
+        <div class="sc-title">\u5132\u5b58\u7a7a\u9593</div>
         ${{Object.entries(st).map(([k,v]) =>
-          `<div class="settings-row"><span class="sr-label">${{storageLabels[k]||k}}</span><span class="sr-value">${{v}}</span></div>`
-        ).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">無儲存資訊</div>'}}
+          '<div class="settings-row"><span class="sr-label">'+(storageLabels[k]||k)+'</span><span class="sr-value">'+v+'</span></div>'
+        ).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px 0">\u7121\u5132\u5b58\u8cc7\u8a0a</div>'}}
+      </div>
+      <div class="settings-card" style="grid-column:1/-1">
+        <div class="sc-title">\u77e5\u8b58\u5f15\u64ce\u8a2d\u5b9a</div>
+        ${{_cfgRow('\u6700\u5927\u4e0a\u4e0b\u6587 Token',   'brain_max_context_tokens',  c.brain_max_context_tokens,  'number', '\u63a8\u85a6 4000\u301c8000')}}
+        ${{_cfgRow('\u904e\u6642\u8b66\u544a\u5929\u6578',     'brain_freshness_warn_days', c.brain_freshness_warn_days, 'number', '\u8d85\u904e\u6b64\u5929\u6578\u7684\u77e5\u8b58\u6a19\u8a18\u70ba\u904e\u6642')}}
+        ${{_cfgRow('\u53bb\u91cd\u95be\u503c',           'brain_dedup_threshold',     c.brain_dedup_threshold,     'number', '0.0\u301c1.0\uff0c\u8d8a\u9ad8\u8d8a\u56b4\u683c')}}
+      </div>
+      <div class="settings-card">
+        <div class="sc-title">\u77e5\u8b58\u8870\u6e1b</div>
+        ${{_cfgToggle('\u555f\u7528\u8870\u6e1b', 'decay_enabled', c.decay_enabled)}}
+        ${{_cfgRow('\u57f7\u884c\u9593\u9694\uff08\u5c0f\u6642\uff09', 'decay_interval_hours', c.decay_interval_hours, 'number', '\u591a\u4e45\u57f7\u884c\u4e00\u6b21\u8870\u6e1b\u8a08\u7b97')}}
+      </div>
+      <div class="settings-card">
+        <div class="sc-title">Pipeline \u81ea\u52d5\u5316</div>
+        ${{_cfgToggle('\u555f\u7528 Pipeline', 'pipeline_enabled', c.pipeline_enabled)}}
+        ${{_cfgRow('Worker \u9593\u9694\uff08\u79d2\uff09', 'pipeline_worker_interval', c.pipeline_worker_interval, 'number', '\u6700\u5c0f 10 \u79d2')}}
+        ${{_cfgRow('\u81ea\u52d5\u4fe1\u5fc3\u5ea6\u4e0a\u9650', 'pipeline_max_auto_confidence', c.pipeline_max_auto_confidence, 'number', '0.0\u301c1.0')}}
+      </div>
+      <div class="settings-card">
+        <div class="sc-title">\u77e5\u8b58\u5be9\u6838 (KRB)</div>
+        ${{_cfgRow('\u81ea\u52d5\u6838\u51c6\u95be\u503c', 'review_auto_approve_threshold', c.review_auto_approve_threshold, 'number', '\u4fe1\u5fc3\u5ea6\u8d85\u904e\u6b64\u503c\u81ea\u52d5\u901a\u904e')}}
+        ${{_cfgRow('\u5f85\u5be9\u4fdd\u7559\u5929\u6578', 'review_staging_ttl_days', c.review_staging_ttl_days, 'number', '\u8d85\u904e\u5929\u6578\u81ea\u52d5\u6e05\u9664')}}
       </div>
     `;
-  }} catch(e) {{ document.getElementById('settings-grid').innerHTML = '<div class="settings-card"><div style="color:var(--red);padding:12px">載入失敗，請檢查伺服器連線</div></div>'; }}
+    document.getElementById('cfg-save-wrap').style.display = 'flex';
+  }} catch(e) {{
+    document.getElementById('settings-grid').innerHTML =
+      '<div class="settings-card"><div style="color:var(--red);padding:12px">\u8f09\u5165\u5931\u6557</div></div>';
+  }}
+}}
+function _cfgRow(label, key, val, type, hint) {{
+  const step = type === 'number' && String(val).includes('.') ? '0.01' : '1';
+  return '<div class="settings-row"><span class="sr-label">'+label+'</span>'
+    +'<input class="cfg-input" data-key="'+key+'" type="'+type+'" value="'+val+'" step="'+step+'">'
+    +'<span class="cfg-hint">'+hint+'</span></div>';
+}}
+function _cfgToggle(label, key, val) {{
+  return '<div class="settings-row"><span class="sr-label">'+label+'</span>'
+    +'<label class="cfg-toggle"><input type="checkbox" data-key="'+key+'" '+(val?'checked':'')+'>'
+    +'<span class="cfg-slider"></span></label></div>';
+}}
+async function saveSettings() {{
+  const cfg = {{}};
+  document.querySelectorAll('.cfg-input').forEach(el => {{
+    const k = el.dataset.key;
+    cfg[k] = el.step === '0.01' ? parseFloat(el.value) : parseInt(el.value, 10);
+  }});
+  document.querySelectorAll('.cfg-toggle input[type=checkbox]').forEach(el => {{
+    cfg[el.dataset.key] = el.checked;
+  }});
+  const btn = document.getElementById('cfg-save-btn');
+  btn.disabled = true; btn.textContent = '\u5132\u5b58\u4e2d\u2026';
+  try {{
+    const res = await fetch('/api/admin/settings', {{
+      method:'POST', headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify({{config: cfg}})
+    }});
+    const data = await res.json();
+    if (res.ok && data.ok) {{
+      btn.textContent = '\u2713 \u5df2\u5132\u5b58';
+      setTimeout(() => {{ btn.textContent = '\u5132\u5b58\u8a2d\u5b9a'; btn.disabled = false; }}, 2000);
+    }} else {{
+      btn.textContent = data.error || '\u5132\u5b58\u5931\u6557';
+      setTimeout(() => {{ btn.textContent = '\u5132\u5b58\u8a2d\u5b9a'; btn.disabled = false; }}, 3000);
+    }}
+  }} catch(e) {{
+    btn.textContent = '\u7db2\u8def\u932f\u8aa4'; btn.disabled = false;
+  }}
 }}
 
 // ── Add Knowledge ──
@@ -3398,11 +3614,20 @@ def create_app(workdir, **_):
         bd = wd / ".brain"
         result: dict = {
             "mode": "standalone", "embedding": "LocalTFIDF",
-            "llm": "未設定", "schema_version": 0,
-            "services": [], "storage": {},
+            "llm": "\u672a\u8a2d\u5b9a", "schema_version": 0,
+            "services": [], "storage": {}, "config": {}, "has_toml": False,
+        }
+        _default_cfg = {
+            "decay_enabled": True, "decay_interval_hours": 24,
+            "pipeline_enabled": True, "pipeline_worker_interval": 60,
+            "pipeline_max_auto_confidence": 0.85,
+            "review_auto_approve_threshold": 0.80, "review_staging_ttl_days": 30,
+            "brain_max_context_tokens": 6000, "brain_freshness_warn_days": 30,
+            "brain_dedup_threshold": 0.85,
         }
         toml_path = bd / "brain.toml"
         if toml_path.exists():
+            result["has_toml"] = True
             try:
                 try:
                     import tomllib
@@ -3411,9 +3636,23 @@ def create_app(workdir, **_):
                 cfg = tomllib.loads(toml_path.read_text(encoding="utf-8"))
                 result["mode"] = cfg.get("mode", "standalone")
                 result["embedding"] = cfg.get("embedding", {}).get("provider", "LocalTFIDF")
-                result["llm"] = cfg.get("llm", {}).get("provider", "未設定")
+                result["llm"] = cfg.get("llm", {}).get("provider", "\u672a\u8a2d\u5b9a")
+                result["config"] = {
+                    "decay_enabled": cfg.get("decay", {}).get("enabled", True),
+                    "decay_interval_hours": cfg.get("decay", {}).get("run_interval_hours", 24),
+                    "pipeline_enabled": cfg.get("pipeline", {}).get("enabled", True),
+                    "pipeline_worker_interval": cfg.get("pipeline", {}).get("worker_interval_seconds", 60),
+                    "pipeline_max_auto_confidence": cfg.get("pipeline", {}).get("max_auto_confidence", 0.85),
+                    "review_auto_approve_threshold": cfg.get("review", {}).get("auto_approve_threshold", 0.80),
+                    "review_staging_ttl_days": cfg.get("review", {}).get("staging_ttl_days", 30),
+                    "brain_max_context_tokens": cfg.get("brain", {}).get("max_context_tokens", 6000),
+                    "brain_freshness_warn_days": cfg.get("brain", {}).get("freshness_warn_days", 30),
+                    "brain_dedup_threshold": cfg.get("brain", {}).get("dedup_threshold", 0.85),
+                }
             except Exception:
-                pass
+                result["config"] = dict(_default_cfg)
+        else:
+            result["config"] = dict(_default_cfg)
         db_path = bd / "brain.db"
         if not db_path.exists():
             result["services"].append({"name": "brain.db", "status": "error", "detail": "not found"})
@@ -3449,7 +3688,7 @@ def create_app(workdir, **_):
                 except Exception:
                     pass
             else:
-                result["services"].append({"name": "Central Brain", "status": "ok", "detail": "未設定"})
+                result["services"].append({"name": "Central Brain", "status": "ok", "detail": "\u672a\u8a2d\u5b9a"})
         finally:
             conn.close()
         try:
@@ -3458,12 +3697,51 @@ def create_app(workdir, **_):
             if backup_dir.exists():
                 backups = list(backup_dir.glob("brain.db.*"))
                 total_size = sum(f.stat().st_size for f in backups)
-                result["storage"]["backups"] = f"{len(backups)} 份 / {_fmt_file_size(total_size)}"
+                result["storage"]["backups"] = f"{len(backups)} \u4efd / {_fmt_file_size(total_size)}"
             else:
-                result["storage"]["backups"] = "無備份"
+                result["storage"]["backups"] = "\u7121\u5099\u4efd"
         except Exception:
             pass
         return jsonify(result)
+
+    @app.route("/api/admin/settings", methods=["POST"])
+    def api_save_settings():
+        bd = wd / ".brain"
+        toml_path = bd / "brain.toml"
+        existing: dict = {}
+        if toml_path.exists():
+            try:
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib  # type: ignore[no-redef]
+                existing = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        body = request.get_json(silent=True) or {}
+        cfg = body.get("config", {})
+        if not cfg:
+            return jsonify({"error": "\u6c92\u6709\u8981\u5132\u5b58\u7684\u8a2d\u5b9a"}), 400
+        # Apply
+        for section, key, cfgkey, conv in [
+            ("decay", "enabled", "decay_enabled", bool),
+            ("decay", "run_interval_hours", "decay_interval_hours", int),
+            ("pipeline", "enabled", "pipeline_enabled", bool),
+            ("pipeline", "worker_interval_seconds", "pipeline_worker_interval", int),
+            ("pipeline", "max_auto_confidence", "pipeline_max_auto_confidence", float),
+            ("review", "auto_approve_threshold", "review_auto_approve_threshold", float),
+            ("review", "staging_ttl_days", "review_staging_ttl_days", int),
+            ("brain", "max_context_tokens", "brain_max_context_tokens", int),
+            ("brain", "freshness_warn_days", "brain_freshness_warn_days", int),
+            ("brain", "dedup_threshold", "brain_dedup_threshold", float),
+        ]:
+            if cfgkey in cfg:
+                existing.setdefault(section, {})[key] = conv(cfg[cfgkey])
+        try:
+            toml_path.write_text(_dict_to_toml(existing), encoding="utf-8")
+        except Exception as exc:
+            return jsonify({"error": f"儲存失敗：{exc}"}), 500
+        return jsonify({"ok": True})
 
     @app.route("/api/staging")
     def api_staging():

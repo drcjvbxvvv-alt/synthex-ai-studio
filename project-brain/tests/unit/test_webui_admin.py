@@ -275,3 +275,48 @@ class TestSettings:
         r = c.get("/api/admin/settings")
         d = json.loads(r.data)
         assert "brain_db" in d["storage"]
+
+    def test_settings_returns_config(self, setup):
+        c, db, bd, wd = setup
+        r = c.get("/api/admin/settings")
+        d = json.loads(r.data)
+        assert "config" in d
+        cfg = d["config"]
+        assert "decay_enabled" in cfg
+        assert "pipeline_enabled" in cfg
+        assert "brain_max_context_tokens" in cfg
+        assert "review_auto_approve_threshold" in cfg
+
+    def test_save_settings_writes_toml(self, setup):
+        c, db, bd, wd = setup
+        r = c.post("/api/admin/settings", json={
+            "config": {
+                "decay_enabled": False,
+                "brain_max_context_tokens": 4000,
+                "review_auto_approve_threshold": 0.9,
+            }
+        })
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d["ok"] is True
+        # Verify TOML was written
+        toml_path = bd / "brain.toml"
+        assert toml_path.exists()
+        content = toml_path.read_text(encoding="utf-8")
+        assert "enabled = false" in content
+        assert "max_context_tokens = 4000" in content
+
+    def test_save_settings_then_read_back(self, setup):
+        c, db, bd, wd = setup
+        c.post("/api/admin/settings", json={
+            "config": {"pipeline_enabled": False, "decay_interval_hours": 12}
+        })
+        r = c.get("/api/admin/settings")
+        d = json.loads(r.data)
+        assert d["config"]["pipeline_enabled"] is False
+        assert d["config"]["decay_interval_hours"] == 12
+
+    def test_save_settings_empty_config_rejected(self, setup):
+        c, db, bd, wd = setup
+        r = c.post("/api/admin/settings", json={"config": {}})
+        assert r.status_code == 400
