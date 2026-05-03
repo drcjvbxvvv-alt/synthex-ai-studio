@@ -30,6 +30,16 @@
 - 當前 traces = 1,737 條，sampling rate = 5（每 5 次查詢記錄 1 次），正常運作
 - 深度審查的 14,997 figure 來自不同 `.brain/` 快照
 
+### H-03：使用者指南完整化（874 → 1214 行）
+
+- 新增 §8.4 MCP Tool 完整參數參考（18 個 tools 全參數表，含 `<details>` 展開）
+- 新增 §12.4 Federation 自動同步使用說明
+- 新增 §12.5 多庫合併查詢（Monorepo）使用方式
+- 新增 §12b 故障排除（常見錯誤表 + MCP/搜尋/衰減問題解法）
+- 擴充 §14.2 brain.toml 完整參考（embedder/team/federation/session 全段落）
+- 新增 §14.3 Embedder 選擇指南
+- FAQ 從 8 題擴充至 11 題（匯入文件、git 關係、升級方式）
+
 ### H-02：mcp_server.py 按 domain 拆分（2,059 → 539 行）
 
 - `mcp_server.py` 從 2,059 行精簡至 539 行（BrainServer + factory + CLI）

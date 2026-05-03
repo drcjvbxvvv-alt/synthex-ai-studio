@@ -1,8 +1,8 @@
 # Project Brain — 使用者指南
 
-> **版本**：v0.53.1
+> **版本**：v0.60.0
 > **適用對象**：所有團隊成員（工程師、PM、設計師、管理者）
-> **最後更新**：2026-05-03
+> **最後更新**：2026-05-04
 
 ---
 
@@ -352,22 +352,210 @@ brain pipeline-stats --json
 }
 ```
 
-### 8.3 AI Agent 可用的 MCP Tools
+### 8.3 AI Agent 可用的 MCP Tools（完整參考）
 
-AI Agent 連接後可使用以下工具：
+AI Agent 連接後可使用以下 18 個工具 + 1 個資源：
 
-| 工具 | 用途 | 使用頻率 |
-|------|------|---------|
-| `get_context` | 取得任務相關知識 | 每次開始任務 |
-| `search_knowledge` | 搜尋知識庫 | 需要查資料時 |
-| `add_knowledge` | 加入新知識 | 發現值得記住的事 |
-| `batch_add_knowledge` | 批次加入（最多 50 條） | 上傳文件後提取 |
-| `complete_task` | 記錄任務完成 + 學到的東西 | 每次完成任務 |
-| `brain_status` | 知識庫統計 | 查看狀態 |
-| `report_knowledge_outcome` | 回饋知識是否有用 | 知識幫到你時 |
-| `krb_pre_screen` | 列出待審知識 | 審查時 |
-| `impact_analysis` | 分析元件影響範圍 | 改動前評估 |
-| `mark_helpful` | 標記知識有用/無用 | 隨時 |
+#### 知識管理（Knowledge）
+
+| 工具 | 用途 |
+|------|------|
+| `get_context` | 根據任務描述注入相關知識 |
+| `search_knowledge` | 語意搜尋知識庫 |
+| `add_knowledge` | 手動加入一筆知識 |
+| `batch_add_knowledge` | 批次加入多筆知識（最多 50 條） |
+| `answer_question` | AI 回饋對節點的判斷，更新信心值 |
+
+#### 回饋閉環（Feedback）
+
+| 工具 | 用途 |
+|------|------|
+| `complete_task` | 任務完成後批次寫入學習成果 |
+| `report_knowledge_outcome` | 回饋知識是否有用（驅動衰減引擎） |
+| `mark_helpful` | 快速標記知識有用/無用 |
+
+#### 管理查詢（Admin）
+
+| 工具 | 用途 |
+|------|------|
+| `brain_status` | 知識庫統計摘要 |
+| `impact_analysis` | 分析修改某元件的影響範圍 |
+| `temporal_query` | 時間機器——查詢特定時間點的知識狀態 |
+
+#### Pipeline
+
+| 工具 | 用途 |
+|------|------|
+| `auto_resolve_knowledge` | AI 自動評估低信心節點 |
+| `generate_questions` | 列出需要確認的低信心知識 |
+| `krb_pre_screen` | AI 預篩 KRB 待審知識（Claude Haiku） |
+
+#### 聯邦/多庫（Federation）
+
+| 工具 | 用途 |
+|------|------|
+| `push_to_central` | 推送本地知識到 Central Brain |
+| `multi_brain_query` | 同時查詢多個 .brain/ 目錄 |
+| `federation_sync` | 從 federation 來源同步知識 |
+
+#### 推理（Reasoning）
+
+| 工具 | 用途 |
+|------|------|
+| `reasoning_chain` | 從任務關鍵字遍歷知識圖譜，產生推理鏈 |
+
+#### 資源（Resource）
+
+| 資源 URI | 用途 |
+|----------|------|
+| `brain://graph/mermaid` | 以 Mermaid 格式回傳知識圖譜 |
+
+### 8.4 MCP Tool 參數詳細參考
+
+<details>
+<summary><strong>get_context</strong> — 取得任務相關知識</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `task` | str | ✅ | — | 當前任務描述 |
+| `current_file` | str | | `""` | 當前檔案路徑（提升相關性） |
+| `workdir` | str | | `""` | 工作目錄 |
+| `force` | bool | | `false` | 跳過 session 去重 |
+| `detail_level` | str | | `"full"` | `"summary"` 或 `"full"` |
+| `current_context_tags` | list[str] | | `null` | 當前操作標籤（降權重疊知識） |
+| `ai_select` | bool | | `false` | 啟用 AI 輔助相關性選取 |
+
+</details>
+
+<details>
+<summary><strong>search_knowledge</strong> — 語意搜尋</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `query` | str | ✅ | — | 搜尋詞 |
+| `kind` | str | | `""` | 類型過濾（Decision/Pitfall/Rule/ADR） |
+| `top_k` | int | | `5` | 回傳筆數（1-10） |
+| `author` | str | | `""` | 按來源過濾 |
+
+</details>
+
+<details>
+<summary><strong>add_knowledge</strong> — 加入知識</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `title` | str | ✅ | — | 標題（< 200 字） |
+| `content` | str | ✅ | — | 詳細說明（< 2000 字） |
+| `kind` | str | | `"Note"` | Note/Decision/Pitfall/Rule/ADR |
+| `scope` | str | | `"global"` | 模組作用域 |
+| `tags` | list[str] | | `null` | 標籤（最多 10 個） |
+| `confidence` | float | | `0.8` | 信心度 0.0~1.0 |
+| `source` | str | | `""` | 來源標記 |
+| `workdir` | str | | `""` | 工作目錄 |
+| `description` | str | | `""` | 一行摘要（供 AI 選取） |
+
+</details>
+
+<details>
+<summary><strong>batch_add_knowledge</strong> — 批次加入</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `items` | list[dict] | ✅ | — | 知識清單（每筆同 add_knowledge 格式，最多 50） |
+| `workdir` | str | | `""` | 工作目錄 |
+
+</details>
+
+<details>
+<summary><strong>complete_task</strong> — 記錄任務成果</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `task_description` | str | ✅ | — | 一句話摘要 |
+| `decisions` | list[str] | | `null` | 做了哪些架構決策 |
+| `lessons` | list[str] | | `null` | 學到什麼（→ Rule 節點） |
+| `pitfalls` | list[str] | | `null` | 踩了什麼坑（→ Pitfall 節點） |
+| `workdir` | str | | `""` | 工作目錄 |
+
+</details>
+
+<details>
+<summary><strong>report_knowledge_outcome</strong> — 知識回饋</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `node_id` | str | ✅ | — | 節點 ID |
+| `was_useful` | bool | ✅ | — | True=有用, False=過時/錯誤 |
+| `notes` | str | | `""` | 解釋為何無用 |
+| `workdir` | str | | `""` | 工作目錄 |
+
+</details>
+
+<details>
+<summary><strong>temporal_query</strong> — 時間機器查詢</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `at_time` | str | | `""` | ISO 時間戳（空=當前） |
+| `git_branch` | str | | `"HEAD"` | Git branch |
+| `limit` | int | | `20` | 最大結果數 |
+
+</details>
+
+<details>
+<summary><strong>push_to_central</strong> — 推送到中央知識庫</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `node_ids` | list[str] | | `null` | 指定節點（null=用篩選） |
+| `kind` | str | | `""` | 類型篩選 |
+| `min_confidence` | float | | `0.8` | 最低信心度 |
+| `max_nodes` | int | | `50` | 最大推送數 |
+| `target_url` | str | | `""` | Central Brain URL |
+| `api_key` | str | | `""` | API key |
+| `workdir` | str | | `""` | 工作目錄 |
+
+</details>
+
+<details>
+<summary><strong>multi_brain_query</strong> — 多庫查詢</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `task` | str | ✅ | — | 任務描述 |
+| `extra_brain_dirs` | list[str] | | `null` | 額外 Brain 目錄 |
+| `top_k` | int | | `5` | 每個 Brain 最大結果數 |
+| `workdir` | str | | `""` | 主要工作目錄 |
+
+環境變數 `BRAIN_EXTRA_DIRS`（冒號分隔）可永久配置額外 Brain。
+
+</details>
+
+<details>
+<summary><strong>federation_sync</strong> — 聯邦同步</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `dry_run` | bool | | `false` | 預覽模式 |
+| `min_confidence` | float | | `0.5` | 最低信心度 |
+| `workdir` | str | | `""` | 工作目錄 |
+
+</details>
+
+<details>
+<summary><strong>krb_pre_screen</strong> — AI 預篩待審知識</summary>
+
+| 參數 | 類型 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `limit` | int | | `50` | 最大處理數 |
+| `auto_approve_threshold` | float | | `0.0` | 自動核准閾值（0=關閉） |
+| `auto_reject_threshold` | float | | `0.0` | 自動駁回閾值（0=關閉） |
+| `max_api_calls` | int | | `10` | 最大 API 呼叫數 |
+| `workdir` | str | | `""` | 工作目錄 |
+
+需要 `ANTHROPIC_API_KEY` 環境變數。
+
+</details>
 
 ---
 
@@ -684,6 +872,91 @@ brain fed import /tmp/bundle.json
 
 匯出會自動清理 PII（email、IP、token）。
 
+### 12.4 Federation 自動同步
+
+除了手動匯出/匯入，Brain 支援自動聯邦同步（Federation Sync）：
+
+```bash
+# 新增同步來源
+brain fed sync --add-source "project-a:/path/to/federation_export.json"
+
+# 執行同步（匯入到 KRB Staging，需人工審查）
+brain fed sync
+
+# 預覽模式（不實際寫入）
+brain fed sync --dry-run
+```
+
+**MCP 工具呼叫**（AI Agent 使用）：
+```
+federation_sync(dry_run=false, min_confidence=0.5)
+```
+
+### 12.5 多庫合併查詢（Monorepo）
+
+如果你的組織有多個專案各有自己的 `.brain/`，可以同時查詢所有知識庫：
+
+```bash
+# 設定環境變數（永久生效）
+export BRAIN_EXTRA_DIRS="/path/to/project-a:/path/to/project-b"
+```
+
+AI Agent 可透過 `multi_brain_query` 工具自動查詢所有已配置的 Brain，結果會標注來源專案。
+
+---
+
+## 12b. 故障排除
+
+### 常見錯誤
+
+| 錯誤訊息 | 原因 | 解法 |
+|----------|------|------|
+| `.brain/ 不存在，請先執行：brain init` | 未初始化 | 執行 `brain init` |
+| `Rate limit：每分鐘最多 60 次呼叫` | AI 呼叫過快 | 等待 60 秒，或設 `BRAIN_RATE_LIMIT_RPM=120` |
+| `請安裝 mcp 套件` | 缺少依賴 | `pip install "project-brain[mcp]"` |
+| `ANTHROPIC_API_KEY 未設定` | 使用 AI 功能但缺 key | 設定環境變數 |
+| `database is locked` | 多程序並發寫入 | 確保只有一個 MCP Server 在運行 |
+
+### MCP Server 無法啟動
+
+```bash
+# 1. 檢查 brain 是否正常
+brain doctor --fix
+
+# 2. 檢查 MCP 連接
+brain serve --mcp --workdir /your/project
+# 如果成功啟動（無錯誤輸出），按 Ctrl+C 結束
+
+# 3. 驗證 Claude Code 設定
+cat ~/.claude/claude_desktop_config.json | python -m json.tool
+```
+
+### 搜尋結果不佳
+
+```bash
+# 檢查知識庫是否有足夠的知識
+brain status
+
+# 執行搜尋品質評估
+brain eval run
+
+# 如果 recall 很低，嘗試：
+# 1. 確認知識的標題/內容足夠描述性
+# 2. 執行資料庫最佳化
+brain optimize
+```
+
+### 知識衰減太快
+
+在 `.brain/brain.toml` 調整衰減參數：
+```toml
+[decay]
+enabled = true
+run_interval_hours = 48     # 降低頻率（預設 24）
+```
+
+或者對重要知識使用 `mark_helpful` 提升信心。
+
 ---
 
 ## 13. 常用命令速查表
@@ -741,27 +1014,70 @@ brain fed import /tmp/bundle.json
 | `BRAIN_RATE_LIMIT_RPM` | `60` | MCP 每分鐘最大呼叫次數 |
 | `BRAIN_EMBED_PROVIDER` | 自動偵測 | 向量搜尋（`none` = 只用全文搜尋） |
 
-### 14.2 brain.toml 設定檔
+### 14.2 brain.toml 完整參考
 
 Brain 的進階設定在 `.brain/brain.toml`（可選，不建立也能正常運作）：
 
 ```toml
+# ── 核心設定 ──────────────────────────────────────────
 [brain]
 max_context_tokens = 6000     # Context 注入的最大 token 數
 freshness_warn_days = 30      # 知識超過幾天開始警告
-dedup_threshold = 0.85        # 語意去重閾值
+dedup_threshold = 0.85        # 語意去重閾值（0.0~1.0，越高越嚴格）
 
+# ── Pipeline 自動知識提取 ─────────────────────────────
 [pipeline]
 enabled = true                # 自動知識提取開關
-worker_interval_seconds = 60  # Pipeline 執行間隔
+worker_interval_seconds = 60  # Pipeline worker 執行間隔（秒）
 
+# ── 知識衰減 ──────────────────────────────────────────
 [decay]
 enabled = true                # 知識衰減開關
-run_interval_hours = 24       # 衰減計算間隔
+run_interval_hours = 24       # 衰減計算間隔（時）
+# 衰減基於：last_accessed_at 距今天數 + feedback 累計
 
+# ── KRB 審查 ──────────────────────────────────────────
 [review]
-auto_approve_threshold = 0.80 # 高信心知識自動核准閾值
-staging_ttl_days = 30         # 待審知識過期天數
+auto_approve_threshold = 0.80 # 高信心知識自動核准閾值（0=關閉）
+staging_ttl_days = 30         # 待審知識過期天數（超過自動歸檔）
+
+# ── 團隊模式 ──────────────────────────────────────────
+[team]
+mode = "local-only"           # "local-only" | "overlay" | "central-only"
+central_brain_url = ""        # Central Brain HTTP URL
+central_brain_key = ""        # Central Brain API key
+
+# ── Embedder（向量搜尋）─────────────────────────────────
+[embedder]
+provider = "auto"             # "auto" | "sentence-transformers" | "openai" | "none"
+model = ""                    # 指定 model 名稱（空=使用預設）
+# auto: 有 GPU → sentence-transformers，否則 → FTS5 only
+# none: 強制停用向量搜尋（只用 FTS5 全文搜尋）
+
+# ── L1 Session Store ──────────────────────────────────
+[session]
+ttl_minutes = 30              # Session 工作記憶 TTL
+
+# ── Federation 同步 ───────────────────────────────────
+[federation]
+# 同步來源透過 CLI 管理：brain fed sync --add-source
+# 設定存在 .brain/federation.json
+```
+
+### 14.3 Embedder 選擇指南
+
+| Provider | 條件 | 搜尋品質 | 成本 |
+|----------|------|---------|------|
+| `sentence-transformers` | 本地 GPU (≥4GB VRAM) | 最佳 | 免費 |
+| `openai` | 有 OpenAI API key | 優良 | ~$0.0001/query |
+| FTS5 (無 embedder) | 無需任何設定 | 基本 | 免費 |
+
+```bash
+# 檢查當前 embedder 狀態
+brain config
+
+# 強制使用 FTS5 only（在沒有 GPU 的 CI 環境）
+export BRAIN_EMBED_PROVIDER=none
 ```
 
 ---
@@ -823,6 +1139,30 @@ brain webui
 brain status
 
 # 在 AI 回覆中通常會看到「根據知識庫...」的提示
+```
+
+### Q: 怎麼把現有文件匯入 Brain？
+
+三種方式：
+1. **透過 AI Agent**：告訴它「讀取這份文件，提取知識」，它會自動呼叫 `add_knowledge`
+2. **CLI Ingest**：`brain ingest /path/to/docs/` 批次掃描文件目錄
+3. **手動**：`brain add "標題" --content "內容" --kind Decision`
+
+### Q: Brain 跟 git 的關係是什麼？
+
+Brain 可以自動從 git 歷史學習（`brain scan`），也可以透過 post-commit hook 自動同步最新 commit。但 Brain 不依賴 git——沒有 git 的目錄也可以使用 Brain。
+
+`.brain/` 目錄可以選擇：
+- 加入 `.gitignore`（個人使用，不共享知識庫）
+- 提交到 git（共享 brain.toml 設定，但 brain.db 建議 gitignore）
+
+### Q: 如何升級 Project Brain？
+
+```bash
+pip install --upgrade project-brain
+
+# 升級後 DB schema 會自動遷移，無需手動操作
+brain status  # 確認正常
 ```
 
 ---
