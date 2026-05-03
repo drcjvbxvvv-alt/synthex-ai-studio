@@ -477,45 +477,6 @@ def cmd_meta_knowledge(args):
         _err(f"找不到節點：{node_id}")
 
 
-def cmd_timeline(args):
-    """REFACTOR-01: 已整合至 history，保留供向後相容。"""
-    print(f"  {Y}⚠ brain timeline 已整合至 brain history（支援 --diff）{R}")
-    print(f"  {D}  請改用：brain history <node_id> [--diff]{R}")
-    wd      = _workdir(args)
-    query   = " ".join(args.node_ref) if isinstance(args.node_ref, list) else (args.node_ref or "")
-    if not query:
-        _err("用法：brain timeline <node_id_or_title>"); return
-    bd = Path(wd) / ".brain"
-    if not bd.exists():
-        _err("Brain 尚未初始化，請執行：brain setup"); return
-
-    from project_brain.brain_db import BrainDB
-    db = BrainDB(bd)
-
-    node = db.get_node(query)
-    if not node:
-        hits = db.search_nodes(query, limit=1)
-        node = hits[0] if hits else None
-    if not node:
-        _err(f"找不到節點：{query}"); return
-
-    history = db.get_node_history(node["id"])
-    print(f"\n{C}{B}📜  版本歷史：{node['title']}{R}")
-    print(f"  {GR}節點 ID：{node['id']}{R}")
-    print(f"  {GR}{'─'*48}{R}")
-    if not history:
-        _info("尚無版本歷史（update_node 後才會記錄）")
-        print(f"  {D}目前版本：conf={node.get('confidence',0.8):.2f}{R}\n")
-        return
-    for h in history:
-        print(f"  {G}v{h['version']}{R}  {GR}{h.get('snapshot_at','')[:19]}{R}"
-              f"  conf={h.get('confidence') or '?'}"
-              f"  {D}{h.get('change_note') or ''}{R}")
-        if h.get("title"):
-            print(f"       標題：{h['title'][:60]}")
-    print()
-
-
 def cmd_history(args):
     """FEAT-01/FEAT-03: brain history <node_id|--at date> — 版本歷史 or 時間快照"""
     wd     = _workdir(args)
@@ -614,28 +575,6 @@ def _at_snapshot(db, at_str: str, workdir: str = "") -> None:
     print(f"\n{D}  brain history --at <date>  查看其他時間點{R}\n")
 
 
-def cmd_restore(args):
-    """REFACTOR-01: 已整合至 rollback，保留供向後相容。"""
-    print(f"  {Y}⚠ brain restore 已整合至 brain rollback（--version 旗標亦可用）{R}")
-    print(f"  {D}  請改用：brain rollback {getattr(args,'node_id','')} --version {getattr(args,'version','N')}{R}")
-    wd      = _workdir(args)
-    node_id = getattr(args, 'node_id', '')
-    ver     = getattr(args, 'version', None)
-    if not node_id or ver is None:
-        _err("用法：brain restore <node_id> --version <N>"); return
-    bd = Path(wd) / ".brain"
-    if not bd.exists():
-        _err("Brain 尚未初始化"); return
-
-    from project_brain.brain_db import BrainDB
-    db = BrainDB(bd)
-    ok = db.rollback_node(node_id, int(ver))
-    if ok:
-        _ok(f"節點 {C}{node_id[:16]}{R} 已還原到版本 v{ver}")
-    else:
-        _err(f"找不到節點 {node_id} 的版本 v{ver}（可用 brain history {node_id} 查詢）")
-
-
 def cmd_deprecated(args):
     """ARCH-05 + REFACTOR-01: brain deprecated list/mark/purge/info"""
     sub = getattr(args, 'deprecated_sub', 'list') or 'list'
@@ -709,57 +648,6 @@ def cmd_deprecated(args):
 
     else:
         _err(f"未知子命令：{sub}（可用：list, mark, purge, info）")
-
-
-def cmd_deprecate(args):
-    """REFACTOR-01: 已整合至 deprecated mark，保留供向後相容。"""
-    nid = getattr(args, 'node_id', '')
-    print(f"  {Y}⚠ brain deprecate 已整合至 brain deprecated mark{R}")
-    print(f"  {D}  請改用：brain deprecated mark {nid} --reason \"...\"{R}")
-    wd = _workdir(args)
-    bd = Path(wd) / ".brain"
-    if not bd.exists():
-        _err("Brain 尚未初始化"); return
-    from project_brain.brain_db import BrainDB
-    db = BrainDB(bd)
-    nid = getattr(args, 'node_id', '')
-    ok  = db.deprecate_node(
-        nid,
-        replaced_by=getattr(args, 'replaced_by', ''),
-        reason=getattr(args, 'reason', ''),
-    )
-    if ok:
-        _ok(f"節點 {nid} 已標記為棄用")
-    else:
-        _err(f"找不到節點：{nid}")
-
-
-def cmd_lifecycle(args):
-    """REFACTOR-01: 已整合至 deprecated info，保留供向後相容。"""
-    nid = getattr(args, 'node_id', '')
-    print(f"  {Y}⚠ brain lifecycle 已整合至 brain deprecated info{R}")
-    print(f"  {D}  請改用：brain deprecated info {nid}{R}")
-    import json as _j
-    wd = _workdir(args)
-    bd = Path(wd) / ".brain"
-    if not bd.exists():
-        _err("Brain 尚未初始化"); return
-    from project_brain.brain_db import BrainDB
-    db  = BrainDB(bd)
-    lc  = db.get_lifecycle(getattr(args, 'node_id', ''))
-    if not lc:
-        _err(f"找不到節點"); return
-    status_icon = "🔴 deprecated" if lc["status"] == "deprecated" else "🟢 active"
-    print(f"\n  節點: {B}{lc['title']}{R}")
-    print(f"  狀態: {status_icon}")
-    print(f"  信心: {lc['confidence']:.2f}  建立: {(lc['created_at'] or '')[:10]}  更新: {(lc['updated_at'] or '')[:10]}")
-    if lc["replaced_by"]:
-        print(f"  取代節點: {', '.join(lc['replaced_by'])}")
-    if lc["history"]:
-        print(f"\n  歷史版本 ({len(lc['history'])} 筆):")
-        for h in lc["history"][:5]:
-            print(f"    v{h.get('version','?')}  {(h.get('changed_at','') or '')[:16]}  {h.get('change_note','')[:40]}")
-    print()
 
 
 def cmd_rollback(args):

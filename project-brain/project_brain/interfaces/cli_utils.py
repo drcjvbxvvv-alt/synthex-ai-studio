@@ -637,10 +637,6 @@ def _build_parser():
                    help='掃描全部 commit（預設只掃最近 100 個）')
     p.add_argument('--quiet', action='store_true', help='靜默模式')
 
-    # REFACTOR-01: health-report 已整合至 report，保留 parser 供向後相容
-    p = mkp('health-report', argparse.SUPPRESS, advanced=True)
-    p.add_argument('--format', choices=['text','json'], default='text')
-
     p = mkp('report', 'ROI + 健康度 + 使用率綜合報告（--analytics 顯示詳細分析）',
             advanced=True)
     p.add_argument('--days', type=int, default=7, help='回溯天數（預設：7）')
@@ -663,12 +659,6 @@ def _build_parser():
     p.add_argument('--url', default=None, help='GitHub / Linear issue URL')
     p.add_argument('--list', action='store_true', help='列出所有已連結的 issue')
 
-    # REFACTOR-01: analytics 已整合至 report --analytics，保留 parser 供向後相容
-    p = mkp('analytics', argparse.SUPPRESS, advanced=True)
-    p.add_argument('--format', choices=['text','json'], default='text')
-    p.add_argument('--export', choices=['csv'], default=None)
-    p.add_argument('--output', '-o', default=None)
-
     p = mkp('export', '匯出知識庫（JSON / Markdown）')
     p.add_argument('--format', choices=['json','markdown','neo4j','graphml'], default='json',
                    help='匯出格式（json/markdown/neo4j/graphml，預設 json）')
@@ -686,10 +676,6 @@ def _build_parser():
     p = mkp('index', '向量索引重建（語意搜尋）', advanced=True)
     p.add_argument('--quiet', action='store_true')
 
-    # REFACTOR-01: timeline 已整合至 history（支援 --diff），保留 parser 供向後相容
-    p = mkp('timeline', argparse.SUPPRESS, advanced=True)
-    p.add_argument('node_ref', nargs='+')
-
     p = mkp('rollback', '版本還原（--to N 或 --version N）', advanced=True)
     p.add_argument('node_id', help='節點 ID')
     p.add_argument('--to', type=int, default=None, help='目標版本號')
@@ -703,11 +689,6 @@ def _build_parser():
     p.add_argument('--diff', action='store_true',
                    help='顯示相鄰版本的 unified diff（FEAT-04）')
 
-    # REFACTOR-01: restore 已整合至 rollback --version，保留 parser 供向後相容
-    p = mkp('restore', argparse.SUPPRESS, advanced=True)
-    p.add_argument('node_id')
-    p.add_argument('--version', type=int, required=True)
-
     p = mkp('deprecated', '棄用節點管理（list / mark / purge / info）', advanced=True)
     p.add_argument('deprecated_sub', nargs='?', default='list',
                    choices=['list', 'purge', 'mark', 'info'],
@@ -720,16 +701,6 @@ def _build_parser():
     p.add_argument('--replaced-by', default='', dest='replaced_by',
                    help='mark：取代節點 ID')
     p.add_argument('--reason', default='', help='mark：棄用原因')
-
-    # REFACTOR-01: deprecate 已整合至 deprecated mark，保留 parser 供向後相容
-    p = mkp('deprecate', argparse.SUPPRESS, advanced=True)
-    p.add_argument('node_id')
-    p.add_argument('--replaced-by', default='', dest='replaced_by')
-    p.add_argument('--reason', default='')
-
-    # REFACTOR-01: lifecycle 已整合至 deprecated info，保留 parser 供向後相容
-    p = mkp('lifecycle', argparse.SUPPRESS, advanced=True)
-    p.add_argument('node_id')
 
     p = mkp('migrate', '跨專案知識遷移', advanced=True)
     p.add_argument('--from', dest='from_path', required=True,

@@ -31,8 +31,8 @@ from project_brain.cli_utils import (
 )
 
 from project_brain.cli_knowledge import (
-    cmd_ask, cmd_search, cmd_timeline, cmd_history,
-    cmd_restore, cmd_deprecated, cmd_deprecate, cmd_lifecycle, cmd_rollback,
+    cmd_ask, cmd_search, cmd_history,
+    cmd_deprecated, cmd_rollback,
     cmd_link_issue, cmd_review,
     cmd_sync,
     _cmd_add_interactive,
@@ -40,8 +40,8 @@ from project_brain.cli_knowledge import (
 
 from project_brain.cli_admin import (
     cmd_init, cmd_status, cmd_setup, cmd_doctor, cmd_config,
-    cmd_optimize, cmd_clear, cmd_scan, cmd_health_report, cmd_report,
-    cmd_analytics, cmd_export, cmd_import, cmd_index,
+    cmd_optimize, cmd_clear, cmd_scan, cmd_report,
+    cmd_export, cmd_import, cmd_index,
     cmd_health, cmd_pipeline_stats, cmd_validate,
     cmd_eval,
     _cmd_backfill_git,
@@ -225,25 +225,18 @@ def main():
         'session':       cmd_session,
         'index':         cmd_index,
         'webui':         cmd_webui,
-        'health-report': cmd_health_report,
         'report':        cmd_report,
         'search':        cmd_search,
         'link-issue':    cmd_link_issue,
-        'analytics':     cmd_analytics,
         'export':        cmd_export,
         'import':        cmd_import,
-        'timeline':      cmd_timeline,
         'rollback':      cmd_rollback,
         'history':       cmd_history,
-        'restore':       cmd_restore,
         'deprecated':    cmd_deprecated,
         'migrate':       cmd_migrate,
         'fed':            cmd_fed,
-        # counterfactual: REFACTOR-01 已移除，由 _apply_aliases 攔截並 exit
         'eval':          cmd_eval,
         'backfill-git':  _cmd_backfill_git,
-        'deprecate':     cmd_deprecate,
-        'lifecycle':     cmd_lifecycle,
     }
 
     fn = dispatch.get(args.cmd)

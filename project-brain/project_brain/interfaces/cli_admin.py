@@ -594,51 +594,6 @@ def cmd_scan(args):
     print(report)
 
 
-def cmd_health_report(args):
-    """REFACTOR-01: 已整合至 report，保留供向後相容。"""
-    print(f"  {Y}⚠ brain health-report 已整合至 brain report{R}")
-    print(f"  {D}  請改用：brain report --format {getattr(args,'format','text')}{R}")
-    wd = _workdir(args)
-    bd = Path(wd) / ".brain"
-    if not bd.exists():
-        _err("Brain 尚未初始化，請執行：brain setup"); return
-
-    from project_brain.brain_db import BrainDB
-    db = BrainDB(bd)
-    r  = db.health_report()
-
-    fmt = getattr(args, 'format', 'text')
-    if fmt == 'json':
-        import json as _j
-        print(_j.dumps(r, ensure_ascii=False, indent=2))
-        return
-
-    score = r["health_score"]
-    color = G if score >= 0.7 else (Y if score >= 0.4 else RE)
-    bar_w = 20
-    filled = int(score * bar_w)
-    bar = f"{G}{'█' * filled}{GR}{'░' * (bar_w - filled)}{R}"
-
-    print(f"\n  {B}{P}🧠  Knowledge Health Report{R}")
-    print(f"  {GR}{'═' * 46}{R}")
-    print(f"  Health Score  {bar}  {color}{B}{score:.0%}{R}")
-    print()
-
-    _info(f"Nodes: {B}{r['total_nodes']}{R}  ({', '.join(f'{t}:{n}' for t,n in r['by_type'].items())})")
-    _info(f"Avg confidence: {r['avg_confidence']:.2f}  Low-conf: {r['low_confidence_nodes']}")
-    _info(f"Stale nodes: {r['stale_nodes']}  Deprecated: {r['deprecated_nodes']}  Expired: {r['expired_nodes']}")
-    _info(f"FTS5 coverage: {r['fts5_coverage']}/{r['total_nodes']}  Vector: {r['vector_coverage']}/{r['total_nodes']}")
-    _info(f"Episodes: {r['episodes']}  Sessions: {r['sessions']}  Recent (7d): {r['recent_7d']}")
-
-    if r['stale_nodes'] > 0:
-        print(f"\n  {Y}⚠ {r['stale_nodes']} 個節點已超過 90 天且信心值 < 0.5{R}")
-        print(f"  {D}  可考慮執行 brain doctor --fix 清理{R}")
-    if r['vector_coverage'] < r['total_nodes'] * 0.8:
-        print(f"\n  {Y}⚠ 向量索引覆蓋率不足{R}")
-        print(f"  {D}  執行：brain index{R}")
-    print()
-
-
 def cmd_report(args):
     """PH1-06: 週期性 ROI + 健康度 + 使用率綜合報告（brain report）"""
     wd = _workdir(args)
@@ -837,76 +792,6 @@ new Chart(document.getElementById('growthChart'),{{
             out_path = out_path / "brain_report.json"
         out_path.write_text(_j.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
         _ok(f"詳細報告已儲存：{out_path}")
-
-
-def cmd_analytics(args):
-    """REFACTOR-01: 已整合至 report --analytics，保留供向後相容。"""
-    print(f"  {Y}⚠ brain analytics 已整合至 brain report --analytics{R}")
-    print(f"  {D}  請改用：brain report --analytics{R}")
-    wd = _workdir(args)
-    bd = Path(wd) / ".brain"
-    if not bd.exists():
-        _err("Brain 尚未初始化，請執行：brain setup"); return
-
-    from project_brain.brain_db import BrainDB
-    db = BrainDB(bd)
-    r  = db.usage_analytics()
-
-    fmt = getattr(args, 'format', 'text')
-    if fmt == 'json':
-        import json as _j
-        print(_j.dumps(r, ensure_ascii=False, indent=2))
-        return
-
-    export_fmt = getattr(args, 'export', None)
-    if export_fmt == 'csv':
-        import csv, io
-        out = getattr(args, 'output', None) or str(Path(wd) / "brain_analytics.csv")
-        buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=[
-            'node_id','title','type','scope','access_count',
-            'last_accessed','confidence','importance'
-        ])
-        writer.writeheader()
-        _db = BrainDB(bd)
-        rows = _db.conn.execute(
-            "SELECT id, title, type, scope, access_count, last_accessed,"
-            " confidence, importance FROM nodes ORDER BY access_count DESC"
-        ).fetchall()
-        for row in rows:
-            writer.writerow({
-                'node_id': row[0], 'title': row[1], 'type': row[2],
-                'scope': row[3], 'access_count': row[4] or 0,
-                'last_accessed': (row[5] or '')[:10],
-                'confidence': row[6], 'importance': row[7],
-            })
-        Path(out).write_text(buf.getvalue(), encoding='utf-8')
-        _ok(f"CSV 匯出完成：{out}")
-        return
-
-    print(f"\n  {B}{C}📊  Usage Analytics{R}")
-    print(f"  {GR}{'═' * 46}{R}")
-    _info(f"Total nodes: {r['total_nodes']}  Episodes: {r['total_episodes']}")
-
-    if r['by_type']:
-        type_str = "  ".join(f"{t}:{n}" for t, n in r['by_type'].items())
-        _info(f"By type:  {type_str}")
-
-    if r['by_scope']:
-        scope_str = "  ".join(f"{s}:{n}" for s, n in list(r['by_scope'].items())[:5])
-        _info(f"By scope: {scope_str}")
-
-    if r['top_accessed_nodes']:
-        print(f"\n  {B}Top accessed nodes:{R}")
-        for n in r['top_accessed_nodes'][:5]:
-            print(f"    {GR}{n['access_count']:>3}×{R}  {n['title'][:50]}")
-
-    if r['knowledge_growth']:
-        print(f"\n  {B}Knowledge growth (recent weeks):{R}")
-        for w in r['knowledge_growth'][:6]:
-            bar = "▓" * min(w['count'], 20)
-            print(f"    {GR}{w['week']}{R}  {G}{bar}{R} {w['count']}")
-    print()
 
 
 def cmd_export(args):
