@@ -437,3 +437,16 @@ body{font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
   padding:60px 20px;color:var(--text3);gap:10px}
 .audit-empty .ae-icon{font-size:36px;opacity:.4}
 .audit-empty .ae-text{font-size:13px}
+
+/* I-03: Review Queue */
+.rv-btn{font-size:11px;padding:3px 8px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:transparent;margin-right:4px}
+.rv-btn.approve{border-color:#22c55e;color:#22c55e}
+.rv-btn.approve:hover{background:rgba(34,197,94,0.15)}
+.rv-btn.reject{border-color:#f87171;color:#f87171}
+.rv-btn.reject:hover{background:rgba(248,113,113,0.15)}
+.rv-title{font-weight:500;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conf-high{color:#22c55e;font-weight:600;font-size:12px}
+.conf-mid{color:#eab308;font-weight:600;font-size:12px}
+.conf-low{color:#f87171;font-weight:600;font-size:12px}
+.kind-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;color:#fff;font-weight:500}

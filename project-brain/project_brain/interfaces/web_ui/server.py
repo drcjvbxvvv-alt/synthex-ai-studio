@@ -1955,6 +1955,54 @@ def create_app(workdir, **_):
             return jsonify({"error": str(exc)}), 500
         return jsonify({"ok": True, "id": safe, "action": "reject"})
 
+    # ── I-03: KRB Review Queue endpoints ──────────────────────────
+
+    @app.route("/api/review/queue")
+    def api_review_queue():
+        """Full review queue with sort/filter support."""
+        sort_by = request.args.get("sort", "created_at")
+        kind_filter = request.args.get("kind", "")
+        items = _load_staging(wd)
+        if kind_filter:
+            items = [i for i in items if i.get("kind") == kind_filter]
+        if sort_by == "confidence":
+            items.sort(key=lambda x: x.get("confidence", 0))
+        elif sort_by == "kind":
+            items.sort(key=lambda x: x.get("kind", ""))
+        # default: created_at desc (already sorted from DB)
+        return jsonify({"items": items, "total": len(items)})
+
+    @app.route("/api/review/batch-approve", methods=["POST"])
+    def api_review_batch_approve():
+        """Batch approve items above a confidence threshold."""
+        body = request.get_json(silent=True) or {}
+        threshold = float(body.get("threshold", 0.85))
+        items = _load_staging(wd)
+        candidates = [i for i in items if i.get("confidence", 0) >= threshold]
+        approved = 0
+        errors = []
+        try:
+            from project_brain.engines.review_board import KnowledgeReviewBoard
+            from project_brain.graph import KnowledgeGraph
+            bd = wd / ".brain"
+            g = KnowledgeGraph(bd)
+            krb = KnowledgeReviewBoard(bd, g)
+            for item in candidates:
+                try:
+                    krb.approve(item["id"], reviewer="web-ui:batch",
+                                note=f"batch approve (conf>={threshold})")
+                    approved += 1
+                except Exception as e:
+                    errors.append(f"{item['id']}: {e}")
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+        return jsonify({
+            "ok": True,
+            "approved": approved,
+            "total_candidates": len(candidates),
+            "errors": errors[:10],
+        })
+
     return app
 
 

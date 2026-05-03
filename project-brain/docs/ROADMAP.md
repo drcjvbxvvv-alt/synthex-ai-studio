@@ -2497,12 +2497,13 @@ wc -w docs/USER_GUIDE.md
 
 ---
 
-### I-03 KRB 審查流程整合 WebUI
+### I-03 KRB 審查流程整合 WebUI [DONE v0.60.0]
 
 **ID**：I-03
 **優先**：P4
 **依賴**：H-01（repositories 層讓 WebUI 更易整合）
 **估計工作量**：16h
+**完成日期**：2026-05-04
 
 #### 設計
 
@@ -2523,10 +2524,10 @@ WebUI Admin Panel
 
 #### 驗收條件
 
-- [ ] KRB Review Queue 分頁顯示 pending items
-- [ ] One-click approve/reject 正常運作
-- [ ] Batch approve 支援 confidence threshold 過濾
-- [ ] 審查結果即時反映在 Knowledge Management 分頁
+- [x] KRB Review Queue 分頁顯示 pending items（"🔍 審查" tab）
+- [x] One-click approve/reject 正常運作
+- [x] Batch approve 支援 confidence threshold 過濾（/api/review/batch-approve）
+- [x] 審查結果即時反映在 Knowledge Management 分頁
 
 ---
 
@@ -2632,7 +2633,7 @@ Phase E (v0.53.0) ✅ 6/6 DONE
 ║ Phase I (v1.0.0) 🔲 生產深化                                     ║
 ║ ├── I-01 LoRA 蒸餾（原 D-01）                    (依賴 H-01 + GPU)║
 ║ ├── I-02 Multi-worker Central 部署                (依賴 H-02)     ║
-║ └── I-03 KRB 審查流程整合 WebUI                   (依賴 H-01)     ║
+║ └── I-03 KRB 審查流程整合 WebUI                   ✅ v0.60.0      ║
 ╚══════════════════════════════════════════════════════════════════╝
 ```
 
@@ -2661,7 +2662,7 @@ Phase G + H (2-4 週，可部分並行)
 Phase I (長期)
  I-01 ████████████████████████████ ← 依賴 H-01 + GPU
  I-02      ████████████████████    ← 依賴 H-02
- I-03           ████████████████   ← 依賴 H-01
+ I-03           ████████████████   ✅ done 2026-05-04
 ```
 
 ---

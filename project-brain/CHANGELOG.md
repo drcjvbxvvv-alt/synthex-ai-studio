@@ -30,6 +30,15 @@
 - 當前 traces = 1,737 條，sampling rate = 5（每 5 次查詢記錄 1 次），正常運作
 - 深度審查的 14,997 figure 來自不同 `.brain/` 快照
 
+### I-03：KRB 審查流程整合 WebUI
+
+- 新增 "🔍 審查" 分頁，獨立的 KRB 審查佇列 UI
+- 支援按類型篩選、按信心度/時間/類型排序
+- One-click approve/reject，結果即時反映
+- 批次核准功能：可設定信心度閾值，一鍵核准高信心知識
+- 新增 API：`/api/review/queue`（排序+篩選）、`/api/review/batch-approve`
+- 7 個驗收測試通過
+
 ### H-03：使用者指南完整化（874 → 1214 行）
 
 - 新增 §8.4 MCP Tool 完整參數參考（18 個 tools 全參數表，含 `<details>` 展開）

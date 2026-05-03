@@ -23,6 +23,7 @@
   <div class="view-tabs">
     <button class="view-tab active" data-view="graph" onclick="switchView('graph')">📊 圖譜</button>
     <button class="view-tab" data-view="table" onclick="switchView('table')">📋 管理</button>
+    <button class="view-tab" data-view="review" onclick="switchView('review')">🔍 審查</button>
     <button class="view-tab" data-view="dashboard" onclick="switchView('dashboard')">📈 儀表板</button>
     <button class="view-tab" data-view="audit" onclick="switchView('audit')">📝 審計</button>
     <button class="view-tab" data-view="settings" onclick="switchView('settings')">⚙ 設定</button>
@@ -262,6 +263,50 @@
           background:var(--accent2);border:1px solid var(--accent2);color:#fff;cursor:pointer">儲存設定</button>
         <span style="font-size:11px;color:var(--text3)">變更會寫入 .brain/brain.toml，重啟服務後生效</span>
       </div>
+    </div>
+  </div>
+
+  <!-- I-03: KRB Review Queue View -->
+  <div id="review-view" class="admin-view">
+    <div class="av-header">🔍 KRB 審查佇列 <span class="av-sub" id="review-count">載入中…</span></div>
+    <div class="av-toolbar">
+      <select class="tv-select" id="review-sort" onchange="loadReview()">
+        <option value="created_at">時間 ↓</option>
+        <option value="confidence">信心度 ↑</option>
+        <option value="kind">類型</option>
+      </select>
+      <select class="tv-select" id="review-kind-filter" onchange="loadReview()">
+        <option value="">全部類型</option>
+        <option value="Pitfall">⚠ Pitfall</option>
+        <option value="Rule">📋 Rule</option>
+        <option value="Decision">🎯 Decision</option>
+        <option value="ADR">📄 ADR</option>
+        <option value="Note">📝 Note</option>
+      </select>
+      <div style="flex:1"></div>
+      <label style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:4px">
+        批次核准 ≥ <input id="review-batch-threshold" type="number" min="0" max="1" step="0.05" value="0.85"
+          style="width:52px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:2px 4px;font-size:11px">
+        <button class="hdr-btn" onclick="reviewBatchApprove()" style="font-size:11px;padding:4px 10px">批次核准</button>
+      </label>
+    </div>
+    <div class="tv-table-wrap">
+      <table class="tv-table">
+        <thead><tr>
+          <th style="width:70px">類型</th>
+          <th>標題</th>
+          <th style="width:200px">摘要</th>
+          <th style="width:60px">信心</th>
+          <th style="width:80px">來源</th>
+          <th style="width:80px">提交時間</th>
+          <th style="width:140px">操作</th>
+        </tr></thead>
+        <tbody id="review-body"></tbody>
+      </table>
+    </div>
+    <div id="review-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
+      <div style="font-size:36px;margin-bottom:12px">✅</div>
+      <div style="font-size:14px">目前沒有待審知識</div>
     </div>
   </div>
 

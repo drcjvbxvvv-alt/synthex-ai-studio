@@ -758,7 +758,7 @@ function switchView(view) {
   });
   const gv = document.getElementById('graph-view');
   const tv = document.getElementById('table-view');
-  const allAdminViews = ['dashboard-view','audit-view','settings-view','add-view'];
+  const allAdminViews = ['dashboard-view','audit-view','settings-view','add-view','review-view'];
   // Hide all admin views
   allAdminViews.forEach(id => {
     const el = document.getElementById(id);
@@ -776,6 +776,7 @@ function switchView(view) {
     if (view === 'dashboard') loadDashboard();
     else if (view === 'audit') loadAudit();
     else if (view === 'settings') loadSettings();
+    else if (view === 'review') loadReview();
   }
 }
 
@@ -1149,6 +1150,90 @@ function toggleTheme() {
     document.getElementById('theme-toggle').textContent = '☾';
   }
 })();
+
+// ═══════════════════════════════════════════════════
+//  I-03: KRB Review Queue
+// ═══════════════════════════════════════════════════
+
+async function loadReview() {
+  const sort = document.getElementById('review-sort')?.value || 'created_at';
+  const kind = document.getElementById('review-kind-filter')?.value || '';
+  let url = `/api/review/queue?sort=${sort}`;
+  if (kind) url += `&kind=${encodeURIComponent(kind)}`;
+  let data;
+  try { data = await fetch(url).then(r => r.json()); }
+  catch(e) { return; }
+  const items = data.items || [];
+  const countEl = document.getElementById('review-count');
+  const bodyEl = document.getElementById('review-body');
+  const emptyEl = document.getElementById('review-empty');
+  if (countEl) countEl.textContent = items.length ? `${items.length} 筆待審` : '佇列為空';
+  if (!items.length) {
+    if (bodyEl) bodyEl.innerHTML = '';
+    if (emptyEl) emptyEl.style.display = '';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (bodyEl) bodyEl.innerHTML = items.map(s => {
+    const confPct = Math.round((s.confidence || 0) * 100);
+    const confCls = confPct >= 80 ? 'conf-high' : confPct >= 50 ? 'conf-mid' : 'conf-low';
+    return `<tr id="rv-${s.id}">
+      <td><span class="kind-badge" style="background:${s.color}">${s.kind}</span></td>
+      <td class="rv-title" title="${(s.content||'').replace(/"/g,'&quot;')}">${s.title}</td>
+      <td style="font-size:11px;color:var(--text3)">${(s.content||'').slice(0,80)}${(s.content||'').length>80?'…':''}</td>
+      <td><span class="${confCls}">${confPct}%</span></td>
+      <td style="font-size:11px">${s.source || '—'}</td>
+      <td style="font-size:11px">${(s.created_at||'').slice(0,10)}</td>
+      <td>
+        <button class="rv-btn approve" onclick="reviewAction('${s.id}','approve')">✓ 核准</button>
+        <button class="rv-btn reject" onclick="reviewAction('${s.id}','reject')">✕ 拒絕</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function reviewAction(sid, action) {
+  const res = await fetch('/api/staging/' + sid + '/' + action, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    alert(action + ' 失敗：' + (err.error || res.status));
+    return;
+  }
+  const el = document.getElementById('rv-' + sid);
+  if (el) el.remove();
+  // Update count
+  const countEl = document.getElementById('review-count');
+  const remaining = document.querySelectorAll('#review-body tr').length;
+  if (countEl) countEl.textContent = remaining ? `${remaining} 筆待審` : '佇列為空';
+  if (!remaining) {
+    const emptyEl = document.getElementById('review-empty');
+    if (emptyEl) emptyEl.style.display = '';
+  }
+  // Refresh sidebar staging panel too
+  loadStaging();
+  if (action === 'approve') loadStats();
+}
+
+async function reviewBatchApprove() {
+  const threshold = parseFloat(document.getElementById('review-batch-threshold')?.value || '0.85');
+  if (!confirm(`批次核准信心度 ≥ ${(threshold*100).toFixed(0)}% 的所有待審知識？`)) return;
+  const res = await fetch('/api/review/batch-approve', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({threshold}),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    alert('批次核准失敗：' + (data.error || res.status));
+    return;
+  }
+  alert(`已核准 ${data.approved} 筆知識`);
+  loadReview();
+  loadStaging();
+  loadStats();
+}
 
 // ── Boot ─────────────────────────────────────────
 _restoreHash();   // UX-01: apply filter state from URL hash before first load
