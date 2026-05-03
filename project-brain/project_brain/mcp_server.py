@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import sys as _sys
 
+_is_main = __name__ == "__main__"
+
 from project_brain.interfaces import mcp_server as _real  # noqa: F401
 
 _sys.modules[__name__] = _real
+
+if _is_main:
+    _real.main()
