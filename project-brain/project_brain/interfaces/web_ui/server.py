@@ -612,8 +612,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             try:
                 conn.execute("DELETE FROM nodes_fts WHERE id=?", (safe,))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("FTS delete failed (table may not exist): %s", exc)
             conn.execute(
                 "DELETE FROM edges WHERE source_id=? OR target_id=?", (safe, safe)
             )
@@ -666,8 +666,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "INSERT INTO nodes_fts(id, title, content, tags) VALUES (?,?,?,?)",
                     (node_id, BrainDB._ngram(title), BrainDB._ngram(content), "[]")
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("FTS index insert failed: %s", exc)
             conn.commit()
         except Exception as exc:
             logger.exception("add_node failed")
@@ -721,8 +721,8 @@ class _Handler(BaseHTTPRequestHandler):
                 activity["month"] = conn.execute(
                     "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now', '-30 days')"
                 ).fetchone()[0]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Activity stats query failed: %s", exc)
 
             # KRB pending
             krb_pending = 0
@@ -734,8 +734,8 @@ class _Handler(BaseHTTPRequestHandler):
                         "SELECT COUNT(*) FROM staged_nodes WHERE status='pending'"
                     ).fetchone()[0]
                     rb_conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("KRB pending count failed: %s", exc)
 
             # Signal queue
             signal_pending = 0
@@ -747,8 +747,8 @@ class _Handler(BaseHTTPRequestHandler):
                     signal_pending = conn.execute(
                         "SELECT COUNT(*) FROM signal_queue WHERE status='pending'"
                     ).fetchone()[0]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Signal queue count failed: %s", exc)
 
             # Health summary
             health_errors = 0
@@ -863,8 +863,8 @@ class _Handler(BaseHTTPRequestHandler):
                                         "detail": r["review_note"] or "",
                                         "source": "krb",
                                     })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("KRB activity feed read failed: %s", exc)
 
             # Sort all entries by time descending
             entries.sort(key=lambda e: e.get("time", ""), reverse=True)
@@ -923,8 +923,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "brain_freshness_warn_days": cfg.get("brain", {}).get("freshness_warn_days", 30),
                     "brain_dedup_threshold": cfg.get("brain", {}).get("dedup_threshold", 0.85),
                 }
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to parse config TOML: %s", exc)
         else:
             # Defaults when no toml exists
             result["config"] = {
@@ -952,8 +952,8 @@ class _Handler(BaseHTTPRequestHandler):
                 ).fetchone()
                 if row:
                     result["schema_version"] = int(row[0])
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("schema_version query failed: %s", exc)
 
             # Node count
             try:
@@ -980,8 +980,8 @@ class _Handler(BaseHTTPRequestHandler):
                         "status": "ok" if active > 0 else "warn",
                         "detail": f"{active} active keys",
                     })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("API keys query failed: %s", exc)
             else:
                 result["services"].append({
                     "name": "Central Brain",
@@ -1001,8 +1001,8 @@ class _Handler(BaseHTTPRequestHandler):
                 result["storage"]["backups"] = f"{len(backups)} 份 / {_fmt_file_size(total_size)}"
             else:
                 result["storage"]["backups"] = "無備份"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Backup storage stats failed: %s", exc)
 
         self._json(result)
 
@@ -1020,8 +1020,8 @@ class _Handler(BaseHTTPRequestHandler):
                 except ImportError:
                     import tomli as tomllib  # type: ignore[no-redef]
                 existing = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to load existing TOML config: %s", exc)
 
         cfg = body.get("config", {})
         # Strip None values (JSON null from NaN serialization)
@@ -1557,8 +1557,8 @@ def create_app(workdir, **_):
                 return jsonify({"error": "節點不存在"}), 404
             try:
                 conn.execute("DELETE FROM nodes_fts WHERE id=?", (safe,))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("FTS delete failed (table may not exist): %s", exc)
             conn.execute(
                 "DELETE FROM edges WHERE source_id=? OR target_id=?", (safe, safe)
             )
@@ -1605,8 +1605,8 @@ def create_app(workdir, **_):
                     "INSERT INTO nodes_fts(id, title, content, tags) VALUES (?,?,?,?)",
                     (node_id, BrainDB._ngram(title), BrainDB._ngram(content), "[]")
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("FTS index insert failed: %s", exc)
             conn.commit()
         except Exception as exc:
             return jsonify({"error": f"新增失敗：{exc}"}), 500
@@ -1655,8 +1655,8 @@ def create_app(workdir, **_):
                 activity["month"] = conn.execute(
                     "SELECT COUNT(*) FROM nodes WHERE created_at >= date('now', '-30 days')"
                 ).fetchone()[0]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Activity stats query failed: %s", exc)
             krb_pending = 0
             try:
                 rb_path = wd / ".brain" / "review_board.db"
@@ -1666,8 +1666,8 @@ def create_app(workdir, **_):
                         "SELECT COUNT(*) FROM staged_nodes WHERE status='pending'"
                     ).fetchone()[0]
                     rb_conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("KRB pending count failed: %s", exc)
             signal_pending = 0
             try:
                 tables = {r[0] for r in conn.execute(
@@ -1677,8 +1677,8 @@ def create_app(workdir, **_):
                     signal_pending = conn.execute(
                         "SELECT COUNT(*) FROM signal_queue WHERE status='pending'"
                     ).fetchone()[0]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Signal queue count failed: %s", exc)
             health_warnings = (1 if low_conf > 0 else 0) + (1 if conflicts > 0 else 0)
         finally:
             conn.close()
@@ -1769,8 +1769,8 @@ def create_app(workdir, **_):
                                     "detail": r["review_note"] or "",
                                     "source": "krb",
                                 })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("KRB activity feed read failed: %s", exc)
 
         entries.sort(key=lambda e: e.get("time", ""), reverse=True)
         total = len(entries)
@@ -1838,8 +1838,8 @@ def create_app(workdir, **_):
                 ).fetchone()
                 if row:
                     result["schema_version"] = int(row[0])
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("schema_version query failed: %s", exc)
             try:
                 nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
                 result["services"].append({"name": "brain.db", "status": "ok", "detail": f"{nodes} nodes"})
@@ -1857,8 +1857,8 @@ def create_app(workdir, **_):
                         "name": "Central Brain", "status": "ok" if active > 0 else "warn",
                         "detail": f"{active} active keys",
                     })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("API keys query failed: %s", exc)
             else:
                 result["services"].append({"name": "Central Brain", "status": "ok", "detail": "\u672a\u8a2d\u5b9a"})
         finally:
@@ -1872,8 +1872,8 @@ def create_app(workdir, **_):
                 result["storage"]["backups"] = f"{len(backups)} \u4efd / {_fmt_file_size(total_size)}"
             else:
                 result["storage"]["backups"] = "\u7121\u5099\u4efd"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Backup storage stats failed: %s", exc)
         return jsonify(result)
 
     @app.route("/api/admin/settings", methods=["POST"])
@@ -1888,8 +1888,8 @@ def create_app(workdir, **_):
                 except ImportError:
                     import tomli as tomllib  # type: ignore[no-redef]
                 existing = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to load existing TOML config: %s", exc)
         body = request.get_json(silent=True) or {}
         cfg = body.get("config", {})
         cfg = {k: v for k, v in cfg.items() if v is not None}

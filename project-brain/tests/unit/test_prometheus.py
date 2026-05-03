@@ -76,7 +76,7 @@ def _run_asgi(app, path, method="GET"):
         elif msg["type"] == "http.response.body":
             body_parts.append(msg.get("body", b""))
 
-    asyncio.get_event_loop().run_until_complete(app(scope, receive, send))
+    asyncio.run(app(scope, receive, send))
     return response_started, b"".join(body_parts)
 
 

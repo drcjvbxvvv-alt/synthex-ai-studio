@@ -249,13 +249,16 @@ class RecallEvaluator:
         return len(self.queries)
 
     def run(self, k: int = 3, search_limit: int = 10,
-            use_hybrid: bool = False) -> dict[str, Any]:
+            use_hybrid: bool = False,
+            min_score: float = None) -> dict[str, Any]:
         """Execute all queries and compute metrics.
 
         Args:
             k: top-K cutoff for recall/nDCG/noise metrics
             search_limit: how many results to request from search
             use_hybrid: if True, use hybrid_search (FTS5 + vector) instead of FTS5-only
+            min_score: minimum relevance score threshold for hybrid search.
+                       Results below this score are filtered out. None = no filtering.
 
         Returns:
             Structured report with metrics and per-query details.
@@ -280,7 +283,8 @@ class RecallEvaluator:
 
         try:
             for eq in self.queries:
-                result = self._run_single(db, eq, k, search_limit, _embedder)
+                result = self._run_single(db, eq, k, search_limit, _embedder,
+                                          min_score=min_score)
                 results.append(result)
         finally:
             db.conn.close()
@@ -290,12 +294,13 @@ class RecallEvaluator:
             "search_mode": "hybrid" if (use_hybrid and _embedder) else "fts5",
             "search_limit": search_limit,
             "k": k,
+            "min_score": min_score,
         }
         return report
 
     def _run_single(self, db: "BrainDB", eq: EvalQuery,
                     k: int, search_limit: int,
-                    embedder=None) -> EvalResult:
+                    embedder=None, min_score: float = None) -> EvalResult:
         """Run a single eval query."""
         expected_set = set(eq.expected)
 
@@ -305,6 +310,7 @@ class RecallEvaluator:
                 q_vec = embedder.embed(eq.query)
                 search_results = db.hybrid_search(
                     eq.query, query_vector=q_vec, limit=search_limit,
+                    min_score=min_score,
                 )
             except Exception:
                 search_results = db.search_nodes(eq.query, limit=search_limit)

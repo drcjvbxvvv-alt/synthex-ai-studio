@@ -283,7 +283,9 @@ class TestRefactoredCallers(_BrainDBFixture):
         # 清空 traces + 重置 counter 確保下一次命中
         self.bd.conn.execute("DELETE FROM traces")
         self.bd.conn.commit()
-        self.bd._trace_counter = self.bd._trace_sample_rate - 1  # next search will write
+        # H-01: trace counter is on WriteContext (_ctx), not BrainDB directly
+        ctx = getattr(self.bd, '_ctx', self.bd)
+        ctx._trace_counter = ctx._trace_sample_rate - 1  # next search will write
         # 執行 search
         self.bd.search_nodes("searchable")
         # trace 應該有 1 筆

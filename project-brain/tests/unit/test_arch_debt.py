@@ -50,8 +50,8 @@ class TestTraceSampling(_DBFixture):
 
     def test_trace_not_written_every_search(self):
         """With sample_rate=5, only 1 in 5 searches writes a trace."""
-        self.db._trace_sample_rate = 5
-        self.db._trace_counter = 0
+        self.db._ctx._trace_sample_rate = 5
+        self.db._ctx._trace_counter = 0
         self._add("n1", "Test rule for searching")
 
         # Run 4 searches — should not write any trace (counter 1,2,3,4)
@@ -65,8 +65,8 @@ class TestTraceSampling(_DBFixture):
 
     def test_trace_written_on_nth_search(self):
         """The Nth search (matching sample_rate) writes a trace."""
-        self.db._trace_sample_rate = 3
-        self.db._trace_counter = 0
+        self.db._ctx._trace_sample_rate = 3
+        self.db._ctx._trace_counter = 0
         self._add("n1", "Test rule for tracing")
 
         # 3 searches — trace on 3rd
@@ -80,8 +80,8 @@ class TestTraceSampling(_DBFixture):
 
     def test_trace_sample_rate_1_writes_every_time(self):
         """sample_rate=1 preserves original behavior (write every search)."""
-        self.db._trace_sample_rate = 1
-        self.db._trace_counter = 0
+        self.db._ctx._trace_sample_rate = 1
+        self.db._ctx._trace_counter = 0
         self._add("n1", "Test rule")
 
         for _ in range(5):
@@ -101,11 +101,11 @@ class TestTraceSampling(_DBFixture):
 
     def test_default_trace_sample_rate(self):
         """Default sample rate is 5."""
-        self.assertEqual(self.db._trace_sample_rate, 5)
+        self.assertEqual(self.db._ctx._trace_sample_rate, 5)
 
     def test_search_still_returns_results_with_sampling(self):
         """Sampling doesn't affect search results."""
-        self.db._trace_sample_rate = 100
+        self.db._ctx._trace_sample_rate = 100
         self._add("n1", "JWT signing rule")
         results = self.db.search_nodes("JWT")
         self.assertGreater(len(results), 0)

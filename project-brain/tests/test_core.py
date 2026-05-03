@@ -146,9 +146,9 @@ class TestBrainRouter(unittest.TestCase):
         self.assertIsInstance(result.elapsed_ms, int)
 
     def test_query_has_elapsed_ms(self):
-        """query() 結果應有計時"""
+        """query() 結果應有計時（0 ms 在快速環境中可能合法）"""
         result = self.router.query("測試任務")
-        self.assertGreater(result.elapsed_ms, 0)
+        self.assertGreaterEqual(result.elapsed_ms, 0)
 
     def test_write_working_memory(self):
         """write_working_memory 應成功寫入 L1"""

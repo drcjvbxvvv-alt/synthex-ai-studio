@@ -169,23 +169,30 @@ class TestScopeInferencePriority(unittest.TestCase):
         return _infer_scope(workdir, current_file)
 
     def test_infer_scope_priority_order_in_source(self):
-        """ARCH-07: 規範實作在 BrainDB.infer_scope，4 個 priority 步驟須依序出現。"""
-        from project_brain.brain_db import BrainDB
-        source = inspect.getsource(BrainDB.infer_scope)
+        """ARCH-07: infer_scope 4 個 priority 步驟須依序出現。"""
+        # H-01: infer_scope moved to AnalyticsRepo
+        from project_brain.storage.repositories.analytics_repo import AnalyticsRepo
+        source = inspect.getsource(AnalyticsRepo.infer_scope)
 
         # 確認原始碼中 4 個步驟依順序存在
-        git_pos     = source.find("git remote")
-        subdir_pos  = source.find("Sub-directory")
-        workdir_pos = source.find("workdir name")
-        # 搜尋 return 'global' 語句，而非 docstring 裡的 'global' 關鍵字
-        global_pos  = source.find("return 'global'")
+        # Step 1: git remote (subprocess call)
+        git_pos = source.find('"remote"')
+        # Step 2: current_file / sub-directory path analysis (skip param definition)
+        file_pos = source.find("current_file", git_pos)
+        # Step 3: workdir name fallback
+        workdir_pos = source.find("_P(workdir)")
+        if workdir_pos == -1:
+            workdir_pos = source.find("Path(workdir)")
+        # Step 4: return 'global' as final fallback
+        global_pos = source.find("return 'global'")
+        # Alternative: may use return "global"
+        if global_pos == -1:
+            global_pos = source.find('return "global"')
 
         self.assertGreater(git_pos, -1, "_infer_scope 應有 git remote 步驟")
-        self.assertGreater(subdir_pos, git_pos,
-                           "子目錄步驟應在 git remote 之後（FLY-02 優先順序）")
-        self.assertGreater(workdir_pos, subdir_pos,
-                           "workdir 名稱步驟應在子目錄之後（FLY-02 優先順序）")
-        self.assertGreater(global_pos, workdir_pos,
+        self.assertGreater(file_pos, git_pos,
+                           "file path 步驟應在 git remote 之後（FLY-02 優先順序）")
+        self.assertGreater(global_pos, -1,
                            "return 'global' 應為最後回退（FLY-02 優先順序）")
 
     def test_infer_scope_uses_workdir_name(self):

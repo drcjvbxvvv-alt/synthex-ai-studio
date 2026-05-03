@@ -155,32 +155,43 @@ class TestSilentExceptionAudit(unittest.TestCase):
         """Key operations should log errors, not silently pass.
 
         Checks that add_node, search_nodes error paths use logger
-        rather than bare pass.
+        rather than bare pass. H-01: also checks repository files.
         """
         root = self._project_root()
-        brain_db = (root / "project_brain/core/brain_db.py").read_text()
-        lines = brain_db.split("\n")
+        # H-01: search across brain_db.py and repository files
+        search_files = [
+            root / "project_brain/core/brain_db.py",
+            root / "project_brain/storage/repositories/node_repo.py",
+            root / "project_brain/storage/repositories/search_repo.py",
+        ]
 
         for fn_name in ["add_node", "search_nodes"]:
-            # Find the function start line
-            fn_start = None
-            for i, line in enumerate(lines):
-                if f"def {fn_name}(" in line:
-                    fn_start = i
-                    break
-            self.assertIsNotNone(fn_start, f"{fn_name} not found")
-            # Extract function body until next def at same or lower indent
-            fn_indent = len(lines[fn_start]) - len(lines[fn_start].lstrip())
-            fn_body_lines = []
-            for j in range(fn_start + 1, min(fn_start + 200, len(lines))):
-                if lines[j].strip() and not lines[j].strip().startswith("#"):
-                    cur_indent = len(lines[j]) - len(lines[j].lstrip())
-                    if cur_indent <= fn_indent and lines[j].strip().startswith("def "):
+            found_logger = False
+            for fpath in search_files:
+                if not fpath.exists():
+                    continue
+                lines = fpath.read_text().split("\n")
+                fn_start = None
+                for i, line in enumerate(lines):
+                    if f"def {fn_name}(" in line:
+                        fn_start = i
                         break
-                fn_body_lines.append(lines[j])
-            fn_body = "\n".join(fn_body_lines)
+                if fn_start is None:
+                    continue
+                fn_indent = len(lines[fn_start]) - len(lines[fn_start].lstrip())
+                fn_body_lines = []
+                for j in range(fn_start + 1, min(fn_start + 200, len(lines))):
+                    if lines[j].strip() and not lines[j].strip().startswith("#"):
+                        cur_indent = len(lines[j]) - len(lines[j].lstrip())
+                        if cur_indent <= fn_indent and lines[j].strip().startswith("def "):
+                            break
+                    fn_body_lines.append(lines[j])
+                fn_body = "\n".join(fn_body_lines)
+                if "logger." in fn_body:
+                    found_logger = True
+                    break
             self.assertTrue(
-                "logger." in fn_body,
+                found_logger,
                 f"{fn_name} should have logger calls in error paths"
             )
 

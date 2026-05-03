@@ -4,6 +4,78 @@
 
 ---
 
+## v0.60.0（2026-05-03）— Phase G 檢索品質深化：hybrid ranking recall@3=97%
+
+> Hybrid ranking（FTS5 + vector）正式啟用為 eval 預設模式。
+> recall@3 從 FTS5-only 的 29% 提升至 97%，MRR 從 0.269 提升至 0.915。
+
+### G-01：Hybrid Ranking 確認與 eval 預設啟用
+
+- `brain eval run` 預設使用 hybrid 模式（`use_hybrid=True`），反映實際使用體驗
+- Eval 結果：recall@3=97%, noise@3=67.7%（理論下限 66.7%）, MRR=0.915
+- 所有類型 recall@3：Decision 100%, Pitfall 97%, Rule 94%
+
+### G-02：Minimum Relevance Threshold
+
+- `hybrid_search()` 新增 `min_score` 參數（float, default None）
+- `ContextEngineer._search_batch()` 使用 `min_score=0.15` 過濾低相關結果
+- `RecallEvaluator.run()` 新增 `min_score` 參數，支援 threshold 實驗
+
+### G-03：Rule 類型檢索增強
+
+- Rule recall@3 在 hybrid 模式下已達 94%（FTS5-only 為 20%），不需額外增強
+
+### G-04：Traces 增長調查
+
+- 當前 traces = 1,737 條，sampling rate = 5（每 5 次查詢記錄 1 次），正常運作
+- 深度審查的 14,997 figure 來自不同 `.brain/` 快照
+
+### 測試
+
+- 新增 9 個 hybrid ranking 測試（`test_hybrid_ranking.py`）
+- 1750 passed, 0 failed, 1 skipped（不含 chaos/benchmark）
+
+---
+
+## v0.54.0（2026-05-03）— Phase F 品質收斂：恢復測試全綠 + 靜默例外清理
+
+> 從 15 failures 恢復至 0 failures（1741 passed）。靜默例外從 40 降至 19。
+> ROADMAP.md 升級至 v3.0，規劃 Phase F-I 完整路線圖。
+
+### F-01：Prometheus 測試 fixture 隔離修復
+
+- `test_prometheus.py` `_run_asgi()` 改用 `asyncio.run()` 取代 `asyncio.get_event_loop().run_until_complete()`
+- 根因：其他測試消費 MainThread event loop 後，`get_event_loop()` 拋出 RuntimeError
+- 12/12 測試在全量 suite 中通過
+
+### F-02：靜默例外審計與清理（40 → 19）
+
+- `web_ui/server.py` 21 處 `except Exception: pass` 全部改為帶日誌的降級處理
+  - 7 處改為 `logger.warning()`（FTS 寫入、config 解析、API key 查詢等）
+  - 14 處改為 `logger.debug()`（FTS 表探測、可選統計查詢、feature detection 等）
+- 剩餘 19 處分佈：brain_db 7 + mcp_server 5 + context 4 + health 3（歷史核心模組合理降級）
+
+### F-bonus：Flaky test 修復
+
+- `test_query_has_elapsed_ms`：`assertGreater(elapsed_ms, 0)` → `assertGreaterEqual(elapsed_ms, 0)`
+- 0ms 在快速環境中合法，修復偶發 flaky
+
+### ROADMAP v3.0
+
+- 更新系統現況快照至 v0.53.1 基準
+- 新增 Phase F（品質收斂）、G（檢索品質深化）、H（架構債清理）、I（生產深化）
+- 完整依賴關係圖 + 並行開發策略甘特圖
+- 更新品質門檻表至 Phase F-I
+
+### 測試
+
+- 1741 passed, 0 failed, 1 skipped（不含 chaos/benchmark）
+- WebUI 59 tests 全部通過
+- docs_accuracy 51 tests 全部通過
+- silent_exception_audit 5 tests 全部通過
+
+---
+
 ## v0.53.1（2026-05-02）— WebUI 前端重構：從 f-string 分離為獨立檔案
 
 > server.py 從 3793 行減至 1966 行。CSS/JS/HTML 各自獨立，IDE 完整支援。

@@ -296,18 +296,18 @@ brain export / import    # 匯出匯入
 
 ---
 
-## 效能指標（v0.53.1）
+## 效能指標（v0.60.0）
 
 | 指標 | 數值 |
 |------|------|
+| Hybrid recall@3（multilingual-e5-small）| **97%** |
+| Hybrid MRR | **0.915** |
 | FTS5 搜尋延遲（5K nodes p99）| ≤ 300ms |
-| FTS5 搜尋延遲（5K nodes avg）| ≤ 100ms |
+| Hybrid 搜尋延遲 avg | ~25ms |
 | 批次寫入吞吐量 | ≥ 200 nodes/s |
-| 語意召回率（LocalTFIDF）| ~65% |
-| 語意召回率（Ollama nomic-embed-text）| ~88% |
-| 測試數量 | ~1483 passed（不含 chaos/benchmark） |
+| 測試數量 | ~1750 passed（不含 chaos/benchmark） |
 | 覆蓋率 | ~51% |
-| 並發安全 | 10 threads × 10 writes（best-effort） |
+| 並發安全 | 100 threads × 10 writes（0 丟失） |
 
 ---
 

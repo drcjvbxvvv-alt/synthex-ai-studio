@@ -17,3 +17,7 @@ NODE_CONTENT_CAP = 400   # 一般節點（Pitfall / Rule / Decision 等）
 # ── 搜尋（Search） ────────────────────────────────────────────
 # search_nodes / search_nodes_multi / graph.search_nodes 的預設回傳數量
 DEFAULT_SEARCH_LIMIT = 8
+
+# ── Schema ────────────────────────────────────────────────────
+# DEF-04: bump on every schema change (E-02: api_keys)
+SCHEMA_VERSION = 29

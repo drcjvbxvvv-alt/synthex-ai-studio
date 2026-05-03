@@ -259,7 +259,8 @@ class ContextEngineer:
                         if _q_vec:
                             db_results = self._brain_db.hybrid_search(
                                 " ".join(terms), query_vector=_q_vec,
-                                scope=_scope, limit=limit
+                                scope=_scope, limit=limit,
+                                min_score=0.15,  # G-02: filter low-relevance noise
                             )
                             db_results = [r for r in db_results if r.get("type") == node_type]
                         else:
