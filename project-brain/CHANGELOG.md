@@ -30,6 +30,18 @@
 - 當前 traces = 1,737 條，sampling rate = 5（每 5 次查詢記錄 1 次），正常運作
 - 深度審查的 14,997 figure 來自不同 `.brain/` 快照
 
+### H-01：brain_db.py 拆分（2,850 → 760 行）
+
+- `brain_db.py` 從 2,850 行精簡至 760 行（facade + connection + schema check）
+- 新增 `storage/repositories/` 模組：
+  - `node_repo.py`（359 行）— 節點 CRUD
+  - `search_repo.py`（565 行）— FTS5 + hybrid search
+  - `analytics_repo.py`（588 行）— 統計/分析查詢
+  - `migration_repo.py`（442 行）— schema migration v1→v29
+  - `misc_repo.py`（342 行）— federation/lifecycle 等雜項
+- 新增 `storage/write_context.py`（204 行）— 寫入上下文管理
+- `BrainDB` 公開 API 零 breaking change，所有既有 import path 仍可用
+
 ### 測試
 
 - 新增 9 個 hybrid ranking 測試（`test_hybrid_ranking.py`）

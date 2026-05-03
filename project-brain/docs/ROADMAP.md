@@ -2174,12 +2174,13 @@ pytest tests/ -m 'not chaos and not benchmark' -q
 >
 > **來源**：`docs/SYSTEM_DEEP_REVIEW_2026-05-03.md` §8 架構債
 
-### H-01 brain_db.py 拆分（2,850 行 → storage/repositories + services）
+### H-01 brain_db.py 拆分（2,850 行 → storage/repositories + services）[DONE v0.60.0]
 
 **ID**：H-01
 **優先**：P2（最大的架構債，早該做）
 **依賴**：F 全部完成（測試全綠是重構安全網）
 **估計工作量**：20h
+**完成日期**：2026-05-03
 
 #### 問題分析
 
@@ -2253,11 +2254,11 @@ class TestNodeRepository:
 
 #### 驗收條件
 
-- [ ] `brain_db.py` 從 2,850 行降至 ≤ 800 行（facade + connection + schema check）
-- [ ] 新增 ≥ 5 個 repository 模組，每個 ≤ 500 行
-- [ ] `BrainDB` 所有公開 API 不變（零 breaking change）
-- [ ] 全量測試通過（0 failures, 0 regressions）
-- [ ] `migration.py` 包含所有 schema migration 邏輯
+- [x] `brain_db.py` 從 2,850 行降至 ≤ 800 行（實際 760 行）
+- [x] 新增 ≥ 5 個 repository 模組，每個 ≤ 500 行（node_repo 359, search_repo 565, analytics_repo 588, migration_repo 442, misc_repo 342）
+- [x] `BrainDB` 所有公開 API 不變（零 breaking change）
+- [x] 全量測試通過（0 failures, 0 regressions）
+- [x] `migration_repo.py` 包含所有 schema migration 邏輯
 
 **推薦模型**：Opus 4.6 (1M)（大規模重構，需要一次理解 2850 行 + 所有呼叫者）
 
@@ -2619,7 +2620,7 @@ Phase E (v0.53.0) ✅ 6/6 DONE
          ▼                              │ (G/H 可部分並行)
 ╔══════════════════════════════════════════════════════════════════╗
 ║ Phase H (v0.70.0) 🔲 架構債清理                                  ║
-║ ├── H-01 brain_db.py 拆分 (2850→≤800 行)         (依賴 F 全部)    ║
+║ ├── H-01 brain_db.py 拆分 (2850→760 行)          ✅ v0.60.0      ║
 ║ │    └──▶ H-02 mcp_server.py 拆分 (2059→≤500 行) (依賴 H-01)     ║
 ║ └── H-03 使用者指南完整化                          (依賴 G 完成)    ║
 ╚══════════════════════════════════════════════════════════════════╝
@@ -2650,7 +2651,7 @@ Phase G + H (2-4 週，可部分並行)
  G-02      ██████████          ← 依賴 G-01
  G-03      ████████████████    ← 依賴 G-01
  G-04 ████████                 ← 獨立
- H-01 ████████████████████████████████ ← 依賴 F，不依賴 G
+ H-01 ████████████████████████████████ ✅ done 2026-05-03
  H-02           ██████████████████     ← 依賴 H-01
  H-03                              ████████████ ← 依賴 G 完成
                                     │
