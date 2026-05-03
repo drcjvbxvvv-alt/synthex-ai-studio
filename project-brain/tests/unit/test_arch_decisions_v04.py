@@ -37,6 +37,25 @@ import unittest
 from unittest.mock import MagicMock
 
 
+def _mcp_full_source() -> str:
+    """Get combined source of mcp_server + mcp_tools modules (H-02 refactor)."""
+    from project_brain import mcp_server as ms
+    parts = [inspect.getsource(ms)]
+    try:
+        from project_brain.interfaces import mcp_tools
+        for name in ["knowledge_tools", "feedback_tools", "admin_tools",
+                     "pipeline_tools", "federation_tools", "reasoning_tools"]:
+            mod = getattr(__import__(
+                f"project_brain.interfaces.mcp_tools.{name}", fromlist=[name]
+            ), name, None)
+            if mod is None:
+                mod = __import__(f"project_brain.interfaces.mcp_tools.{name}", fromlist=[name])
+            parts.append(inspect.getsource(mod))
+    except Exception:
+        pass
+    return "\n".join(parts)
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 決策 VISION-01：動態 confidence 更新
 # ══════════════════════════════════════════════════════════════════════
@@ -58,9 +77,7 @@ class TestVision01DynamicConfidence(unittest.TestCase):
 
     def test_complete_task_caps_feedback_at_five(self):
         """complete_task 自動回饋上限為 5 個節點（避免過度調整）。"""
-        from project_brain import mcp_server as ms
-        # 在 mcp_server 模組原始碼中尋找上限標記
-        source = inspect.getsource(ms)
+        source = _mcp_full_source()
         self.assertIn(
             "[:5]", source,
             "complete_task 應有 [:5] 切片上限（v0.4.0 VISION-01：最多回饋 5 個節點）",
@@ -68,9 +85,7 @@ class TestVision01DynamicConfidence(unittest.TestCase):
 
     def test_complete_task_feedback_logic_uses_pitfalls(self):
         """complete_task 有 pitfalls 時應回饋 helpful=False（無 pitfalls → True）。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
-        # 確認 helpful=not _had_pitfalls 或等效邏輯
+        source = _mcp_full_source()
         self.assertIn(
             "not _had_pitfalls", source,
             "complete_task 應有 helpful=not _had_pitfalls 邏輯（v0.4.0 VISION-01）",
@@ -78,9 +93,7 @@ class TestVision01DynamicConfidence(unittest.TestCase):
 
     def test_vision01_auto_feedback_is_silent_on_failure(self):
         """VISION-01 自動回饋失敗時應靜默降級（不影響正常任務流程）。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
-        # 確認 VISION-01 的 except 有 logger.debug（不拋例外）
+        source = _mcp_full_source()
         self.assertIn(
             "VISION-01 auto-feedback failed", source,
             "VISION-01 自動回饋失敗時應有 debug 日誌（靜默降級，v0.4.0 VISION-01）",
@@ -170,12 +183,11 @@ class TestVision03FederationAutoSync(unittest.TestCase):
             )
 
     def test_federation_sync_mcp_tool_exists(self):
-        """mcp_server.py 原始碼應含 federation_sync 工具（VISION-03 MCP 工具）。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
+        """MCP tools 原始碼應含 federation_sync 工具（VISION-03 MCP 工具）。"""
+        source = _mcp_full_source()
         self.assertIn(
             "federation_sync", source,
-            "mcp_server.py 應有 federation_sync 工具（v0.4.0 VISION-03）",
+            "MCP tools 應有 federation_sync 工具（v0.4.0 VISION-03）",
         )
 
     def test_cmd_fed_sync_exists_in_federation(self):
@@ -258,33 +270,28 @@ class TestVision05MultiBrainQuery(unittest.TestCase):
     """v0.4.0 VISION-05：multi_brain_query 工具，BRAIN_EXTRA_DIRS，source 標籤。"""
 
     def test_multi_brain_query_tool_exists(self):
-        """mcp_server.py 應有 multi_brain_query 函式（VISION-05 MCP 工具）。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
+        """MCP tools 應有 multi_brain_query 函式（VISION-05 MCP 工具）。"""
+        source = _mcp_full_source()
         self.assertIn(
             "multi_brain_query", source,
-            "mcp_server.py 應有 multi_brain_query 工具（v0.4.0 VISION-05）",
+            "MCP tools 應有 multi_brain_query 工具（v0.4.0 VISION-05）",
         )
 
     def test_brain_extra_dirs_env_var_supported(self):
         """multi_brain_query 應讀取 BRAIN_EXTRA_DIRS env var（冒號分隔路徑）。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
+        source = _mcp_full_source()
         self.assertIn(
             "BRAIN_EXTRA_DIRS", source,
-            "mcp_server.py 應引用 BRAIN_EXTRA_DIRS（v0.4.0 VISION-05：環境變數設定額外 Brain）",
+            "MCP tools 應引用 BRAIN_EXTRA_DIRS（v0.4.0 VISION-05：環境變數設定額外 Brain）",
         )
 
     def test_multi_brain_query_output_has_source_label(self):
         """multi_brain_query 輸出應含 source 標籤（標注結果來源 Brain）。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
-        # 格式為 **[{r['source']}]** 或 [source: ...]
+        source = _mcp_full_source()
         self.assertIn(
             "source", source,
             "multi_brain_query 輸出應含 source 標籤（v0.4.0 VISION-05）",
         )
-        # 確認是格式化輸出（含方括號）
         self.assertIn(
             "[{r[", source,
             "multi_brain_query 應用 [{r['source']}] 格式標注來源（v0.4.0 VISION-05）",
@@ -292,8 +299,7 @@ class TestVision05MultiBrainQuery(unittest.TestCase):
 
     def test_multi_brain_query_deduplicates_by_title(self):
         """multi_brain_query 應跨庫以 title 去重（避免相同節點重複出現）。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
+        source = _mcp_full_source()
         self.assertIn(
             "seen_titles", source,
             "multi_brain_query 應有 seen_titles 去重邏輯（v0.4.0 VISION-05）",
@@ -301,8 +307,7 @@ class TestVision05MultiBrainQuery(unittest.TestCase):
 
     def test_multi_brain_query_sorts_by_confidence(self):
         """multi_brain_query 結果應依 confidence 降冪排序。"""
-        from project_brain import mcp_server as ms
-        source = inspect.getsource(ms)
+        source = _mcp_full_source()
         # 確認有 confidence 排序
         self.assertIn(
             "confidence", source,

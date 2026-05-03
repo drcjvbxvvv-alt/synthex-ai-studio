@@ -30,6 +30,20 @@
 - 當前 traces = 1,737 條，sampling rate = 5（每 5 次查詢記錄 1 次），正常運作
 - 深度審查的 14,997 figure 來自不同 `.brain/` 快照
 
+### H-02：mcp_server.py 按 domain 拆分（2,059 → 539 行）
+
+- `mcp_server.py` 從 2,059 行精簡至 539 行（BrainServer + factory + CLI）
+- 新增 `interfaces/mcp_tools/` 模組：
+  - `knowledge_tools.py`（495 行）— get_context, search, add, batch_add, answer_question
+  - `feedback_tools.py`（301 行）— mark_helpful, report_knowledge_outcome, complete_task
+  - `federation_tools.py`（299 行）— federation_sync, multi_brain_query, push_to_central
+  - `pipeline_tools.py`（173 行）— auto_resolve, generate_questions, krb_pre_screen
+  - `admin_tools.py`（147 行）— brain_status, impact_analysis, temporal_query
+  - `reasoning_tools.py`（41 行）— reasoning_chain
+  - `maintenance.py`（127 行）— decay/cleanup 維護週期邏輯
+- Tool registry 機制：`register_all_tools(mcp, srv, helpers)` 自動載入所有模組
+- 公開 API 零 breaking change（create_server、BrainServer、module-level 變數全保留）
+
 ### H-01：brain_db.py 拆分（2,850 → 760 行）
 
 - `brain_db.py` 從 2,850 行精簡至 760 行（facade + connection + schema check）

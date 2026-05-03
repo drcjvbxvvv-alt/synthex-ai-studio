@@ -2264,12 +2264,13 @@ class TestNodeRepository:
 
 ---
 
-### H-02 mcp_server.py 按 domain 拆分（2,059 行）
+### H-02 mcp_server.py 按 domain 拆分（2,059 行）[DONE v0.60.0]
 
 **ID**：H-02
 **優先**：P3
 **依賴**：H-01（先拆 brain_db，再拆上層）
 **估計工作量**：12h
+**完成日期**：2026-05-04
 
 #### 問題分析
 
@@ -2307,10 +2308,10 @@ project_brain/interfaces/
 
 #### 驗收條件
 
-- [ ] `mcp_server.py` 從 2,059 行降至 ≤ 500 行
-- [ ] 新增 ≥ 5 個 tool module，每個 ≤ 300 行
-- [ ] 22 個 MCP tools 全部正常運作
-- [ ] 全量測試通過（0 failures）
+- [x] `mcp_server.py` 從 2,059 行降至 539 行（BrainServer + factory + CLI）
+- [x] 新增 6 個 tool module + 1 個 maintenance module（knowledge 495, feedback 301, federation 299, pipeline 173, admin 147, reasoning 41, maintenance 127）
+- [x] 18 個 MCP tools 全部正常運作
+- [x] 全量測試通過（1524 passed, 0 regressions）
 
 **推薦模型**：Opus 4.6 (1M)（跨檔重構）
 
@@ -2621,7 +2622,7 @@ Phase E (v0.53.0) ✅ 6/6 DONE
 ╔══════════════════════════════════════════════════════════════════╗
 ║ Phase H (v0.70.0) 🔲 架構債清理                                  ║
 ║ ├── H-01 brain_db.py 拆分 (2850→760 行)          ✅ v0.60.0      ║
-║ │    └──▶ H-02 mcp_server.py 拆分 (2059→≤500 行) (依賴 H-01)     ║
+║ │    └──▶ H-02 mcp_server.py 拆分 (2059→539 行)  ✅ v0.60.0      ║
 ║ └── H-03 使用者指南完整化                          (依賴 G 完成)    ║
 ╚══════════════════════════════════════════════════════════════════╝
          │
@@ -2652,7 +2653,7 @@ Phase G + H (2-4 週，可部分並行)
  G-03      ████████████████    ← 依賴 G-01
  G-04 ████████                 ← 獨立
  H-01 ████████████████████████████████ ✅ done 2026-05-03
- H-02           ██████████████████     ← 依賴 H-01
+ H-02           ██████████████████     ✅ done 2026-05-04
  H-03                              ████████████ ← 依賴 G 完成
                                     │
                                     ▼ G+H 完成

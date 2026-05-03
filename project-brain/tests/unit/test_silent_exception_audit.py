@@ -140,8 +140,15 @@ class TestSilentExceptionAudit(unittest.TestCase):
         """P0-1 regression: MCP add_knowledge conflict check must not
         silently swallow TypeError."""
         root = self._project_root()
-        mcp_path = root / "project_brain/interfaces/mcp_server.py"
-        source = mcp_path.read_text(encoding="utf-8")
+        # H-02: tools now in mcp_tools/ sub-modules
+        mcp_tools_dir = root / "project_brain/interfaces/mcp_tools"
+        source = ""
+        if mcp_tools_dir.exists():
+            for f in mcp_tools_dir.glob("*.py"):
+                source += f.read_text(encoding="utf-8")
+        else:
+            mcp_path = root / "project_brain/interfaces/mcp_server.py"
+            source = mcp_path.read_text(encoding="utf-8")
 
         # The background conflict check should call find_conflicts_for_node
         self.assertIn("find_conflicts_for_node", source,
