@@ -336,42 +336,6 @@ brain import backup.json --merge-strategy interactive
 
 ---
 
-## brain analytics 詳細說明
-
-```bash
-# 顯示使用率統計
-brain analytics
-
-# 匯出 CSV
-brain analytics --export csv --output usage.csv
-```
-
-CSV 欄位：`node_id` / `title` / `type` / `scope` / `access_count` / `last_accessed` / `confidence`
-
----
-
-## brain deprecate / brain lifecycle 詳細說明
-
-```bash
-# 廢棄節點（設 is_deprecated=1，建立 REPLACED_BY 邊）
-brain deprecate <node_id> [--replaced-by <new_id>]
-
-# 查看節點生命週期
-brain lifecycle <node_id>
-```
-
----
-
-## brain counterfactual 詳細說明
-
-```bash
-# 分析假設變更的影響
-brain counterfactual "如果我們用 NoSQL 代替 PostgreSQL"
-# 輸出：受影響的知識節點，依影響分數排序
-```
-
----
-
 ## brain serve 詳細說明
 
 `brain serve` 支援三種模式：
@@ -450,16 +414,23 @@ curl http://localhost:3000/health
 
 ---
 
-## 已移除 / 隱藏命令
+## 已移除命令
 
-以下命令存在但標記為 `==SUPPRESS==`（進階 / 實驗性，不在主要 help 中顯示）：
+以下命令已完全移除（功能已整合至新命令）：
 
-`analytics`, `backfill-git`, `deprecated`, `deprecate`, `fed`, `history`,
-`index`, `lifecycle`, `link-issue`, `meta`, `migrate`, `report`, `restore`,
-`rollback`, `session`, `timeline`
+| 移除命令 | 替代命令 |
+|---------|---------|
+| `analytics` | `brain report --analytics` |
+| `health-report` | `brain report` |
+| `timeline` | `brain history <id>` |
+| `restore` | `brain rollback <id> --version <N>` |
+| `deprecate` | `brain deprecated mark <id>` |
+| `lifecycle` | `brain deprecated info <id>` |
+| `learn`, `export-rules`, `daemon` | 已在 v0.10.x 清理 |
 
-舊版命令（已完全移除）：
-- `learn`, `export-rules`, `daemon` — 已在 v0.10.x 清理
+進階命令（`==SUPPRESS==`，不在主要 help 顯示，但底部 footer 有說明）：
+
+`backfill-git`, `deprecated`, `fed`, `history`, `index`, `link-issue`, `migrate`, `optimize`, `report`, `rollback`, `session`
 
 `distill` — 待實作（D-01，需 GPU ≥16GB）。計劃：從 L3 知識庫生成 Q&A 訓練集，
 搭配 [Axolotl](https://github.com/OpenAccess-AI-Collective/axolotl) 做 LoRA 微調。

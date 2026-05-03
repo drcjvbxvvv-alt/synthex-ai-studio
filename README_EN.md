@@ -25,7 +25,7 @@
 > **Engineering memory infrastructure for AI Agents.**
 > Every conversation picks up where the last one left off — decisions, rules, and hard-won lessons included.
 
-[![Version](https://img.shields.io/badge/version-v0.46.0-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
+[![Version](https://img.shields.io/badge/version-v0.53.1-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
@@ -365,7 +365,7 @@ Queries are automatically filtered: an Agent operating in the `user_profile` con
 
 ---
 
-## Team Sharing (v0.46.0)
+## Team Sharing
 
 ### AI Agent + Telegram (Recommended, Zero Infrastructure)
 
@@ -514,10 +514,7 @@ brain ask "payment refund"
   "mcpServers": {
     "project-brain": {
       "command": "python",
-      "args": ["-m", "project_brain.mcp_server"],
-      "env": {
-        "BRAIN_WORKDIR": "/your/project"
-      }
+      "args": ["-m", "project_brain.mcp_server"]
     }
   }
 }
@@ -555,11 +552,6 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 | `brain clear`       | Clear session working memory | `brain clear`                      |
 | `brain export`      | Export knowledge store       | `brain export --format json`       |
 | `brain import`      | Import knowledge store       | `brain import backup.json`         |
-| `brain analytics`   | Usage analytics              | `brain analytics --export csv`     |
-| `brain deprecate`   | Deprecate a knowledge node   | `brain deprecate <id>`             |
-| `brain lifecycle`   | Node lifecycle history       | `brain lifecycle <id>`             |
-| `brain counterfactual` | Counterfactual impact analysis | `brain counterfactual "replace PostgreSQL"` |
-| `brain health-report` | Health report (Markdown)  | `brain health-report`              |
 | `brain doctor`      | Environment diagnostics & fix | `brain doctor --fix`              |
 
 ### Knowledge Types (--kind)
@@ -958,6 +950,6 @@ MIT License — see [LICENSE](LICENSE) for details
 
 ---
 
-_v0.46.0 · Project Brain · Engineering memory infrastructure for AI Agents_
+_v0.53.1 · Project Brain · Engineering memory infrastructure for AI Agents_
 
 _Related academic literature: CoALA (arXiv:2309.02427) · MemCoder (arXiv:2603.13258) · MemGovern (arXiv:2601.06789) · Lore (arXiv:2603.15566)_

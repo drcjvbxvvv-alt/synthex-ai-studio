@@ -25,7 +25,7 @@
 > **為 AI Agent 設計的工程記憶基礎設施。**
 > 讓每次對話都能承接上一次的決策、規則與踩坑。
 
-[![Version](https://img.shields.io/badge/version-v0.46.0-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
+[![Version](https://img.shields.io/badge/version-v0.53.1-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
@@ -365,7 +365,7 @@ brain add "React Hook 規則"       --scope user_profile
 
 ---
 
-## 團隊共享（v0.46.0 新增）
+## 團隊共享
 
 ### AI Agent + Telegram（推薦，零基礎設施）
 
@@ -514,10 +514,7 @@ brain ask "支付退款"
   "mcpServers": {
     "project-brain": {
       "command": "python",
-      "args": ["-m", "project_brain.mcp_server"],
-      "env": {
-        "BRAIN_WORKDIR": "/your/project"
-      }
+      "args": ["-m", "project_brain.mcp_server"]
     }
   }
 }
@@ -555,11 +552,6 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 | `brain clear`       | 清除 session 工作記憶 | `brain clear`               |
 | `brain export`      | 匯出知識庫         | `brain export --format json`   |
 | `brain import`      | 匯入知識庫         | `brain import backup.json`     |
-| `brain analytics`   | 使用率分析         | `brain analytics --export csv` |
-| `brain deprecate`   | 廢棄知識節點       | `brain deprecate <id>`         |
-| `brain lifecycle`   | 節點生命週期       | `brain lifecycle <id>`         |
-| `brain counterfactual` | 反事實影響分析  | `brain counterfactual "換掉 PostgreSQL"` |
-| `brain health-report` | 健康報告（Markdown）| `brain health-report`       |
 | `brain doctor`      | 環境診斷與修復     | `brain doctor --fix`           |
 
 ### 知識類型（--kind）
@@ -958,6 +950,6 @@ MIT License — 詳見 [LICENSE](LICENSE)
 
 ---
 
-_v0.46.0 · Project Brain · 為 AI Agent 設計的工程記憶基礎設施_
+_v0.53.1 · Project Brain · 為 AI Agent 設計的工程記憶基礎設施_
 
 _相關學術文獻：CoALA (arXiv:2309.02427) · MemCoder (arXiv:2603.13258) · MemGovern (arXiv:2601.06789) · Lore (arXiv:2603.15566)_
