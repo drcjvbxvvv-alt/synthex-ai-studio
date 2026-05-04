@@ -1694,7 +1694,7 @@ def cmd_eval(args):
             save_eval_dataset(ev.queries, dataset_path)
             _info(f"已自動產生 {count} 筆 queries")
 
-        _hybrid = getattr(args, "hybrid", True)  # default to hybrid when embedder available
+        _hybrid = not getattr(args, "no_hybrid", False)  # default to hybrid
         _mode = "hybrid (FTS5 + vector)" if _hybrid else "FTS5"
         with _Spinner(f"執行檢索評估（{_mode}）"):
             report = ev.run(k=3, search_limit=10, use_hybrid=_hybrid)

@@ -588,8 +588,8 @@ def _build_parser():
                    help='CI 模式：recall@3 低於 threshold 時 exit 1')
     p.add_argument('--threshold', type=float, default=0.5,
                    help='CI recall@3 門檻（預設 0.5）')
-    p.add_argument('--hybrid', action='store_true',
-                   help='使用 hybrid search（FTS5 + vector），需 embedder')
+    p.add_argument('--no-hybrid', action='store_true',
+                   help='停用 hybrid search，僅使用 FTS5（預設啟用 hybrid）')
     p.add_argument('--min-confidence', type=float, default=0.7,
                    help='generate 最低信心分數（預設 0.7）')
     p.add_argument('--max-queries', type=int, default=100,
