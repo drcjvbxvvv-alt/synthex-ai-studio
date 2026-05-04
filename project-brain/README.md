@@ -22,7 +22,7 @@ Project Brain 是一個**持久化知識庫**，可以與任何 AI Agent 整合�
 | 工程師 | CLI + Claude Code 自動整合，commit 後自動學習 |
 | PM / 管理者 | 透過 Telegram 或 WebUI 查詢和加入知識 |
 | 新進同事 | 查詢知識庫，快速了解專案慣例和踩過的坑 |
-| AI Agent | 透過 MCP 協定連接，22 個工具可用 |
+| AI Agent | 透過 MCP 協定連接，18 個工具可用 |
 
 ---
 
@@ -148,7 +148,7 @@ brain review reject <id>       # 駁回
 
 ### MCP Server（AI Agent 整合）
 
-Brain 提供 22 個 MCP 工具，任何支援 MCP 協定的 AI Agent 都可以使用：
+Brain 提供 18 個 MCP 工具，任何支援 MCP 協定的 AI Agent 都可以使用：
 
 | 工具 | 用途 |
 |------|------|
@@ -162,7 +162,7 @@ Brain 提供 22 個 MCP 工具，任何支援 MCP 協定的 AI Agent 都可以�
 | `krb_pre_screen` | AI 預審待審知識 |
 | `impact_analysis` | 分析元件影響範圍 |
 
-完整清單：22 個工具，詳見 [COMMANDS.md](COMMANDS.md)。
+完整清單：18 個工具，詳見 [COMMANDS.md](COMMANDS.md)。
 
 ### HTTP MCP Server（遠端連接）
 
@@ -258,9 +258,10 @@ brain serve --mcp --auth-key $KEY --bind 0.0.0.0 --port 3000
 
 | 配置 | 命令 | 說明 |
 |------|------|------|
-| 最小安裝 | `pip install project-brain` | 純 FTS5 全文搜尋 |
+| 最小安裝 | `pip install project-brain` | 純 FTS5 全文搜尋（recall 55%） |
 | 推薦安裝 | `pip install "project-brain[mcp]"` | + MCP Server 支援 |
-| 完整功能 | + Ollama nomic-embed-text | 88% 語意召回率 |
+| Hybrid 語意搜尋 | `pip install "project-brain[semantic]"` | + sentence-transformers（recall **90%**） |
+| 完整安裝 | `pip install "project-brain[all]"` | 含全部功能 |
 
 詳見 [INSTALL.md](INSTALL.md)。
 
@@ -300,12 +301,13 @@ brain export / import    # 匯出匯入
 
 | 指標 | 數值 |
 |------|------|
-| Hybrid recall@3（multilingual-e5-small）| **97%** |
-| Hybrid MRR | **0.915** |
+| Hybrid recall@3（sentence-transformers e5-small）| **90%** |
+| FTS5-only recall@3 | 55% |
+| FastAPI Discovery Rate（Hybrid）| **75%** |
+| FastAPI Discovery Rate（FTS5-only）| 35% |
 | FTS5 搜尋延遲（5K nodes p99）| ≤ 300ms |
-| Hybrid 搜尋延遲 avg | ~25ms |
 | 批次寫入吞吐量 | ≥ 200 nodes/s |
-| 測試數量 | ~1750 passed（不含 chaos/benchmark） |
+| 測試數量 | **1532 passed**（0 failed） |
 | 覆蓋率 | ~51% |
 | 並發安全 | 100 threads × 10 writes（0 丟失） |
 
@@ -315,14 +317,13 @@ brain export / import    # 匯出匯入
 
 | 文件 | 說明 |
 |------|------|
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | **使用者指南**（入門必讀） |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | **使用者指南**（入門必讀，1214 行） |
 | [COMMANDS.md](COMMANDS.md) | 所有命令詳細說明 |
-| [INSTALL.md](INSTALL.md) | 安裝指南（含 GPU/LoRA） |
-| [docs/SYSTEM_DEEP_REVIEW_2026-05-02.md](docs/SYSTEM_DEEP_REVIEW_2026-05-02.md) | 深度系統審查：可靠度、誠實性、檢索品質、缺陷與修復路線 |
-| [docs/PHASE_E_PLAN.md](docs/PHASE_E_PLAN.md) | Phase E 團隊共享腦規劃 |
+| [INSTALL.md](INSTALL.md) | 安裝指南 |
+| [docs/SYSTEM_DEEP_REVIEW_2026-05-04.md](docs/SYSTEM_DEEP_REVIEW_2026-05-04.md) | 深度系統審查 v0.60.0：架構+性能雙突破 |
+| [docs/COMPETITIVE_ANALYSIS.md](docs/COMPETITIVE_ANALYSIS.md) | 競品分析：Brain vs Zep/Mem0/Cognee |
+| [docs/EXPERIMENT_REPORT.md](docs/EXPERIMENT_REPORT.md) | 實驗驗證：零依賴系統完整性 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 開發路線圖 |
-| [tests/TEST_PLAN.md](tests/TEST_PLAN.md) | 完整測試計劃 |
-| [docs/EXPERIMENT_REPORT.md](docs/EXPERIMENT_REPORT.md) | 實驗驗證報告 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本歷史 |
 
 ---

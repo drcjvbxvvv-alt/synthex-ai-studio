@@ -25,11 +25,11 @@
 > **為 AI Agent 設計的工程記憶基礎設施。**
 > 讓每次對話都能承接上一次的決策、規則與踩坑。
 
-[![Version](https://img.shields.io/badge/version-v0.53.1-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
+[![Version](https://img.shields.io/badge/version-v0.60.0-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/tests-~1483_passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1532_passed-brightgreen.svg)]()
 [![Zero Dependencies](https://img.shields.io/badge/runtime_deps-sqlite_only-brightgreen.svg)]()
 
 ---
@@ -183,7 +183,7 @@ Brain 的定位是：**針對工程程式碼庫的結構化長期記憶，零外
 - 新成員問「為什麼這樣做」時，`brain ask` 能回答的比例
 
 **無法保證的**：
-- 召回率上限約 75%（有 25% 相關知識可能查不到）
+- FTS5-only 召回率約 55%；安裝 `[semantic]` 啟用 Hybrid Search 可提升至 90%
 - 品質取決於知識庫的維護質量
 - 自動提取的知識需要人工審核才能達到高信心度
 
@@ -249,7 +249,7 @@ Project Brain 不試圖記住一切，而是記住**值得記住的**：
 
 任何號稱「完美無缺」的系統都是在實驗室裡的玩具。Project Brain 在設計上對自己的邊界有明確的認知：
 
-- 語意召回率上限約 75%（Ontology 是研究問題，不是工程問題）
+- FTS5-only 語意召回率約 55%；Hybrid Search（sentence-transformers）可達 90%
 - 只能記錄人類已意識到值得記錄的事
 - 對「隱性知識」（你覺得理所當然而沒有寫下來的）無能為力
 
@@ -439,7 +439,7 @@ brain.db（單一真相源）
 └──────────────┬───────────────────────────────────┘
                │  MCP (stdio / HTTP) / REST API
 ┌──────────────▼───────────────────────────────────┐
-│              Project Brain (22 MCP tools)          │
+│              Project Brain (18 MCP tools)          │
 │                                                   │
 │  ┌──────────┐  ┌──────────┐  ┌─────────────────┐ │
 │  │ L1a      │  │ L2       │  │ L3              │ │
@@ -574,7 +574,7 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 brain serve --mcp
 ```
 
-可用 MCP 工具（22 個，列出常用）：
+可用 MCP 工具（18 個，列出常用）：
 
 | 工具                                                     | 說明                                    |
 | -------------------------------------------------------- | --------------------------------------- |
@@ -809,7 +809,7 @@ MemGovern 有 quality gate，MemCoder 有 commit 提取，但沒有任何系統�
 
 | 限制                 | 說明                                                 | 計劃                              |
 | -------------------- | ---------------------------------------------------- | --------------------------------- |
-| 語意召回率 ~75%      | FTS5 關鍵字搜尋對語意相近但用詞不同的查詢效果有限    | Phase 1：向量語意搜尋             |
+| FTS5-only 召回率 55% | 純關鍵字搜尋對語意相近但用詞不同的查詢效果有限；安裝 `[semantic]` 可提升至 **90%** | `pip install "project-brain[semantic]"` |
 | 三層記憶輸出可能重複 | L2 episode 與 L3 node 可能說同一件事                 | Phase 4：自動建立 DERIVES_FROM 邊 |
 | scope 需手動指定     | 忘記加 `--scope` 知識會變成全域污染                  | Phase 5：從目錄自動推導           |
 | 無法捕捉隱性知識     | 只能記錄已被意識到的決策，無法捕捉「不言而喻的約定」 | 設計邊界，不修                    |
@@ -822,9 +822,16 @@ MemGovern 有 quality gate，MemCoder 有 commit 提取，但沒有任何系統�
 project-brain/
 ├── project_brain/
 │   ├── core/
-│   │   ├── brain_db.py          統一資料庫（BrainDB，Schema v28）
+│   │   ├── brain_db.py          統一資料庫 facade（760 行，H-01 拆分後）
 │   │   ├── session_store.py     L1a 工作記憶
 │   │   └── constants.py         共用常數
+│   ├── storage/                 ← H-01 新增：brain_db 拆分模組
+│   │   └── repositories/
+│   │       ├── node_repo.py     節點 CRUD
+│   │       ├── search_repo.py   FTS5 + Hybrid 搜尋
+│   │       ├── analytics_repo.py  統計查詢
+│   │       ├── migration_repo.py  Schema 遷移
+│   │       └── misc_repo.py     雜項操作
 │   ├── pipeline/
 │   │   ├── signal.py            信號定義（6 種 SignalKind）
 │   │   ├── executor.py          知識執行器（Layer 4）
@@ -837,25 +844,34 @@ project-brain/
 │   │   ├── review_board.py      KRB 人工審查
 │   │   └── knowledge_validator.py  三階段知識驗證
 │   ├── interfaces/
-│   │   ├── mcp_server.py        MCP Server（22 tools + HTTP transport）
+│   │   ├── mcp_server.py        MCP Server facade（539 行，H-02 拆分後）
+│   │   ├── mcp_tools/           ← H-02 新增：MCP 工具模組
+│   │   │   ├── knowledge.py     知識 CRUD 工具
+│   │   │   ├── feedback.py      回饋工具
+│   │   │   ├── admin.py         管理工具
+│   │   │   ├── pipeline.py      Pipeline 工具
+│   │   │   ├── federation.py    Federation 工具
+│   │   │   ├── reasoning.py     推理鏈工具
+│   │   │   └── maintenance.py   維護工具
 │   │   ├── http_transport.py    HTTP MCP（Auth/RateLimit/CORS/Health）
 │   │   ├── api_server.py        REST API
 │   │   ├── cli.py               CLI 入口
-│   │   └── web_ui/              D3.js 視覺化 + KRB 管理
+│   │   └── web_ui/              D3.js 視覺化 + KRB 管理（I-03）
 │   ├── integrations/
 │   │   ├── llm_client.py        統一 LLM 介面（Ollama/Claude/Fallback）
 │   │   └── federation.py        跨專案同步（PII 清理 + 去重）
 │   ├── engine.py                ProjectBrain 主引擎
 │   └── graph.py                 L3 知識圖譜（CAS 樂觀鎖）
 ├── docs/
-│   ├── USER_GUIDE.md            使用者指南（入門必讀）
-│   ├── PHASE_E_PLAN.md          Phase E 團隊共享腦規劃
-│   ├── ROADMAP.md               開發路線圖（Phase A~E）
+│   ├── USER_GUIDE.md            使用者指南（入門必讀，1214 行）
+│   ├── COMPETITIVE_ANALYSIS.md  競品分析（Brain vs Zep/Mem0/Cognee）
+│   ├── SYSTEM_DEEP_REVIEW_2026-05-04.md  深度系統審查 v0.60.0
+│   ├── ROADMAP.md               開發路線圖（Phase A~I）
 │   └── EXPERIMENT_REPORT.md     實驗驗證報告
 ├── tests/
-│   ├── unit/                    單元測試（~1050）
-│   ├── integration/             整合測試（~100）
-│   ├── e2e/                     端到端測試（~14）
+│   ├── unit/                    單元測試
+│   ├── integration/             整合測試
+│   ├── e2e/                     端到端測試
 │   └── benchmarks/              效能基準（5K nodes）
 ├── COMMANDS.md                  命令參考
 ├── INSTALL.md                   安裝指南
@@ -868,11 +884,14 @@ project-brain/
 ## 安裝選項
 
 ```bash
-# 最小安裝（純 FTS5 全文搜尋）
+# 最小安裝（純 FTS5 全文搜尋，recall ~55%）
 pip install project-brain
 
 # 推薦安裝（含 MCP Server，Claude Code / Cursor / 小龍蝦）
 pip install "project-brain[mcp]"
+
+# Hybrid 語意搜尋（sentence-transformers e5-small，recall 90%）
+pip install "project-brain[semantic]"
 
 # 含 Anthropic SDK（AI 知識提取）
 pip install "project-brain[anthropic]"
@@ -935,10 +954,11 @@ Layer 2 失敗時系統自動回退至純 Python cosine similarity，功能完�
 
 | 文件                                                                               | 說明                                   |
 | ---------------------------------------------------------------------------------- | -------------------------------------- |
-| [project-brain/docs/USER_GUIDE.md](project-brain/docs/USER_GUIDE.md)              | **使用者指南**（入門必讀）             |
+| [project-brain/docs/USER_GUIDE.md](project-brain/docs/USER_GUIDE.md)              | **使用者指南**（入門必讀，1214 行）    |
 | [project-brain/COMMANDS.md](project-brain/COMMANDS.md)                             | 所有命令詳細說明                       |
-| [project-brain/docs/ROADMAP.md](project-brain/docs/ROADMAP.md)                    | 開發路線圖（Phase A~E）               |
-| [project-brain/docs/PHASE_E_PLAN.md](project-brain/docs/PHASE_E_PLAN.md)          | Phase E 團隊共享腦規劃                 |
+| [project-brain/docs/COMPETITIVE_ANALYSIS.md](project-brain/docs/COMPETITIVE_ANALYSIS.md) | 競品分析（Brain vs Zep/Mem0/Cognee，含實測數據） |
+| [project-brain/docs/SYSTEM_DEEP_REVIEW_2026-05-04.md](project-brain/docs/SYSTEM_DEEP_REVIEW_2026-05-04.md) | 深度系統審查 v0.60.0 |
+| [project-brain/docs/ROADMAP.md](project-brain/docs/ROADMAP.md)                    | 開發路線圖（Phase A~I）               |
 | [project-brain/INSTALL.md](project-brain/INSTALL.md)                               | 安裝與驗證步驟                         |
 | [project-brain/CHANGELOG.md](project-brain/CHANGELOG.md)                           | 版本歷史                               |
 
@@ -950,6 +970,6 @@ MIT License — 詳見 [LICENSE](LICENSE)
 
 ---
 
-_v0.53.1 · Project Brain · 為 AI Agent 設計的工程記憶基礎設施_
+_v0.60.0 · Project Brain · 為 AI Agent 設計的工程記憶基礎設施_
 
 _相關學術文獻：CoALA (arXiv:2309.02427) · MemCoder (arXiv:2603.13258) · MemGovern (arXiv:2601.06789) · Lore (arXiv:2603.15566)_

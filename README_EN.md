@@ -25,11 +25,11 @@
 > **Engineering memory infrastructure for AI Agents.**
 > Every conversation picks up where the last one left off — decisions, rules, and hard-won lessons included.
 
-[![Version](https://img.shields.io/badge/version-v0.53.1-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
+[![Version](https://img.shields.io/badge/version-v0.60.0-blue.svg)](https://github.com/drcjvbxvvv-alt/synthex-ai-studio/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/tests-~1483_passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1532_passed-brightgreen.svg)]()
 [![Zero Dependencies](https://img.shields.io/badge/runtime_deps-sqlite_only-brightgreen.svg)]()
 
 ---
@@ -183,7 +183,7 @@ Honest ways to measure whether it's working:
 - When a new team member asks "why is it done this way?", what fraction can `brain ask` answer?
 
 **What it cannot guarantee:**
-- Recall ceiling is approximately 75% — 25% of relevant knowledge may not be retrieved
+- FTS5-only recall is ~55%; install `[semantic]` to enable Hybrid Search (90% recall)
 - Quality depends entirely on how well the knowledge base is maintained
 - Auto-extracted knowledge needs human review to reach high-confidence status
 
@@ -249,7 +249,7 @@ What it does _not_ store: scratch notes, one-off tasks, completed TODOs.
 
 Any system that claims to be perfect is a lab toy. Project Brain is clear about its own boundaries by design:
 
-- Semantic recall ceiling is roughly 75% (ontology is a research problem, not an engineering one)
+- FTS5-only semantic recall is ~55%; install `[semantic]` to enable Hybrid Search (90% recall)
 - It can only record what humans have already noticed is worth recording
 - It has no power over tacit knowledge — things you take for granted and never write down
 
@@ -439,7 +439,7 @@ brain.db (single source of truth)
 └──────────────┬───────────────────────────────────┘
                │  MCP (stdio / HTTP) / REST API
 ┌──────────────▼───────────────────────────────────┐
-│              Project Brain (22 MCP tools)          │
+│              Project Brain (18 MCP tools)          │
 │                                                   │
 │  ┌──────────┐  ┌──────────┐  ┌─────────────────┐ │
 │  │ L1a      │  │ L2       │  │ L3              │ │
@@ -574,7 +574,7 @@ If Brain returns nudges or warnings, treat them as hard constraints.
 brain serve --mcp
 ```
 
-Available MCP tools (22 total, key tools listed):
+Available MCP tools (18 total, key tools listed):
 
 | Tool                                                      | Description                                                               |
 | --------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -809,7 +809,7 @@ Honestly listing the boundaries of this version is a basic form of respect for u
 
 | Limitation                              | Description                                                                                                     | Plan                                          |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Semantic recall ~75%                    | FTS5 keyword search struggles with semantically similar but differently worded queries                          | Phase 1: vector semantic search               |
+| FTS5-only recall 55%                    | Keyword search struggles with semantically similar but differently worded queries; install `[semantic]` to reach **90%** | `pip install "project-brain[semantic]"` |
 | Possible duplicate output across layers | L2 episode and L3 node may describe the same thing                                                              | Phase 4: auto-build DERIVES_FROM edges        |
 | Scope must be specified manually        | Forgetting `--scope` causes knowledge to pollute the global namespace                                           | Phase 5: infer scope from directory structure |
 | Cannot capture tacit knowledge          | Only records decisions that humans have consciously noticed; "goes without saying" conventions are out of reach | Design boundary — won't fix                   |
@@ -822,9 +822,16 @@ Honestly listing the boundaries of this version is a basic form of respect for u
 project-brain/
 ├── project_brain/
 │   ├── core/
-│   │   ├── brain_db.py          Unified database (BrainDB, Schema v28)
+│   │   ├── brain_db.py          Unified database facade (760 lines, post H-01 refactor)
 │   │   ├── session_store.py     L1a working memory
 │   │   └── constants.py         Shared constants
+│   ├── storage/                 ← H-01 new: brain_db split modules
+│   │   └── repositories/
+│   │       ├── node_repo.py     Node CRUD
+│   │       ├── search_repo.py   FTS5 + Hybrid search
+│   │       ├── analytics_repo.py  Analytics queries
+│   │       ├── migration_repo.py  Schema migrations
+│   │       └── misc_repo.py     Miscellaneous operations
 │   ├── pipeline/
 │   │   ├── signal.py            Signal definitions (6 SignalKinds)
 │   │   ├── executor.py          Knowledge executor (Layer 4)
@@ -837,25 +844,34 @@ project-brain/
 │   │   ├── review_board.py      KRB human review
 │   │   └── knowledge_validator.py  Three-stage validation
 │   ├── interfaces/
-│   │   ├── mcp_server.py        MCP Server (22 tools + HTTP transport)
+│   │   ├── mcp_server.py        MCP Server facade (539 lines, post H-02 refactor)
+│   │   ├── mcp_tools/           ← H-02 new: MCP tool modules
+│   │   │   ├── knowledge.py     Knowledge CRUD tools
+│   │   │   ├── feedback.py      Feedback tools
+│   │   │   ├── admin.py         Admin tools
+│   │   │   ├── pipeline.py      Pipeline tools
+│   │   │   ├── federation.py    Federation tools
+│   │   │   ├── reasoning.py     Reasoning chain tools
+│   │   │   └── maintenance.py   Maintenance tools
 │   │   ├── http_transport.py    HTTP MCP (Auth/RateLimit/CORS/Health)
 │   │   ├── api_server.py        REST API
 │   │   ├── cli.py               CLI entry point
-│   │   └── web_ui/              D3.js visualization + KRB management
+│   │   └── web_ui/              D3.js visualization + KRB management (I-03)
 │   ├── integrations/
 │   │   ├── llm_client.py        Unified LLM interface (Ollama/Claude/Fallback)
 │   │   └── federation.py        Cross-project sync (PII cleanup + dedup)
 │   ├── engine.py                ProjectBrain main engine
 │   └── graph.py                 L3 knowledge graph (CAS optimistic locking)
 ├── docs/
-│   ├── USER_GUIDE.md            User guide (start here)
-│   ├── PHASE_E_PLAN.md          Phase E team brain planning
-│   ├── ROADMAP.md               Development roadmap (Phase A–E)
+│   ├── USER_GUIDE.md            User guide (start here, 1214 lines)
+│   ├── COMPETITIVE_ANALYSIS.md  Competitive analysis (Brain vs Zep/Mem0/Cognee)
+│   ├── SYSTEM_DEEP_REVIEW_2026-05-04.md  Deep system review v0.60.0
+│   ├── ROADMAP.md               Development roadmap (Phase A–I)
 │   └── EXPERIMENT_REPORT.md     Experiment validation report
 ├── tests/
-│   ├── unit/                    Unit tests (~1050)
-│   ├── integration/             Integration tests (~100)
-│   ├── e2e/                     End-to-end tests (~14)
+│   ├── unit/                    Unit tests
+│   ├── integration/             Integration tests
+│   ├── e2e/                     End-to-end tests
 │   └── benchmarks/              Performance benchmarks (5K nodes)
 ├── COMMANDS.md                  Command reference
 ├── INSTALL.md                   Installation guide
@@ -868,11 +884,14 @@ project-brain/
 ## Installation Options
 
 ```bash
-# Standard installation (includes vector semantic search)
+# Minimal installation (FTS5 keyword search only, recall ~55%)
 pip install project-brain
 
 # With MCP Server (Claude Code / Cursor)
 pip install "project-brain[mcp]"
+
+# Hybrid semantic search (sentence-transformers e5-small, recall 90%)
+pip install "project-brain[semantic]"
 
 # With Anthropic SDK (AI knowledge extraction)
 pip install "project-brain[anthropic]"
@@ -935,10 +954,11 @@ For core design questions and architecture discussions, please open a Discussion
 
 | Document                                                                          | Description                                |
 | --------------------------------------------------------------------------------- | ------------------------------------------ |
-| [project-brain/docs/USER_GUIDE.md](project-brain/docs/USER_GUIDE.md)             | **User Guide** (start here)                |
+| [project-brain/docs/USER_GUIDE.md](project-brain/docs/USER_GUIDE.md)             | **User Guide** (start here, 1214 lines)    |
 | [project-brain/COMMANDS.md](project-brain/COMMANDS.md)                            | All commands reference                     |
-| [project-brain/docs/ROADMAP.md](project-brain/docs/ROADMAP.md)                   | Development roadmap (Phase A–E)            |
-| [project-brain/docs/PHASE_E_PLAN.md](project-brain/docs/PHASE_E_PLAN.md)         | Phase E team brain planning                |
+| [project-brain/docs/COMPETITIVE_ANALYSIS.md](project-brain/docs/COMPETITIVE_ANALYSIS.md) | Competitive analysis (Brain vs Zep/Mem0/Cognee, with real benchmark data) |
+| [project-brain/docs/SYSTEM_DEEP_REVIEW_2026-05-04.md](project-brain/docs/SYSTEM_DEEP_REVIEW_2026-05-04.md) | Deep system review v0.60.0 |
+| [project-brain/docs/ROADMAP.md](project-brain/docs/ROADMAP.md)                   | Development roadmap (Phase A–I)            |
 | [project-brain/INSTALL.md](project-brain/INSTALL.md)                              | Installation and verification steps        |
 | [project-brain/CHANGELOG.md](project-brain/CHANGELOG.md)                          | Version history                            |
 
@@ -950,6 +970,6 @@ MIT License — see [LICENSE](LICENSE) for details
 
 ---
 
-_v0.53.1 · Project Brain · Engineering memory infrastructure for AI Agents_
+_v0.60.0 · Project Brain · Engineering memory infrastructure for AI Agents_
 
 _Related academic literature: CoALA (arXiv:2309.02427) · MemCoder (arXiv:2603.13258) · MemGovern (arXiv:2601.06789) · Lore (arXiv:2603.15566)_
