@@ -1,0 +1,333 @@
+{
+  "experiment": "fastapi_knowledge_discovery",
+  "version": "v0.60.0",
+  "dataset": {
+    "pitfalls": 20,
+    "tasks": 20,
+    "source": "FastAPI GitHub Issues (manually curated)"
+  },
+  "fts5": {
+    "total_tasks": 20,
+    "context_hits": 5,
+    "context_discovery_rate": 0.25,
+    "nudge_hits": 7,
+    "nudge_discovery_rate": 0.35,
+    "combined_hits": 7,
+    "combined_discovery_rate": 0.35,
+    "avg_latency_ms": 53.3,
+    "by_category": {
+      "pydantic_validation": {
+        "total": 4,
+        "hits": 0,
+        "rate": 0.0
+      },
+      "middleware_deploy": {
+        "total": 4,
+        "hits": 2,
+        "rate": 0.5
+      },
+      "dependency_injection": {
+        "total": 5,
+        "hits": 4,
+        "rate": 0.8
+      },
+      "security_auth": {
+        "total": 3,
+        "hits": 0,
+        "rate": 0.0
+      },
+      "async_performance": {
+        "total": 4,
+        "hits": 1,
+        "rate": 0.25
+      }
+    }
+  },
+  "hybrid_tfidf": {
+    "total_tasks": 20,
+    "context_hits": 5,
+    "context_discovery_rate": 0.25,
+    "nudge_hits": 7,
+    "nudge_discovery_rate": 0.35,
+    "combined_hits": 7,
+    "combined_discovery_rate": 0.35,
+    "avg_latency_ms": 11.1,
+    "by_category": {
+      "pydantic_validation": {
+        "total": 4,
+        "hits": 0,
+        "rate": 0.0
+      },
+      "middleware_deploy": {
+        "total": 4,
+        "hits": 2,
+        "rate": 0.5
+      },
+      "dependency_injection": {
+        "total": 5,
+        "hits": 4,
+        "rate": 0.8
+      },
+      "security_auth": {
+        "total": 3,
+        "hits": 0,
+        "rate": 0.0
+      },
+      "async_performance": {
+        "total": 4,
+        "hits": 1,
+        "rate": 0.25
+      }
+    }
+  },
+  "comparison": {
+    "fts5_combined_rate": 0.35,
+    "hybrid_combined_rate": 0.35,
+    "absolute_improvement": 0.0,
+    "relative_improvement": "0.0%"
+  },
+  "per_task_fts5": [
+    {
+      "task": "I need to send an email notification after the user register",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "After placing an order, I want to update inventory counts in",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "I want to share a request counter across all API endpoints t",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "My API endpoint calls get_db twice but the second call seems",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "加入一個 API 端點，需要讀取大型 CSV 檔案並處理後回傳結果",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "I need to query a PostgreSQL database inside my async endpoi",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "實作一個大檔案下載 API，用 streaming 方式回傳避免記憶體爆掉",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": true
+    },
+    {
+      "task": "I want to add a delay between retry attempts in my webhook h",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "回傳使用者資料時要包含他的文章列表，文章也要包含作者資訊",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "I need to validate the request body and transform some field",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "API 回��的 JSON 中某些欄位是可選的，客戶端不傳就用預設值",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "I only want to include fields in the response that were actu",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "前端部署在不同網域，需要設定 CORS 讓 API 可以被呼叫",
+      "category": "middleware_deploy",
+      "context_hit": false,
+      "nudge_hit": true
+    },
+    {
+      "task": "I need to add authentication checking before any request is ",
+      "category": "middleware_deploy",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "我想用一個全域變數做 rate limiter，限制每個 IP 每分鐘最�� 10 次呼叫",
+      "category": "middleware_deploy",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "I want to customize the error response format when validatio",
+      "category": "middleware_deploy",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "實作管理員才能存取的 API 端點，普通用戶要被拒絕",
+      "category": "security_auth",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "We have multiple microservices and each issues its own JWT t",
+      "category": "security_auth",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "My mobile app keeps logging users out - the token refresh do",
+      "category": "security_auth",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "使用者上傳頭像圖片後要在背景壓縮並存到 S3",
+      "category": "dependency_injection",
+      "context_hit": false,
+      "nudge_hit": false
+    }
+  ],
+  "per_task_hybrid": [
+    {
+      "task": "I need to send an email notification after the user register",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "After placing an order, I want to update inventory counts in",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "I want to share a request counter across all API endpoints t",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "My API endpoint calls get_db twice but the second call seems",
+      "category": "dependency_injection",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "加入一個 API 端點，需要讀取大型 CSV 檔案並處理後回傳結果",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "I need to query a PostgreSQL database inside my async endpoi",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "實作一個大檔案下載 API，用 streaming 方式回傳避免記憶體爆掉",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": true
+    },
+    {
+      "task": "I want to add a delay between retry attempts in my webhook h",
+      "category": "async_performance",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "回傳使用者資料時要包含他的文章列表，文章也要包含作者資訊",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "I need to validate the request body and transform some field",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "API 回��的 JSON 中某些欄位是可選的，客戶端不傳就用預設值",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "I only want to include fields in the response that were actu",
+      "category": "pydantic_validation",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "前端部署在不同網域，需要設定 CORS 讓 API 可以被呼叫",
+      "category": "middleware_deploy",
+      "context_hit": false,
+      "nudge_hit": true
+    },
+    {
+      "task": "I need to add authentication checking before any request is ",
+      "category": "middleware_deploy",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "我想用一個全域變數做 rate limiter，限制每個 IP 每分鐘最�� 10 次呼叫",
+      "category": "middleware_deploy",
+      "context_hit": true,
+      "nudge_hit": true
+    },
+    {
+      "task": "I want to customize the error response format when validatio",
+      "category": "middleware_deploy",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "實作管理員才能存取的 API 端點，普通用戶要被拒絕",
+      "category": "security_auth",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "We have multiple microservices and each issues its own JWT t",
+      "category": "security_auth",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "My mobile app keeps logging users out - the token refresh do",
+      "category": "security_auth",
+      "context_hit": false,
+      "nudge_hit": false
+    },
+    {
+      "task": "使用者上傳頭像圖片後要在背景壓縮並存到 S3",
+      "category": "dependency_injection",
+      "context_hit": false,
+      "nudge_hit": false
+    }
+  ]
+}

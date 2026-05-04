@@ -1,0 +1,20 @@
+{"task": "I need to send an email notification after the user registers, without making the API response slow", "expected_pitfall_ids": ["fastapi-pit-01", "fastapi-pit-02"], "category": "dependency_injection"}
+{"task": "After placing an order, I want to update inventory counts in the background while returning the order confirmation immediately", "expected_pitfall_ids": ["fastapi-pit-01"], "category": "dependency_injection"}
+{"task": "I want to share a request counter across all API endpoints to track usage", "expected_pitfall_ids": ["fastapi-pit-03"], "category": "dependency_injection"}
+{"task": "My API endpoint calls get_db twice but the second call seems to return stale data from the first", "expected_pitfall_ids": ["fastapi-pit-04"], "category": "dependency_injection"}
+{"task": "加入一個 API 端點，需要讀取大型 CSV 檔案並處理後回傳結果", "expected_pitfall_ids": ["fastapi-pit-05", "fastapi-pit-06"], "category": "async_performance"}
+{"task": "I need to query a PostgreSQL database inside my async endpoint using our existing SQLAlchemy models", "expected_pitfall_ids": ["fastapi-pit-06"], "category": "async_performance"}
+{"task": "實作一個大檔案下載 API，用 streaming 方式回傳避免記憶體爆掉", "expected_pitfall_ids": ["fastapi-pit-07"], "category": "async_performance"}
+{"task": "I want to add a delay between retry attempts in my webhook handler endpoint", "expected_pitfall_ids": ["fastapi-pit-08"], "category": "async_performance"}
+{"task": "回傳使用者資料時要包含他的文章列表，文章也要包含作者資訊", "expected_pitfall_ids": ["fastapi-pit-09"], "category": "pydantic_validation"}
+{"task": "I need to validate the request body and transform some fields before the model is created", "expected_pitfall_ids": ["fastapi-pit-10"], "category": "pydantic_validation"}
+{"task": "API 回��的 JSON 中某些欄位是可選的，客戶端不傳就用預設值", "expected_pitfall_ids": ["fastapi-pit-11"], "category": "pydantic_validation"}
+{"task": "I only want to include fields in the response that were actually set by the user, not default values", "expected_pitfall_ids": ["fastapi-pit-12"], "category": "pydantic_validation"}
+{"task": "前端部署在不同網域，需要設定 CORS 讓 API 可以被呼叫", "expected_pitfall_ids": ["fastapi-pit-13", "fastapi-pit-14"], "category": "middleware_deploy"}
+{"task": "I need to add authentication checking before any request is processed by the route handler", "expected_pitfall_ids": ["fastapi-pit-14"], "category": "middleware_deploy"}
+{"task": "我想用一個全域變數做 rate limiter，限制每個 IP 每分鐘最�� 10 次呼叫", "expected_pitfall_ids": ["fastapi-pit-15"], "category": "middleware_deploy"}
+{"task": "I want to customize the error response format when validation fails or a resource is not found", "expected_pitfall_ids": ["fastapi-pit-16"], "category": "middleware_deploy"}
+{"task": "實作管理員才能存取的 API 端點，普通用戶要被拒絕", "expected_pitfall_ids": ["fastapi-pit-17"], "category": "security_auth"}
+{"task": "We have multiple microservices and each issues its own JWT tokens for authentication", "expected_pitfall_ids": ["fastapi-pit-18"], "category": "security_auth"}
+{"task": "My mobile app keeps logging users out - the token refresh doesn't seem to trigger correctly", "expected_pitfall_ids": ["fastapi-pit-19"], "category": "security_auth"}
+{"task": "使用者上傳頭像圖片後要在背景壓縮並存到 S3", "expected_pitfall_ids": ["fastapi-pit-20", "fastapi-pit-01"], "category": "dependency_injection"}
