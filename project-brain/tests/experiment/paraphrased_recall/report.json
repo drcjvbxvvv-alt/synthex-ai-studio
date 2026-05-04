@@ -1,0 +1,619 @@
+{
+  "experiment": "paraphrased_recall",
+  "version": "v0.60.0",
+  "search_mode": "fts5",
+  "dataset_size": 20,
+  "total_queries": 60,
+  "metrics": {
+    "recall_at_3": 0.7,
+    "recall_at_5": 0.7,
+    "mrr": 0.5611,
+    "avg_latency_ms": 0.1
+  },
+  "by_level": {
+    "level_1": {
+      "total": 20,
+      "hits_at_3": 20,
+      "recall_at_3": 1.0
+    },
+    "level_2": {
+      "total": 20,
+      "hits_at_3": 12,
+      "recall_at_3": 0.6
+    },
+    "level_3": {
+      "total": 20,
+      "hits_at_3": 10,
+      "recall_at_3": 0.5
+    }
+  },
+  "by_language": {
+    "zh": {
+      "total": 25,
+      "hits_at_3": 17,
+      "recall_at_3": 0.68
+    },
+    "en": {
+      "total": 20,
+      "hits_at_3": 11,
+      "recall_at_3": 0.55
+    },
+    "mixed": {
+      "total": 15,
+      "hits_at_3": 14,
+      "recall_at_3": 0.9333333333333333
+    }
+  },
+  "by_kind": {
+    "Rule": {
+      "total": 30,
+      "hits_at_3": 24,
+      "recall_at_3": 0.8
+    },
+    "Decision": {
+      "total": 15,
+      "hits_at_3": 9,
+      "recall_at_3": 0.6
+    },
+    "Pitfall": {
+      "total": 12,
+      "hits_at_3": 8,
+      "recall_at_3": 0.6666666666666666
+    },
+    "ADR": {
+      "total": 3,
+      "hits_at_3": 1,
+      "recall_at_3": 0.3333333333333333
+    }
+  },
+  "misses": [
+    {
+      "query": "為什麼不用固定窗口做限流",
+      "level": 2,
+      "lang": "zh",
+      "expected_title": "API rate limiting uses sliding window algorithm with Redis s",
+      "rank": 0
+    },
+    {
+      "query": "container 一直被 OOM kill 怎麼解決的",
+      "level": 2,
+      "lang": "mixed",
+      "expected_title": "Kubernetes pod memory limit set to 512Mi with 256Mi request",
+      "rank": 0
+    },
+    {
+      "query": "為什麼 VPA 被關掉了",
+      "level": 3,
+      "lang": "zh",
+      "expected_title": "Kubernetes pod memory limit set to 512Mi with 256Mi request",
+      "rank": 0
+    },
+    {
+      "query": "how to reduce database queries when resolving nested GraphQL fields",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "GraphQL N+1 query problem solved with DataLoader batching",
+      "rank": 0
+    },
+    {
+      "query": "元件卸載時還在跑 API 呼叫會怎樣",
+      "level": 2,
+      "lang": "zh",
+      "expected_title": "React useEffect cleanup must cancel async operations to prev",
+      "rank": 0
+    },
+    {
+      "query": "how to prevent memory leaks from pending API calls in React",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "React useEffect cleanup must cancel async operations to prev",
+      "rank": 0
+    },
+    {
+      "query": "密鑰不能寫在程式碼裡要怎麼處理",
+      "level": 2,
+      "lang": "zh",
+      "expected_title": "Secret management uses Vault with AppRole auth - never hardc",
+      "rank": 0
+    },
+    {
+      "query": "how do services authenticate to get their secrets",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "Secret management uses Vault with AppRole auth - never hardc",
+      "rank": 0
+    },
+    {
+      "query": "搜尋引擎欄位型別衝突是什麼問題",
+      "level": 2,
+      "lang": "zh",
+      "expected_title": "Elasticsearch index must have explicit mapping - dynamic map",
+      "rank": 0
+    },
+    {
+      "query": "what protocol do we use for inter-service communication and why",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "Microservice communication uses gRPC for internal and REST f",
+      "rank": 0
+    },
+    {
+      "query": "how to reduce Docker image size for deployment",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "Docker image must use multi-stage build to keep production i",
+      "rank": 0
+    },
+    {
+      "query": "怎麼在微服務之間追蹤一個請求的完整路徑",
+      "level": 2,
+      "lang": "zh",
+      "expected_title": "Logging must use structured JSON format with correlation_id ",
+      "rank": 0
+    },
+    {
+      "query": "how to trace a request across multiple services",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "Logging must use structured JSON format with correlation_id ",
+      "rank": 0
+    },
+    {
+      "query": "what OAuth flow should single page applications use",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "OAuth2 PKCE flow required for SPA - implicit flow is depreca",
+      "rank": 0
+    },
+    {
+      "query": "新功能上線出問題怎麼快速關掉",
+      "level": 2,
+      "lang": "zh",
+      "expected_title": "Feature flags controlled by LaunchDarkly with kill-switch fo",
+      "rank": 0
+    },
+    {
+      "query": "how do we safely roll out new features to production",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "Feature flags controlled by LaunchDarkly with kill-switch fo",
+      "rank": 0
+    },
+    {
+      "query": "服務之間的呼叫失敗會連鎖崩潰怎麼解",
+      "level": 2,
+      "lang": "zh",
+      "expected_title": "ADR-007: Event-driven architecture using Kafka for async wor",
+      "rank": 0
+    },
+    {
+      "query": "why did we choose event-driven over synchronous service communication",
+      "level": 3,
+      "lang": "en",
+      "expected_title": "ADR-007: Event-driven architecture using Kafka for async wor",
+      "rank": 0
+    }
+  ],
+  "per_query": [
+    {
+      "query": "Stripe 冪等鍵設定",
+      "level": 1,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "第三方付款回調重試時會不會重複扣款",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "how to prevent double charging in payment webhooks",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "JWT RS256 非對稱簽名規則",
+      "level": 1,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "why can't we use HS256 for JWT across microservices",
+      "level": 2,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "多服務架構下 token 簽名安全怎麼處理",
+      "level": 3,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "PostgreSQL connection pool max size configuration",
+      "level": 1,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "資料庫在高流量時記憶體爆掉怎麼辦",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "how to prevent database server OOM during traffic spikes",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "為什麼用 PostgreSQL 不用 MySQL",
+      "level": 1,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "what database did we choose for transaction consistency",
+      "level": 2,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "轉帳功能的資料庫技術選型是什麼",
+      "level": 3,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "Redis TTL 必須明確設定",
+      "level": 1,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "上次因為快取沒過期導致權限問題是怎麼回事",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "how long should we cache user permissions in Redis",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "API rate limit 滑動窗口演算法",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "為什麼不用固定窗口做限流",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "what algorithm prevents request bursts at window boundaries",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "deploy 之前要跑 db migrate",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 3
+    },
+    {
+      "query": "部署流程的順序是什麼",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "what happens if we deploy code without running migrations fi",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 3
+    },
+    {
+      "query": "前端打包大小限制 200KB",
+      "level": 1,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "mobile 效能要求 bundle 不能太大",
+      "level": 2,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "what is our frontend performance budget and why",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "K8s pod memory limit 設定",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "container 一直被 OOM kill 怎麼解決的",
+      "level": 2,
+      "lang": "mixed",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "為什麼 VPA 被關掉了",
+      "level": 3,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "GraphQL DataLoader batch 解決 N+1",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "API 回應慢是因為太多 SQL 查詢",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 3
+    },
+    {
+      "query": "how to reduce database queries when resolving nested GraphQL",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "CI timeout 15 分鐘限制",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "pipeline 跑太久是什麼原因",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 3
+    },
+    {
+      "query": "what should we do when a test hangs in CI",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "React useEffect 清理 async 操作",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "元件卸載時還在跑 API 呼叫會怎樣",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "how to prevent memory leaks from pending API calls in React",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "Vault AppRole secret 管理",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "密鑰不能寫在程式碼裡要怎麼處理",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "how do services authenticate to get their secrets",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "Elasticsearch mapping 必須事先定義",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 3
+    },
+    {
+      "query": "搜尋引擎欄位型別衝突是什麼問題",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "why did the search index break after adding new documents",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "內部服務通訊用 gRPC 外部用 REST",
+      "level": 1,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "services 之間為什麼不全用 REST",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "what protocol do we use for inter-service communication and ",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "Docker multi-stage build 保持 image 小",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "production 容器映像為什麼不能太大",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "how to reduce Docker image size for deployment",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "structured logging JSON 格式 correlation ID",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "怎麼在微服務之間追蹤一個請求的完整路徑",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "how to trace a request across multiple services",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "SPA 必須用 PKCE 不能用 implicit flow",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "為什麼前端登入不能直接拿 token",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "what OAuth flow should single page applications use",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "LaunchDarkly feature flag 漸進式部署",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 2
+    },
+    {
+      "query": "新功能上線出問題怎麼快速關掉",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "how do we safely roll out new features to production",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "Kafka event-driven 非同步架構",
+      "level": 1,
+      "lang": "mixed",
+      "hit_at_3": true,
+      "rank": 1
+    },
+    {
+      "query": "服務之間的呼叫失敗會連鎖崩潰怎麼解",
+      "level": 2,
+      "lang": "zh",
+      "hit_at_3": false,
+      "rank": 0
+    },
+    {
+      "query": "why did we choose event-driven over synchronous service comm",
+      "level": 3,
+      "lang": "en",
+      "hit_at_3": false,
+      "rank": 0
+    }
+  ]
+}
