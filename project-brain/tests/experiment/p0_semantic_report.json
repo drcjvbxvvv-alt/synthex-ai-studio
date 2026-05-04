@@ -1,0 +1,58 @@
+{
+  "experiment": "P0_semantic_embedding_validation",
+  "embedder": "MultilingualEmbedder (intfloat/multilingual-e5-small, 384 dim)",
+  "paraphrased_recall": {
+    "fts5_recall_at_3": 0.55,
+    "hybrid_recall_at_3": 0.9,
+    "improvement": 0.35,
+    "by_level": {
+      "level_1": {
+        "hits": 20,
+        "total": 20,
+        "recall": 1.0
+      },
+      "level_2": {
+        "hits": 14,
+        "total": 20,
+        "recall": 0.7
+      },
+      "level_3": {
+        "hits": 20,
+        "total": 20,
+        "recall": 1.0
+      }
+    }
+  },
+  "fastapi_discovery": {
+    "fts5_discovery_rate": 0.35,
+    "hybrid_discovery_rate": 0.75,
+    "improvement": 0.4,
+    "by_category": {
+      "dependency_injection": {
+        "hits": 5,
+        "total": 5,
+        "rate": 1.0
+      },
+      "async_performance": {
+        "hits": 3,
+        "total": 4,
+        "rate": 0.75
+      },
+      "pydantic_validation": {
+        "hits": 3,
+        "total": 4,
+        "rate": 0.75
+      },
+      "middleware_deploy": {
+        "hits": 2,
+        "total": 4,
+        "rate": 0.5
+      },
+      "security_auth": {
+        "hits": 2,
+        "total": 3,
+        "rate": 0.6667
+      }
+    }
+  }
+}
