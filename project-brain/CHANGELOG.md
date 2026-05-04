@@ -30,6 +30,14 @@
 - 當前 traces = 1,737 條，sampling rate = 5（每 5 次查詢記錄 1 次），正常運作
 - 深度審查的 14,997 figure 來自不同 `.brain/` 快照
 
+### 零依賴系統完整驗證實驗
+
+- 新增 `tests/experiment/test_brain_full_validation.py`
+- 驗證 10 個子系統（知識寫入/FTS5 檢索/Context/Decay/Nudge/KRB/Feedback/Dedup/complete_task/Eval）
+- 12 passed, 1 skipped, 1.61 秒完成
+- FTS5 recall@3 = 100%（精確關鍵字）
+- 實驗報告：`docs/EXPERIMENT_FULL_VALIDATION.md`
+
 ### I-03：KRB 審查流程整合 WebUI
 
 - 新增 "🔍 審查" 分頁，獨立的 KRB 審查佇列 UI
